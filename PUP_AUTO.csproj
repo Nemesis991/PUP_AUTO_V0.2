@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PUP_AUTO</RootNamespace>
+    <AssemblyName>PUP_AUTO</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AutoCAD.NET" Version="24.3.0">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+      <Private>False</Private>
+    </PackageReference>
+    <PackageReference Include="AutoCAD.NET.Core" Version="24.3.0">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+      <Private>False</Private>
+    </PackageReference>
+    <PackageReference Include="NPOI" Version="2.7.2" />
+  </ItemGroup>
+
+</Project>
