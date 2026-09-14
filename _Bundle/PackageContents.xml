@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage SchemaVersion="1.0"
+                    AutodeskProduct="AutoCAD"
+                    Name="PUP_AUTO"
+                    Description="ПУП Автоматизация — Автоматично генериране на баланси и регистри за засегнати имоти"
+                    AppVersion="0.1.0"
+                    ProductType="Application">
+  <Components>
+    <!-- AutoCAD 2021–2024 (R24.x series, .NET Framework 4.8) -->
+    <RuntimeRequirements SupportPath="./Contents"
+                         OS="Win64"
+                         Platform="AutoCAD|Civil3D"
+                         SeriesMax="R24.3" />
+    <ComponentEntry AppName="PUP_AUTO"
+                    ModuleName="./Contents/R24/PUP_AUTO.dll" />
+  </Components>
+</ApplicationPackage>

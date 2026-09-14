@@ -24,3 +24,7 @@
 *.log
 PUP_AUTO_Logs.txt
 PUP_Report.xls
+
+scratch.ps1
+*.geojson
+*.dwg

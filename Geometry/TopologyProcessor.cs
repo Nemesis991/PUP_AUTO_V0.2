@@ -258,21 +258,29 @@ namespace PUP_AUTO.Geometry
             using (var curves = new DBObjectCollection())
             {
                 curves.Add(pline);
-                DBObjectCollection regions = Region.CreateFromCurves(curves);
-
-                if (regions == null || regions.Count == 0)
+                try
                 {
+                    DBObjectCollection regions = Region.CreateFromCurves(curves);
+
+                    if (regions == null || regions.Count == 0)
+                    {
+                        return null;
+                    }
+
+                    // Take the first region; dispose any extras
+                    Region result = (Region)regions[0];
+                    for (int i = 1; i < regions.Count; i++)
+                    {
+                        regions[i].Dispose();
+                    }
+
+                    return result;
+                }
+                catch (System.Exception ex)
+                {
+                    _logger.LogWarning($"Cannot create Region from Polyline (Handle {pline.Handle}): {ex.Message}");
                     return null;
                 }
-
-                // Take the first region; dispose any extras
-                Region result = (Region)regions[0];
-                for (int i = 1; i < regions.Count; i++)
-                {
-                    regions[i].Dispose();
-                }
-
-                return result;
             }
         }
 
@@ -294,6 +302,45 @@ namespace PUP_AUTO.Geometry
             }
 
             return new Point3d(sumX / count, sumY / count, sumZ / count);
+        }
+
+        // -----------------------------------------------------------------
+        //  3. Vertex extraction for coordinate registers
+        // -----------------------------------------------------------------
+
+        /// <summary>
+        /// Extracts all vertices (X, Y) from a Polyline as a list of
+        /// <see cref="VertexCoordinate"/> objects. Used for coordinate
+        /// register documents (pole foundations and servitude corridors).
+        /// </summary>
+        /// <param name="pline">The source Polyline.</param>
+        /// <param name="labelPrefix">
+        /// Optional prefix for vertex labels, e.g. "5001" or "23-".
+        /// If empty, vertices are labelled by index (1, 2, 3...).
+        /// </param>
+        public List<VertexCoordinate> ExtractPolylineVertices(
+            Polyline pline,
+            string labelPrefix = "")
+        {
+            var vertices = new List<VertexCoordinate>();
+            if (pline == null) return vertices;
+
+            int count = pline.NumberOfVertices;
+            for (int i = 0; i < count; i++)
+            {
+                Point3d pt = pline.GetPoint3dAt(i);
+                vertices.Add(new VertexCoordinate
+                {
+                    PointIndex = i + 1,
+                    PointLabel = string.IsNullOrEmpty(labelPrefix)
+                        ? (i + 1).ToString()
+                        : $"{labelPrefix}{i + 1}",
+                    X = Math.Round(pt.X, 3),
+                    Y = Math.Round(pt.Y, 3)
+                });
+            }
+
+            return vertices;
         }
     }
 }

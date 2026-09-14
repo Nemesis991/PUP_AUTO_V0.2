@@ -173,11 +173,14 @@ namespace PUP_AUTO.DataBridge
                 //  Sheet 2 — "Стълбове" (Poles)
                 // ==============================================================
                 ISheet? sheetPoles = workbook.GetSheet(SheetNamePoles);
+                if (sheetPoles == null && workbook.NumberOfSheets > 1)
+                {
+                    sheetPoles = workbook.GetSheetAt(1);
+                    _logger.LogWarning($"Sheet '{SheetNamePoles}' not found by name. Using sheet at index 1: '{sheetPoles?.SheetName}'.");
+                }
                 if (sheetPoles == null)
                 {
-                    _logger.LogError(
-                        $"Template is missing required sheet '{SheetNamePoles}'.");
-                    return;
+                    _logger.LogWarning($"Template is missing required sheet '{SheetNamePoles}'. Skipping poles sheet.");
                 }
 
                 // Sort poles by PoleNumber for consistent output
@@ -185,46 +188,55 @@ namespace PUP_AUTO.DataBridge
                     .OrderBy(p => p.PoleNumber)
                     .ToList();
 
-                PopulateSheet(sheetPoles, DataStartRowIndex, sortedPoles.Count,
-                    (row, styleRow, index) =>
-                    {
-                        var pole = sortedPoles[index];
-                        int rowNum = index + 1;
-
-                        // Look up parcel owner name via AssignedParcelId
-                        string ownerName = string.Empty;
-                        if (!string.IsNullOrEmpty(pole.AssignedParcelId)
-                            && parcelDb.TryGetValue(pole.AssignedParcelId, out ParcelData? pd)
-                            && pd != null)
+                if (sheetPoles != null)
+                {
+                    PopulateSheet(sheetPoles, DataStartRowIndex, sortedPoles.Count,
+                        (row, styleRow, index) =>
                         {
-                            ownerName = pd.OwnerName;
-                        }
+                            var pole = sortedPoles[index];
+                            int rowNum = index + 1;
 
-                        SetCell(row, T_ColRowNum,    rowNum,               GetCellStyle(workbook, styleRow, T_ColRowNum));
-                        SetCell(row, T_ColPoleNum,   pole.PoleNumber,      GetCellStyle(workbook, styleRow, T_ColPoleNum));
-                        SetCell(row, T_ColPoleArea,  pole.PoleAreaDecares,  GetCellStyle(workbook, styleRow, T_ColPoleArea));
-                        SetCell(row, T_ColParcelId,  pole.AssignedParcelId, GetCellStyle(workbook, styleRow, T_ColParcelId));
-                        SetCell(row, T_ColOwnerName, ownerName,            GetCellStyle(workbook, styleRow, T_ColOwnerName));
-                    });
+                            // Look up parcel owner name via AssignedParcelId
+                            string ownerName = string.Empty;
+                            if (!string.IsNullOrEmpty(pole.AssignedParcelId)
+                                && parcelDb.TryGetValue(pole.AssignedParcelId, out ParcelData? pd)
+                                && pd != null)
+                            {
+                                ownerName = pd.OwnerName;
+                            }
 
-                _logger.LogSuccess(
-                    $"Sheet '{SheetNamePoles}': {sortedPoles.Count} rows written.");
+                            SetCell(row, T_ColRowNum,    rowNum,               GetCellStyle(workbook, styleRow, T_ColRowNum));
+                            SetCell(row, T_ColPoleNum,   pole.PoleNumber,      GetCellStyle(workbook, styleRow, T_ColPoleNum));
+                            SetCell(row, T_ColPoleArea,  pole.PoleAreaDecares,  GetCellStyle(workbook, styleRow, T_ColPoleArea));
+                            SetCell(row, T_ColParcelId,  pole.AssignedParcelId, GetCellStyle(workbook, styleRow, T_ColParcelId));
+                            SetCell(row, T_ColOwnerName, ownerName,            GetCellStyle(workbook, styleRow, T_ColOwnerName));
+                        });
+
+                    _logger.LogSuccess(
+                        $"Sheet '{sheetPoles.SheetName}': {sortedPoles.Count} rows written.");
+                }
 
                 // ==============================================================
                 //  Sheet 3 — "Баланси" (Balances – 4 grouped summary tables)
                 // ==============================================================
                 ISheet? sheetBalances = workbook.GetSheet(SheetNameBalances);
+                if (sheetBalances == null && workbook.NumberOfSheets > 2)
+                {
+                    sheetBalances = workbook.GetSheetAt(2);
+                    _logger.LogWarning($"Sheet '{SheetNameBalances}' not found by name. Using sheet at index 2: '{sheetBalances?.SheetName}'.");
+                }
                 if (sheetBalances == null)
                 {
-                    _logger.LogError(
-                        $"Template is missing required sheet '{SheetNameBalances}'.");
-                    return;
+                    _logger.LogWarning($"Template is missing required sheet '{SheetNameBalances}'. Skipping balances sheet.");
                 }
 
-                PopulateBalancesSheet(workbook, sheetBalances, data);
+                if (sheetBalances != null)
+                {
+                    PopulateBalancesSheet(workbook, sheetBalances, data);
 
-                _logger.LogSuccess(
-                    $"Sheet '{SheetNameBalances}': balance tables written.");
+                    _logger.LogSuccess(
+                        $"Sheet '{sheetBalances.SheetName}': balance tables written.");
+                }
 
                 // ==============================================================
                 //  Save
@@ -433,8 +445,7 @@ namespace PUP_AUTO.DataBridge
         private void SetCell(IRow row, int colIndex, string value, ICellStyle? style)
         {
             ICell cell = row.GetCell(colIndex) ?? row.CreateCell(colIndex);
-            cell.SetCellType(CellType.String);
-            cell.SetCellValue(value);
+            cell.SetCellValue(value ?? string.Empty);
             if (style != null) cell.CellStyle = style;
         }
 
@@ -442,7 +453,6 @@ namespace PUP_AUTO.DataBridge
         private void SetCell(IRow row, int colIndex, double value, ICellStyle? style)
         {
             ICell cell = row.GetCell(colIndex) ?? row.CreateCell(colIndex);
-            cell.SetCellType(CellType.Numeric);
             cell.SetCellValue(value);
             if (style != null) cell.CellStyle = style;
         }
@@ -451,7 +461,6 @@ namespace PUP_AUTO.DataBridge
         private void SetCell(IRow row, int colIndex, int value, ICellStyle? style)
         {
             ICell cell = row.GetCell(colIndex) ?? row.CreateCell(colIndex);
-            cell.SetCellType(CellType.Numeric);
             cell.SetCellValue(value);
             if (style != null) cell.CellStyle = style;
         }

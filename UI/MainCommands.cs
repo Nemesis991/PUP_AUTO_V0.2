@@ -29,6 +29,150 @@ namespace PUP_AUTO.UI
         private const string LogFileName      = "PUP_AUTO_Logs.txt";
 
         // ------------------------------------------------------------------
+        //  PUP_WINDOW command — Opens the WPF GUI
+        // ------------------------------------------------------------------
+
+        [CommandMethod("PUP_WINDOW")]
+        public void PupWindow()
+        {
+            try
+            {
+                var window = new Windows.MainWindow();
+                Autodesk.AutoCAD.ApplicationServices.Application.ShowModalWindow(window);
+            }
+            catch (System.Exception ex)
+            {
+                var ed = Autodesk.AutoCAD.ApplicationServices.Application
+                    .DocumentManager.MdiActiveDocument?.Editor;
+                ed?.WriteMessage($"\n[ERROR] Failed to open PUP_AUTO window: {ex.Message}\n");
+            }
+        }
+
+        // ------------------------------------------------------------------
+        //  PUP_DRAW_FOOTPRINTS command — Diagnostic footprint extraction
+        // ------------------------------------------------------------------
+
+        [CommandMethod("PUP_DRAW_FOOTPRINTS")]
+        public void PupDrawFootprints()
+        {
+            string projectDir = ResolveProjectDirectory();
+            string logPath = Path.Combine(projectDir, LogFileName);
+            var logger = new Logger(logPath);
+            var txMgr = new Core.TransactionManager(logger);
+            Editor ed = txMgr.GetEditor();
+
+            try
+            {
+                ed.WriteMessage("\n═══ PUP_DRAW_FOOTPRINTS ═══\n");
+
+                using (Transaction tr = txMgr.StartTransaction())
+                {
+                    BlockTable bt = (BlockTable)tr.GetObject(txMgr.GetDatabase().BlockTableId, OpenMode.ForRead);
+                    BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+                    int processed = 0;
+                    int success = 0;
+                    int failed = 0;
+
+                    // Ensure required layers exist
+                    LayerTable lt = (LayerTable)tr.GetObject(txMgr.GetDatabase().LayerTableId, OpenMode.ForRead);
+                    Action<string, short, LineWeight> EnsureLayer = (name, colorIndex, lw) =>
+                    {
+                        if (!lt.Has(name))
+                        {
+                            lt.UpgradeOpen();
+                            LayerTableRecord ltr = new LayerTableRecord();
+                            ltr.Name = name;
+                            ltr.Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, colorIndex);
+                            ltr.LineWeight = lw;
+                            lt.Add(ltr);
+                            tr.AddNewlyCreatedDBObject(ltr, true);
+                        }
+                    };
+
+                    EnsureLayer("POLE_STEPS", 7, LineWeight.LineWeight030);
+                    EnsureLayer("diagonali", 8, LineWeight.LineWeight009);
+                    EnsureLayer("Текст", 7, LineWeight.ByLayer);
+
+                    foreach (ObjectId objId in btr)
+                    {
+                        var blockRef = tr.GetObject(objId, OpenMode.ForRead) as BlockReference;
+                        if (blockRef == null) continue;
+
+                        processed++;
+                        var result = PoleFootprintExtractor.ExtractFootprint(blockRef, tr, logger);
+
+                        if (result.FootprintPolyline != null)
+                        {
+                            success++;
+                            var pline = result.FootprintPolyline;
+                            pline.Layer = "POLE_STEPS";
+                            pline.ColorIndex = 7;
+                            pline.LineWeight = LineWeight.LineWeight030;
+                            btr.AppendEntity(pline);
+                            tr.AddNewlyCreatedDBObject(pline, true);
+
+                            // Draw DBText and Diagonals
+                            
+                            // Diagonals
+                            if (pline.NumberOfVertices >= 4)
+                            {
+                                Point3d p0 = pline.GetPoint3dAt(0);
+                                Point3d p1 = pline.GetPoint3dAt(1);
+                                Point3d p2 = pline.GetPoint3dAt(2);
+                                Point3d p3 = pline.GetPoint3dAt(3);
+
+                                Line diag1 = new Line(p0, p2);
+                                diag1.Layer = "diagonali";
+                                diag1.ColorIndex = 8;
+                                diag1.LineWeight = LineWeight.LineWeight009;
+                                btr.AppendEntity(diag1);
+                                tr.AddNewlyCreatedDBObject(diag1, true);
+
+                                Line diag2 = new Line(p1, p3);
+                                diag2.Layer = "diagonali";
+                                diag2.ColorIndex = 8;
+                                diag2.LineWeight = LineWeight.LineWeight009;
+                                btr.AppendEntity(diag2);
+                                tr.AddNewlyCreatedDBObject(diag2, true);
+                            }
+
+                            // Text
+                            DBText text = new DBText();
+                            text.SetDatabaseDefaults();
+                            text.TextString = result.PoleNumber;
+                            text.Layer = "Текст";
+                            text.ColorIndex = 7;
+                            text.Height = 1.0;
+                            
+                            // CRITICAL ORDER FOR JUSTIFICATION:
+                            text.Position = result.LabelPosition;             // 1. Set base position first
+                            text.Justify = AttachmentPoint.BottomCenter;      // 2. Set justification (Matching LISP 'BC')
+                            text.AlignmentPoint = result.LabelPosition;       // 3. MUST set AlignmentPoint AFTER Justify
+                            text.Rotation = result.LabelRotation;             // 4. Set rotation last
+                            
+                            btr.AppendEntity(text);
+                            tr.AddNewlyCreatedDBObject(text, true);
+                        }
+                        else
+                        {
+                            failed++;
+                            logger.LogWarning(result.ErrorMessage);
+                        }
+                    }
+
+                    ed.WriteMessage($"\nFound {processed} blocks. Extracted: {success}. Failed: {failed}.\n");
+                    tr.Commit();
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger.LogError($"PUP_DRAW_FOOTPRINTS failed: {ex.Message}\n{ex.StackTrace}");
+                ed.WriteMessage($"\n[ERROR] PUP_DRAW_FOOTPRINTS failed: {ex.Message}\n");
+            }
+        }
+
+        // ------------------------------------------------------------------
         //  PUP_GENERATE command
         // ------------------------------------------------------------------
 
@@ -66,18 +210,59 @@ namespace PUP_AUTO.UI
                         return;
                     }
 
-                    // 1b. Pole polylines (multiple)
-                    var polePolylines = txMgr.SelectMultiplePolylines(
-                        tr, "\nSelect Pole polylines: ");
+                    // 1b. Pole blocks (multiple)
+                    var poleBlocks = txMgr.SelectMultipleBlockReferences(
+                        tr, "\nSelect Pole blocks: ");
+                    if (poleBlocks.Count == 0)
+                    {
+                        ed.WriteMessage("\n[ABORT] No pole blocks selected.\n");
+                        return;
+                    }
+
+                    var polePolylines = new List<KeyValuePair<string, Polyline>>();
+                    var footprintVerticesDict = new Dictionary<string, List<VertexCoordinate>>();
+                    
+                    foreach (var kvp in poleBlocks)
+                    {
+                        var result = PoleFootprintExtractor.ExtractFootprint(kvp.Value, tr, logger);
+                        if (result.FootprintPolyline != null)
+                        {
+                            // In case of multiple blocks, if they don't have XData ID, use handle
+                            string poleId = string.IsNullOrEmpty(result.PoleNumber) ? kvp.Key : result.PoleNumber;
+                            polePolylines.Add(new KeyValuePair<string, Polyline>(poleId, result.FootprintPolyline));
+                            
+                            var pts = new List<VertexCoordinate>();
+                            for(int i=0; i<result.FootprintPolyline.NumberOfVertices; i++)
+                            {
+                                var pt = result.FootprintPolyline.GetPoint3dAt(i);
+                                pts.Add(new VertexCoordinate { PointIndex = i+1, PointLabel = $"{poleId}-{i+1}", X = Math.Round(pt.X,3), Y = Math.Round(pt.Y,3) });
+                            }
+                            footprintVerticesDict[poleId] = pts;
+                        }
+                        else
+                        {
+                            logger.LogWarning($"Could not extract footprint for block {kvp.Key}: {result.ErrorMessage}");
+                        }
+                    }
+
                     if (polePolylines.Count == 0)
                     {
-                        ed.WriteMessage("\n[ABORT] No poles selected.\n");
+                        ed.WriteMessage("\n[ABORT] No valid pole footprints extracted.\n");
                         return;
                     }
 
                     // 1c. Parcel polylines (multiple)
+                    // Load GeoJSON geometries for spatial matching
+                    List<GeoParcel>? geoParcels = null;
+                    string cadFilePath2 = Path.Combine(projectDir, TestFilesFolder, CadDatabaseFile);
+                    if (cadFilePath2.EndsWith(".geojson", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var geoReader = new CadLibraryReader(logger);
+                        geoParcels = geoReader.LoadGeoJsonGeometries(cadFilePath2);
+                    }
+
                     var parcelPolylines = txMgr.SelectMultiplePolylines(
-                        tr, "\nSelect Parcel polylines: ");
+                        tr, "\nSelect Parcel polylines: ", geoParcels);
                     if (parcelPolylines.Count == 0)
                     {
                         ed.WriteMessage("\n[ABORT] No parcels selected.\n");
@@ -120,6 +305,15 @@ namespace PUP_AUTO.UI
                     List<Pole> assignedPoles =
                         topo.AssignPolesToParcels(
                             polePolylines, parcelPolylines, tr);
+                            
+                    // Assign footprint vertices to Pole models
+                    foreach (var p in assignedPoles)
+                    {
+                        if (footprintVerticesDict.TryGetValue(p.PoleId, out var fv))
+                        {
+                            p.FootprintVertices = fv;
+                        }
+                    }
 
                     int assignedCount =
                         assignedPoles.Count(p => !string.IsNullOrEmpty(p.AssignedParcelId));
@@ -132,7 +326,7 @@ namespace PUP_AUTO.UI
                     // ======================================================
                     ed.WriteMessage("\n── Step 4: Merge results ──\n");
 
-                    List<ReportRow> reportRows = MergeResults(
+                    List<ReportRow> reportRows = MergeResultsStatic(
                         parcelPolylines,
                         parcelDb,
                         servitudeAreas,
@@ -155,6 +349,38 @@ namespace PUP_AUTO.UI
                     ed.WriteMessage($"  Report saved: {outputPath}\n");
 
                     // ======================================================
+                    // Step 5b — Extract coordinates
+                    // ======================================================
+                    ed.WriteMessage("\n── Step 5b: Extract coordinates ──\n");
+
+                    var poleVertices = new Dictionary<string, List<VertexCoordinate>>();
+                    foreach (var p in assignedPoles)
+                    {
+                        if (p.FootprintVertices != null && p.FootprintVertices.Count > 0)
+                        {
+                            poleVertices[p.PoleId] = p.FootprintVertices;
+                        }
+                    }
+                    var servitudeVertices = topo.ExtractPolylineVertices(servitudePline);
+
+                    ed.WriteMessage(
+                        $"  Coordinates: {poleVertices.Count} poles, " +
+                        $"{servitudeVertices.Count} servitude vertices.\n");
+
+                    // ======================================================
+                    // Step 5c — Generate Word reports
+                    // ======================================================
+                    ed.WriteMessage("\n── Step 5c: Generate Word reports ──\n");
+
+                    var wordGen = new WordReportGenerator(logger, projectDir);
+                    wordGen.GenerateAllReports(
+                        reportRows, assignedPoles, parcelDb, projectDir,
+                        poleVertices: poleVertices,
+                        servitudeVertices: servitudeVertices);
+
+                    ed.WriteMessage("  Word reports generated.\n");
+
+                    // ======================================================
                     // Step 6 — Summary
                     // ======================================================
                     int warningCount = reportRows.Count(r => r.Owner == "NO DATA");
@@ -163,6 +389,8 @@ namespace PUP_AUTO.UI
                         $"  Processed {reportRows.Count} parcels.\n" +
                         $"  Poles assigned: {assignedCount}/{assignedPoles.Count}.\n" +
                         $"  Missing semantic data: {warningCount} parcels.\n" +
+                        $"  Excel report: {outputPath}\n" +
+                        $"  Word reports: {projectDir}\n" +
                         $"  Check log file for warnings: {logPath}\n");
 
                     tr.Commit();
@@ -186,7 +414,7 @@ namespace PUP_AUTO.UI
         /// CRUCIAL CHECK: if a ParcelId from geometry is missing from
         /// the database, logs a Warning and uses "NO DATA" for the Owner.
         /// </summary>
-        private static List<ReportRow> MergeResults(
+        public static List<ReportRow> MergeResultsStatic(
             List<KeyValuePair<string, Polyline>> parcelPolylines,
             Dictionary<string, ParcelData> parcelDb,
             Dictionary<string, double> servitudeAreas,
@@ -245,6 +473,7 @@ namespace PUP_AUTO.UI
                     ServitudeAreaSqM = servArea,
                     PoleAreaSqM      = poleArea,
                     PoleCount        = poleCount,
+                    AssignedPoles    = polesInParcel,
 
                     // Cadastral register fields (safe: default to empty if dbRecord is null)
                     SubDivision      = dbRecord?.SubDivision   ?? string.Empty,
