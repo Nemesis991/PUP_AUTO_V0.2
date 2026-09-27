@@ -119,7 +119,7 @@ namespace PUP_AUTO.Core
             }
 
             int matchedByGeo = 0;
-            int matchedByOD = 0;
+            int matchedByXData = 0;
             int fallbackToHandle = 0;
 
             SelectionSet selSet = selResult.Value;
@@ -172,28 +172,17 @@ namespace PUP_AUTO.Core
                 }
                 else
                 {
-                    // === STRATEGY 2: Map 3D Object Data (legacy, often fails) ===
-                    string? odCadNum = GetObjectDataFieldValue(pline.ObjectId, "cadnum");
-                    if (!string.IsNullOrEmpty(odCadNum))
+                    // === STRATEGY 2: XData Extractor ===
+                    string parcelId = PUP_AUTO.DataBridge.XDataExtractor.GetParcelId(pline);
+                    double areaSqm = pline.Area; // Extract geometry area as requested
+                    
+                    if (parcelId != "Неизвестен_Имот" && parcelId != "Грешка_XData")
                     {
-                        entityId = odCadNum!;
-                        matchedByOD++;
+                        entityId = parcelId;
+                        matchedByXData++;
                     }
                     else
                     {
-                        // === STRATEGY 3: XData fallback ===
-                        ResultBuffer? xdata = pline.XData;
-                        if (xdata != null)
-                        {
-                            foreach (TypedValue tv in xdata)
-                            {
-                                if (tv.TypeCode == (int)DxfCode.ExtendedDataAsciiString)
-                                {
-                                    entityId = tv.Value?.ToString() ?? entityId;
-                                    break;
-                                }
-                            }
-                        }
                         fallbackToHandle++;
                     }
                 }
@@ -203,7 +192,7 @@ namespace PUP_AUTO.Core
 
             _logger.LogSuccess(
                 $"Selected {polylines.Count} polylines from '{promptMessage}'. " +
-                $"(Matched: {matchedByGeo} by GeoJSON, {matchedByOD} by Map3D OD, {fallbackToHandle} by Handle fallback)");
+                $"(Matched: {matchedByGeo} by GeoJSON, {matchedByXData} by XData, {fallbackToHandle} by Handle fallback)");
 
             return polylines;
         }
@@ -347,134 +336,7 @@ namespace PUP_AUTO.Core
         }
 
         // -----------------------------------------------------------------
-        //  Object Data (Map 3D) Helper
+        //  Object Data (Map 3D) Helper removed
         // -----------------------------------------------------------------
-
-        /// <summary>
-        /// Uses reflection to dynamically read Map 3D Object Data (OD) from 
-        /// Civil 3D/Map 3D's ManagedMapApi.dll without requiring a hard reference.
-        /// Extracts fields like "cadnum" from imported SHP files.
-        /// </summary>
-        private string? GetObjectDataFieldValue(ObjectId objId, string fieldName)
-        {
-            try
-            {
-                var mapApi = AppDomain.CurrentDomain.GetAssemblies()
-                    .FirstOrDefault(a => a.GetName().Name == "ManagedMapApi");
-                
-                if (mapApi == null)
-                {
-                    try { mapApi = System.Reflection.Assembly.Load("ManagedMapApi"); } catch { }
-                }
-                
-                if (mapApi == null)
-                {
-                    _logger.LogWarning("ManagedMapApi not found in AppDomain. Cannot read Object Data.");
-                    return null;
-                }
-
-                Type? hostType = mapApi.GetType("Autodesk.Gis.Map.HostMapApplication");
-                if (hostType == null)
-                {
-                    _logger.LogWarning("HostMapApplication type not found.");
-                    return null;
-                }
-
-                dynamic? services = hostType.GetProperty("Services")?.GetValue(null);
-                if (services == null)
-                {
-                    _logger.LogWarning("Map Services property is null.");
-                    return null;
-                }
-
-                dynamic project = services.Project;
-                dynamic odTables = project.ODTables;
-                dynamic tableNames = odTables.GetTableNames();
-                
-                if (tableNames.Count == 0)
-                {
-                    _logger.LogWarning($"No Object Data Tables defined in this drawing! Cannot read Map3D OD for Handle {objId.Handle}.");
-                    return null;
-                }
-                
-                Type? openModeType = mapApi.GetType("Autodesk.Gis.Map.Constants+OpenMode");
-                if (openModeType == null)
-                {
-                    openModeType = mapApi.GetType("Autodesk.Gis.Map.Constants.OpenMode");
-                }
-                if (openModeType == null)
-                {
-                    _logger.LogWarning("Map OpenMode type not found.");
-                    return null;
-                }
-
-                object openModeForRead = Enum.Parse(openModeType, "ForRead");
-
-                foreach (string tableName in tableNames)
-                {
-                    dynamic table = odTables[tableName];
-                    dynamic records = table.GetObjectTableRecords((uint)0, objId, openModeForRead, false);
-                    try
-                    {
-#pragma warning disable CS8602 
-                        if (records != null && records.Count > 0)
-                        {
-                            dynamic record = records[0];
-                            
-                            // Find the index of the field (case-insensitive)
-                            dynamic fieldDefs = table.FieldDefinitions;
-                            int fieldCount = fieldDefs.Count;
-                            int targetIndex = -1;
-                            
-                            List<string> foundFields = new List<string>();
-                            for (int i = 0; i < fieldCount; i++)
-                            {
-                                string fName = fieldDefs[i].Name;
-                                foundFields.Add(fName);
-                                if (fName.Equals(fieldName, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    targetIndex = i;
-                                }
-                            }
-
-                            if (targetIndex >= 0)
-                            {
-                                dynamic fieldVal = record[targetIndex];
-                                if (fieldVal != null)
-                                {
-                                    return fieldVal.StrValue;
-                                }
-                                else
-                                {
-                                    _logger.LogWarning($"Field '{fieldName}' found at index {targetIndex}, but its value is NULL for Handle {objId.Handle}.");
-                                }
-                            }
-                            else
-                            {
-                                _logger.LogWarning($"Table '{tableName}' has {records.Count} records for Handle {objId.Handle}, but field '{fieldName}' was NOT FOUND. Available fields: {string.Join(", ", foundFields)}");
-                            }
-                        }
-                        else
-                        {
-                            _logger.LogWarning($"Table '{tableName}' has 0 records attached to Handle {objId.Handle}.");
-                        }
-#pragma warning restore CS8602 
-                    }
-                    catch (System.Exception ex)
-                    {
-                        _logger.LogWarning($"Inner Map3D OD exception for {tableName}: {ex.Message}");
-                    }
-                    finally
-                    {
-                        if (records is IDisposable disp) disp.Dispose();
-                    }
-                }
-            }
-            catch (System.Exception ex)
-            {
-                _logger.LogWarning($"Failed to read Map3D Object Data via Reflection: {ex.Message}");
-            }
-            return null;
-        }
     }
 }

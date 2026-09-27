@@ -188,32 +188,52 @@ namespace PUP_AUTO.DataBridge
                     .OrderBy(p => p.PoleNumber)
                     .ToList();
 
+                // Flatten poles so each overlapping parcel gets a row
+                var flatPoles = new List<(Pole pole, string parcelId, double area)>();
+                foreach (var p in sortedPoles)
+                {
+                    if (p.OverlappingParcels.Count == 0)
+                    {
+                        flatPoles.Add((p, string.Empty, p.PoleAreaSqM));
+                    }
+                    else
+                    {
+                        foreach (var kvp in p.OverlappingParcels)
+                        {
+                            flatPoles.Add((p, kvp.Key, kvp.Value));
+                        }
+                    }
+                }
+
                 if (sheetPoles != null)
                 {
-                    PopulateSheet(sheetPoles, DataStartRowIndex, sortedPoles.Count,
+                    PopulateSheet(sheetPoles, DataStartRowIndex, flatPoles.Count,
                         (row, styleRow, index) =>
                         {
-                            var pole = sortedPoles[index];
+                            var flat = flatPoles[index];
+                            var pole = flat.pole;
                             int rowNum = index + 1;
 
-                            // Look up parcel owner name via AssignedParcelId
+                            // Look up parcel owner name via flat.parcelId
                             string ownerName = string.Empty;
-                            if (!string.IsNullOrEmpty(pole.AssignedParcelId)
-                                && parcelDb.TryGetValue(pole.AssignedParcelId, out ParcelData? pd)
+                            if (!string.IsNullOrEmpty(flat.parcelId)
+                                && parcelDb.TryGetValue(flat.parcelId, out ParcelData? pd)
                                 && pd != null)
                             {
                                 ownerName = pd.OwnerName;
                             }
 
+                            double areaDecares = Math.Round(flat.area / 1000.0, 3);
+
                             SetCell(row, T_ColRowNum,    rowNum,               GetCellStyle(workbook, styleRow, T_ColRowNum));
                             SetCell(row, T_ColPoleNum,   pole.PoleNumber,      GetCellStyle(workbook, styleRow, T_ColPoleNum));
-                            SetCell(row, T_ColPoleArea,  pole.PoleAreaDecares,  GetCellStyle(workbook, styleRow, T_ColPoleArea));
-                            SetCell(row, T_ColParcelId,  pole.AssignedParcelId, GetCellStyle(workbook, styleRow, T_ColParcelId));
+                            SetCell(row, T_ColPoleArea,  areaDecares,          GetCellStyle(workbook, styleRow, T_ColPoleArea));
+                            SetCell(row, T_ColParcelId,  flat.parcelId,        GetCellStyle(workbook, styleRow, T_ColParcelId));
                             SetCell(row, T_ColOwnerName, ownerName,            GetCellStyle(workbook, styleRow, T_ColOwnerName));
                         });
 
                     _logger.LogSuccess(
-                        $"Sheet '{sheetPoles.SheetName}': {sortedPoles.Count} rows written.");
+                        $"Sheet '{sheetPoles.SheetName}': {flatPoles.Count} rows written.");
                 }
 
                 // ==============================================================

@@ -38,13 +38,89 @@ namespace PUP_AUTO.UI
             try
             {
                 var window = new Windows.MainWindow();
-                Autodesk.AutoCAD.ApplicationServices.Application.ShowModalWindow(window);
+                Autodesk.AutoCAD.ApplicationServices.Application.ShowModelessWindow(window);
             }
             catch (System.Exception ex)
             {
                 var ed = Autodesk.AutoCAD.ApplicationServices.Application
                     .DocumentManager.MdiActiveDocument?.Editor;
                 ed?.WriteMessage($"\n[ERROR] Failed to open PUP_AUTO window: {ex.Message}\n");
+            }
+        }
+
+        // ------------------------------------------------------------------
+        //  PUP_SERV command — Segments a selected servitude
+        // ------------------------------------------------------------------
+
+        [CommandMethod("PUP_SERV")]
+        public void PupServ()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            try
+            {
+                // 1. Ask user to select the servitude polyline
+                PromptEntityOptions peo = new PromptEntityOptions("\nИзберете сервитут (Polyline) за сегментиране: ");
+                peo.SetRejectMessage("\nМоля, изберете Polyline!");
+                peo.AddAllowedClass(typeof(Polyline), true);
+                
+                PromptEntityResult per = ed.GetEntity(peo);
+                if (per.Status != PromptStatus.OK) return;
+                
+                // 2. Ask user for the distance
+                PromptDoubleOptions pdo = new PromptDoubleOptions("\nВъведете разстояние за сегментиране [20.0]: ");
+                pdo.DefaultValue = 20.0;
+                pdo.AllowNegative = false;
+                pdo.AllowZero = false;
+                pdo.UseDefaultValue = true;
+                
+                PromptDoubleResult pdr = ed.GetDouble(pdo);
+                if (pdr.Status != PromptStatus.OK) return;
+                double dist = pdr.Value;
+                
+                // 3. Segment and append
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    Polyline sourcePline = tr.GetObject(per.ObjectId, OpenMode.ForRead) as Polyline;
+                    if (sourcePline == null) return;
+                    
+                    using (Polyline cleanServitude = GeometrySanitizer.Sanitize(sourcePline, dist, 0.05))
+                    {
+                        if (cleanServitude != null)
+                        {
+                            // Ensure layer
+                            LayerTable lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+                            if (!lt.Has("segmented SERV"))
+                            {
+                                lt.UpgradeOpen();
+                                LayerTableRecord ltr = new LayerTableRecord();
+                                ltr.Name = "segmented SERV";
+                                ltr.Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, 3);
+                                lt.Add(ltr);
+                                tr.AddNewlyCreatedDBObject(ltr, true);
+                            }
+                            
+                            Polyline newPline = (Polyline)cleanServitude.Clone();
+                            newPline.Layer = "segmented SERV";
+                            newPline.ColorIndex = 3; 
+                            newPline.ConstantWidth = 0.5;
+                            
+                            BlockTableRecord btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+                            btr.AppendEntity(newPline);
+                            tr.AddNewlyCreatedDBObject(newPline, true);
+                            
+                            ed.WriteMessage($"\nУспешно сегментиран сервитут! Дължина на сегментите: {dist}м. Слой: 'segmented SERV'.");
+                        }
+                    }
+                    tr.Commit();
+                }
+            }
+            catch (System.Exception ex)
+            {
+                ed.WriteMessage($"\n[ГРЕШКА] PUP_SERV: {ex.Message}\n");
             }
         }
 
@@ -316,7 +392,9 @@ namespace PUP_AUTO.UI
                     }
 
                     int assignedCount =
-                        assignedPoles.Count(p => !string.IsNullOrEmpty(p.AssignedParcelId));
+                        assignedPoles.Count(p => p.OverlappingParcels.Count > 0);
+                    logger.LogSuccess($"Pole extraction complete. Total: {polePolylines.Count}, " +
+                        $"Assigned: {assignedCount}");
                     ed.WriteMessage(
                         $"  Poles processed: {assignedPoles.Count} " +
                         $"(assigned: {assignedCount}).\n");
@@ -431,9 +509,9 @@ namespace PUP_AUTO.UI
             // its own polyline in the selection (edge case)
             foreach (var pole in assignedPoles)
             {
-                if (!string.IsNullOrEmpty(pole.AssignedParcelId))
+                foreach (var poleParcelId in pole.OverlappingParcels.Keys)
                 {
-                    geometryParcelIds.Add(pole.AssignedParcelId);
+                    geometryParcelIds.Add(poleParcelId);
                 }
             }
 
@@ -461,9 +539,9 @@ namespace PUP_AUTO.UI
 
                 // Poles assigned to this parcel
                 var polesInParcel = assignedPoles
-                    .Where(p => p.AssignedParcelId == parcelId)
+                    .Where(p => p.OverlappingParcels.ContainsKey(parcelId))
                     .ToList();
-                double poleArea = polesInParcel.Sum(p => p.PoleAreaSqM);
+                double poleArea = polesInParcel.Sum(p => p.OverlappingParcels[parcelId]);
                 int poleCount   = polesInParcel.Count;
 
                 rows.Add(new ReportRow

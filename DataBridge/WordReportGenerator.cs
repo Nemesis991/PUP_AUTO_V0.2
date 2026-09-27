@@ -244,18 +244,30 @@ namespace PUP_AUTO.DataBridge
                     templateRow.Remove();
 
                     var sortedPoles = poles
-                        .Where(p => !string.IsNullOrEmpty(p.AssignedParcelId))
+                        .Where(p => p.OverlappingParcels.Count > 0)
                         .OrderBy(p => p.PoleNumber)
                         .ToList();
 
-                    foreach (var pole in sortedPoles)
+                    var flatPoles = new List<(Pole pole, string parcelId, double area)>();
+                    foreach(var p in sortedPoles)
                     {
+                        foreach (var kvp in p.OverlappingParcels) {
+                            flatPoles.Add((p, kvp.Key, kvp.Value));
+                        }
+                    }
+
+                    foreach (var flat in flatPoles)
+                    {
+                        var pole = flat.pole;
+                        var parcelId = flat.parcelId;
+                        double areaDecares = Math.Round(flat.area / 1000.0, 3);
+
                         var newRow = (TableRow)templateRow.CloneNode(true);
                         var cells = newRow.Elements<TableCell>().ToList();
 
                         // Look up parcel data
-                        parcelDb.TryGetValue(pole.AssignedParcelId, out ParcelData? pd);
-                        var reportRow = reportRows.FirstOrDefault(r => r.ParcelId == pole.AssignedParcelId);
+                        parcelDb.TryGetValue(parcelId, out ParcelData? pd);
+                        var reportRow = reportRows.FirstOrDefault(r => r.ParcelId == parcelId);
 
                         // Col 0: №стълб (formatted as "Стълб №XX")
                         // Col 1: Площ стъпка [дка]
@@ -267,8 +279,8 @@ namespace PUP_AUTO.DataBridge
                         // Col 7: ЕГН/БУЛСТАТ
                         // Col 8: Собственик (Име)
                         SetCellText(cells, 0, $"№{pole.PoleNumber}");
-                        SetCellText(cells, 1, pole.PoleAreaDecares.ToString("F3"));
-                        SetCellText(cells, 2, pole.AssignedParcelId);
+                        SetCellText(cells, 1, areaDecares.ToString("F3"));
+                        SetCellText(cells, 2, parcelId);
                         SetCellText(cells, 3, pd?.TerritoryType ?? "");
                         SetCellText(cells, 4, pd?.Usage ?? "");
                         SetCellText(cells, 5, reportRow != null ? reportRow.DocumentAreaDecares.ToString("F3") : "");
@@ -283,7 +295,7 @@ namespace PUP_AUTO.DataBridge
                     var totalsRow = (TableRow)templateRow.CloneNode(true);
                     var totalCells = totalsRow.Elements<TableCell>().ToList();
                     SetCellText(totalCells, 0, "Общо:");
-                    SetCellText(totalCells, 1, Math.Round(sortedPoles.Sum(p => p.PoleAreaDecares), 3).ToString("F3"));
+                    SetCellText(totalCells, 1, Math.Round(flatPoles.Sum(p => p.area) / 1000.0, 3).ToString("F3"));
                     for (int i = 2; i < totalCells.Count; i++)
                         SetCellText(totalCells, i, "");
                     table.AppendChild(totalsRow);
@@ -293,7 +305,7 @@ namespace PUP_AUTO.DataBridge
                     File.WriteAllBytes(outputPath, mem.ToArray());
                 }
 
-                _logger.LogSuccess($"Pole steps register saved: {outputPath} ({poles.Count(p => !string.IsNullOrEmpty(p.AssignedParcelId))} poles)");
+                _logger.LogSuccess($"Pole steps register saved: {outputPath} ({poles.Count(p => p.OverlappingParcels.Count > 0)} poles)");
             }
             catch (Exception ex)
             {

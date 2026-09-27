@@ -7,6 +7,7 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 using PUP_AUTO.Core;
+using PUP_AUTO.DataBridge;
 using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.Geometry
@@ -54,14 +55,16 @@ namespace PUP_AUTO.Geometry
             Region? servitudeRegion = null;
             try
             {
-                servitudeRegion = CreateRegionFromPolyline(servitudePline);
-                if (servitudeRegion == null)
+                using (Polyline cleanServitude = GeometrySanitizer.Sanitize(servitudePline, 50.0, 0.05))
                 {
-                    _logger.LogError("Failed to create Region from servitude polyline.");
-                    return result;
-                }
+                    servitudeRegion = SafeCreateRegion(cleanServitude);
+                    if (servitudeRegion == null)
+                    {
+                        _logger.LogError("Failed to create Region from servitude polyline.");
+                        return result;
+                    }
 
-                foreach (var kvp in parcelPolylines)
+                    foreach (var kvp in parcelPolylines)
                 {
                     string parcelId = kvp.Key;
                     Polyline parcelPline = kvp.Value;
@@ -70,23 +73,26 @@ namespace PUP_AUTO.Geometry
                     Region? intersectRegion = null;
                     try
                     {
-                        parcelRegion = CreateRegionFromPolyline(parcelPline);
-                        if (parcelRegion == null)
+                        using (Polyline cleanParcel = GeometrySanitizer.Sanitize(parcelPline, 50.0, 0.05))
                         {
-                            _logger.LogWarning(
-                                $"Failed to create Region for parcel {parcelId}. Skipped.");
-                            continue;
-                        }
+                            parcelRegion = SafeCreateRegion(cleanParcel);
+                            if (parcelRegion == null)
+                            {
+                                _logger.LogWarning(
+                                    $"Failed to create Region for parcel {parcelId}. Skipped.");
+                                continue;
+                            }
 
-                        // Clone the servitude region so the original is not mutated
-                        intersectRegion = (Region)servitudeRegion.Clone();
-                        intersectRegion.BooleanOperation(
-                            BooleanOperationType.BoolIntersect, parcelRegion);
+                            // Clone the servitude region so the original is not mutated
+                            intersectRegion = (Region)servitudeRegion.Clone();
+                            intersectRegion.BooleanOperation(
+                                BooleanOperationType.BoolIntersect, parcelRegion);
 
-                        double area = intersectRegion.Area;
-                        if (area > SliverTolerance)
-                        {
-                            result[parcelId] = area;
+                            double area = intersectRegion.Area;
+                            if (area > SliverTolerance)
+                            {
+                                result[parcelId] = area;
+                            }
                         }
                     }
                     catch (Autodesk.AutoCAD.Runtime.Exception ex)
@@ -99,6 +105,7 @@ namespace PUP_AUTO.Geometry
                         intersectRegion?.Dispose();
                         parcelRegion?.Dispose();
                     }
+                }
                 }
             }
             finally
@@ -145,7 +152,7 @@ namespace PUP_AUTO.Geometry
                 Region? poleRegion = null;
                 try
                 {
-                    poleRegion = CreateRegionFromPolyline(polePline);
+                    poleRegion = SafeCreateRegion(polePline);
                     if (poleRegion == null)
                     {
                         _logger.LogWarning(
@@ -154,8 +161,14 @@ namespace PUP_AUTO.Geometry
                     }
 
                     double poleArea = poleRegion.Area;
-                    string? bestParcelId = null;
-                    double bestArea = 0.0;
+                    Point3d centroid = GetPolylineCentroid(polePline);
+                    var pole = new Pole
+                    {
+                        PoleId = poleId,
+                        PoleAreaSqM = poleArea,
+                        Location = centroid,
+                        ObjectId = polePline.ObjectId
+                    };
 
                     foreach (var parcelKvp in parcelPolylines)
                     {
@@ -166,7 +179,7 @@ namespace PUP_AUTO.Geometry
                         Region? intersectRegion = null;
                         try
                         {
-                            parcelRegion = CreateRegionFromPolyline(parcelPline);
+                            parcelRegion = SafeCreateRegion(parcelPline);
                             if (parcelRegion == null) continue;
 
                             intersectRegion = (Region)poleRegion.Clone();
@@ -174,10 +187,9 @@ namespace PUP_AUTO.Geometry
                                 BooleanOperationType.BoolIntersect, parcelRegion);
 
                             double area = intersectRegion.Area;
-                            if (area > SliverTolerance && area > bestArea)
+                            if (area > SliverTolerance)
                             {
-                                bestArea = area;
-                                bestParcelId = parcelId;
+                                pole.OverlappingParcels[parcelId] = area;
                             }
                         }
                         catch (Autodesk.AutoCAD.Runtime.Exception ex)
@@ -193,21 +205,7 @@ namespace PUP_AUTO.Geometry
                         }
                     }
 
-                    // Build the Pole domain object
-                    Point3d centroid = GetPolylineCentroid(polePline);
-                    var pole = new Pole
-                    {
-                        PoleId = poleId,
-                        PoleAreaSqM = poleArea,
-                        Location = centroid,
-                        ObjectId = polePline.ObjectId
-                    };
-
-                    if (bestParcelId != null)
-                    {
-                        pole.AssignedParcelId = bestParcelId;
-                    }
-                    else
+                    if (pole.OverlappingParcels.Count == 0)
                     {
                         // CRUCIAL: log floating geometry with handle + coordinates
                         string handle = polePline.Handle.ToString();
@@ -232,9 +230,149 @@ namespace PUP_AUTO.Geometry
 
             _logger.LogSuccess(
                 $"Pole assignment complete: {poles.Count} poles processed, " +
-                $"{poles.Count(p => !string.IsNullOrEmpty(p.AssignedParcelId))} assigned.");
+                $"{poles.Count(p => p.OverlappingParcels.Count > 0)} assigned.");
 
             return poles;
+        }
+
+        // -----------------------------------------------------------------
+        //  3. MVP Math Test
+        // -----------------------------------------------------------------
+
+        public List<ParcelData> RunMvpMathTest(
+            Polyline servitudePline,
+            List<KeyValuePair<string, Polyline>> polePolylines,
+            List<KeyValuePair<string, Polyline>> parcelPolylines,
+            Transaction transaction)
+        {
+            var results = new List<ParcelData>();
+
+            foreach (var parcelKvp in parcelPolylines)
+            {
+                Polyline parcelPline = parcelKvp.Value;
+                string parcelId = XDataExtractor.GetParcelId(parcelPline);
+                
+                var pData = new ParcelData { ParcelId = parcelId };
+                pData.TotalAreaSqm = parcelPline.Area;
+
+                // 1. Gross Servitude Area
+                pData.ServitudeGrossAreaSqm = GetPreciseIntersectionArea(parcelPline, servitudePline);
+
+                // 2. Pole Area & Intersecting Poles
+                double totalPoleArea = 0;
+                List<string> assignedPoles = new List<string>();
+                List<Polyline> intersectingPolesList = new List<Polyline>();
+
+                foreach (var poleKvp in polePolylines)
+                {
+                    string poleNumber = poleKvp.Key;
+                    Polyline poleFootprintPoly = poleKvp.Value;
+
+                    double intersectArea = GetPreciseIntersectionArea(parcelPline, poleFootprintPoly);
+                    
+                    if (intersectArea > SliverTolerance)
+                    {
+                        totalPoleArea += intersectArea;
+                        assignedPoles.Add(poleNumber);
+                        pData.IndividualPoleAreas[poleNumber] = intersectArea;
+                        intersectingPolesList.Add(poleFootprintPoly);
+                    }
+                }
+
+                pData.PoleAreaSqm = totalPoleArea;
+                pData.AssignedPoleNumbers = assignedPoles;
+
+                // 3. Net Servitude Area
+                pData.ServitudeNetAreaSqm = GetPreciseSubtractedArea(parcelPline, servitudePline, intersectingPolesList);
+                
+                pData.MathDifference = pData.ServitudeGrossAreaSqm - (pData.ServitudeNetAreaSqm + pData.PoleAreaSqm);
+                
+                results.Add(pData);
+            }
+
+            return results;
+        }
+
+        // -----------------------------------------------------------------
+        //  Precise Math Helpers (Origin Shift)
+        // -----------------------------------------------------------------
+
+        private double GetPreciseIntersectionArea(Polyline parcelPoly, Polyline subjectPoly)
+        {
+            if (parcelPoly == null || subjectPoly == null) return 0.0;
+            
+            using (Polyline p1 = (Polyline)parcelPoly.Clone())
+            using (Polyline p2 = (Polyline)subjectPoly.Clone())
+            {
+                Point3d minPt = p1.GeometricExtents.MinPoint;
+                Vector3d shift = minPt.GetVectorTo(Point3d.Origin);
+                
+                p1.TransformBy(Matrix3d.Displacement(shift));
+                p2.TransformBy(Matrix3d.Displacement(shift));
+
+                using (Region r1 = SafeCreateRegion(p1))
+                using (Region r2 = SafeCreateRegion(p2))
+                {
+                    if (r1 == null || r2 == null) return 0.0;
+                    
+                    try
+                    {
+                        r1.BooleanOperation(BooleanOperationType.BoolIntersect, r2);
+                        return r1.Area > SliverTolerance ? r1.Area : 0.0;
+                    }
+                    catch { return 0.0; }
+                }
+            }
+        }
+
+        private double GetPreciseSubtractedArea(Polyline parcelPoly, Polyline servitudePoly, List<Polyline> polesToSubtract)
+        {
+            if (parcelPoly == null || servitudePoly == null) return 0.0;
+            
+            using (Polyline p1 = (Polyline)parcelPoly.Clone())
+            using (Polyline p2 = (Polyline)servitudePoly.Clone())
+            {
+                Point3d minPt = p1.GeometricExtents.MinPoint;
+                Vector3d shift = minPt.GetVectorTo(Point3d.Origin);
+                
+                p1.TransformBy(Matrix3d.Displacement(shift));
+                p2.TransformBy(Matrix3d.Displacement(shift));
+
+                using (Region r1 = SafeCreateRegion(p1))
+                using (Region r2 = SafeCreateRegion(p2))
+                {
+                    if (r1 == null || r2 == null) return 0.0;
+                    
+                    try
+                    {
+                        r1.BooleanOperation(BooleanOperationType.BoolIntersect, r2);
+                        
+                        if (r1.Area < SliverTolerance) return 0.0;
+
+                        foreach (var polePoly in polesToSubtract)
+                        {
+                            using (Polyline poleClone = (Polyline)polePoly.Clone())
+                            {
+                                poleClone.TransformBy(Matrix3d.Displacement(shift));
+                                using (Region rPole = SafeCreateRegion(poleClone))
+                                {
+                                    if (rPole != null)
+                                    {
+                                        try
+                                        {
+                                            r1.BooleanOperation(BooleanOperationType.BoolSubtract, rPole);
+                                        }
+                                        catch { }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        return r1.Area;
+                    }
+                    catch { return 0.0; }
+                }
+            }
         }
 
         // -----------------------------------------------------------------
@@ -246,42 +384,35 @@ namespace PUP_AUTO.Geometry
         /// Caller is responsible for disposing the returned Region.
         /// Returns null if the polyline cannot be converted.
         /// </summary>
-        private Region? CreateRegionFromPolyline(Polyline pline)
+        private static Region? SafeCreateRegion(Polyline polyline)
         {
-            if (pline == null || !pline.Closed)
+            if (polyline == null || polyline.Area < 0.001) return null;
+            
+            // Clone the polyline to avoid eNotOpenForWrite when it was opened ForRead
+            using (Polyline clone = (Polyline)polyline.Clone())
             {
-                _logger.LogWarning(
-                    "Cannot create Region: polyline is null or not closed.");
-                return null;
-            }
-
-            using (var curves = new DBObjectCollection())
-            {
-                curves.Add(pline);
                 try
                 {
-                    DBObjectCollection regions = Region.CreateFromCurves(curves);
-
-                    if (regions == null || regions.Count == 0)
+                    // Ensure polyline is strictly closed
+                    if (!clone.Closed) clone.Closed = true; 
+                    using (var objs = new DBObjectCollection())
                     {
-                        return null;
+                        objs.Add(clone);
+                        DBObjectCollection regions = Region.CreateFromCurves(objs);
+                        if (regions != null && regions.Count > 0)
+                        {
+                            Region result = (Region)regions[0];
+                            for (int i = 1; i < regions.Count; i++)
+                            {
+                                regions[i].Dispose();
+                            }
+                            return result;
+                        }
                     }
-
-                    // Take the first region; dispose any extras
-                    Region result = (Region)regions[0];
-                    for (int i = 1; i < regions.Count; i++)
-                    {
-                        regions[i].Dispose();
-                    }
-
-                    return result;
                 }
-                catch (System.Exception ex)
-                {
-                    _logger.LogWarning($"Cannot create Region from Polyline (Handle {pline.Handle}): {ex.Message}");
-                    return null;
-                }
+                catch { return null; }
             }
+            return null;
         }
 
         /// <summary>

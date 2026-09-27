@@ -32,6 +32,11 @@ namespace PUP_AUTO.UI.Windows
         private CheckBox _chkExcel = null!;
         private CheckBox _chkWord = null!;
         private CheckBox _chkCoordinates = null!;
+        private CheckBox _chkMarkers = null!;
+        private CheckBox _chkMvpMathTest = null!;
+        private TextBox _txtStartNumLeft = null!;
+        private TextBox _txtStartNumRight = null!;
+        private TextBox _txtSegmentDistance = null!;
         private TextBox _txtLog = null!;
 
         // ---- State ----
@@ -170,10 +175,53 @@ namespace PUP_AUTO.UI.Windows
             var optStack = new StackPanel();
             _chkExcel = new CheckBox { Content = "Генерирай Excel отчет (.xls)", IsChecked = true, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 4) };
             _chkWord = new CheckBox { Content = "Генерирай Word регистри (.docm)", IsChecked = true, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 4) };
-            _chkCoordinates = new CheckBox { Content = "Генерирай координатни регистри", IsChecked = true, Foreground = TextBrush };
+            _chkCoordinates = new CheckBox { Content = "Генерирай координатни регистри", IsChecked = true, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
+            _chkMvpMathTest = new CheckBox { Content = "🧪 MVP Математически тест (Excel)", IsChecked = false, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
+            
+            var numsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+            numsPanel.Children.Add(new TextBlock { Text = "Старт Ляво:", Foreground = SubtextBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) });
+            _txtStartNumLeft = new TextBox { Text = "5001", Width = 50, Background = SurfaceBrush, Foreground = TextBrush, BorderBrush = Surface2Brush };
+            numsPanel.Children.Add(_txtStartNumLeft);
+            
+            numsPanel.Children.Add(new TextBlock { Text = "Старт Дясно:", Foreground = SubtextBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 4, 0) });
+            _txtStartNumRight = new TextBox { Text = "1", Width = 50, Background = SurfaceBrush, Foreground = TextBrush, BorderBrush = Surface2Brush };
+            numsPanel.Children.Add(_txtStartNumRight);
+
+            var btnGenMarkers = new Button
+            {
+                Content = "📍 Само Точки (20м)",
+                Width = 140, Height = 26, Margin = new Thickness(16, 0, 0, 0),
+                Foreground = BgBrush, Background = AccentBrush,
+                BorderBrush = AccentBrush, BorderThickness = new Thickness(0),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                FontWeight = FontWeights.SemiBold
+            };
+            btnGenMarkers.Click += BtnGenMarkers_Click;
+            numsPanel.Children.Add(btnGenMarkers);
+
+            var lblDist = new TextBlock { Text = "Разстояние:", Foreground = SubtextBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(16, 0, 4, 0) };
+            numsPanel.Children.Add(lblDist);
+            
+            _txtSegmentDistance = new TextBox { Text = "50", Width = 40, Background = SurfaceBrush, Foreground = TextBrush, BorderBrush = Surface2Brush };
+            numsPanel.Children.Add(_txtSegmentDistance);
+
+            var btnSegment = new Button
+            {
+                Content = "✂ Сегментиране",
+                Width = 120, Height = 26, Margin = new Thickness(8, 0, 0, 0),
+                Foreground = BgBrush, Background = AccentBrush,
+                BorderBrush = AccentBrush, BorderThickness = new Thickness(0),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                FontWeight = FontWeights.SemiBold
+            };
+            btnSegment.Click += BtnSegment_Click;
+            numsPanel.Children.Add(btnSegment);
+
             optStack.Children.Add(_chkExcel);
             optStack.Children.Add(_chkWord);
             optStack.Children.Add(_chkCoordinates);
+            optStack.Children.Add(_chkMvpMathTest);
+            optStack.Children.Add(numsPanel);
             ((GroupBox)optGroup).Content = optStack;
             mainGrid.Children.Add(optGroup);
 
@@ -513,6 +561,15 @@ namespace PUP_AUTO.UI.Windows
                 EnsureTransaction();
                 var topo = new TopologyProcessor(_logger!);
 
+                if (_chkMvpMathTest.IsChecked == true)
+                {
+                    AppendLog("── СТАРТИРАНЕ НА MVP MATH TEST ──");
+                    var testResults = topo.RunMvpMathTest(_servitudePline, _polePolylines, _parcelPolylines, _activeTransaction!);
+                    BasicExcelExporter.ExportMathTest(testResults, _projectDir);
+                    AppendLog($"  Записан MVP_Math_Test_Parcels.xlsx в {_projectDir}");
+                    return;
+                }
+
                 AppendLog("═══ ГЕНЕРИРАНЕ СТАРТИРАНО ═══");
 
                 // Step 1 — Load CAD database
@@ -539,7 +596,7 @@ namespace PUP_AUTO.UI.Windows
                     }
                 }
                 
-                int assignedCount = assignedPoles.Count(p => !string.IsNullOrEmpty(p.AssignedParcelId));
+                int assignedCount = assignedPoles.Count(p => p.OverlappingParcels.Count > 0);
                 AppendLog($"  Стълбове: {assignedPoles.Count} обработени ({assignedCount} причислени).");
 
                 // Step 3 — Merge results
@@ -606,8 +663,169 @@ namespace PUP_AUTO.UI.Windows
             {
                 AppendLog($"\nГРЕШКА: {ex.Message}\n{ex.StackTrace}");
                 _logger?.LogError($"PUP_GENERATE (GUI) failed: {ex.Message}\n{ex.StackTrace}");
+
+                Document doc = Application.DocumentManager.MdiActiveDocument;
+                if (doc != null)
+                {
+                    doc.Editor.WriteMessage($"\nFatal error in Generate: {ex.Message}\n");
+                }
             }
         }
+
+        // ================================================================
+        //  MARKER GENERATION EVENT
+        // ================================================================
+        private void BtnGenMarkers_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_servitudePline == null)
+                {
+                    AppendLog("Моля, първо изберете сервитут (🔲 Сервитут) от бутоните горе!");
+                    return;
+                }
+
+                if (!int.TryParse(_txtStartNumLeft.Text, out int startL) || !int.TryParse(_txtStartNumRight.Text, out int startR))
+                {
+                    AppendLog("ГРЕШКА: Въведете валидни числа за начален номер.");
+                    return;
+                }
+
+                AppendLog("── Генериране на 20m точки по сервитута ──");
+                
+                using (var tr = _txMgr!.StartTransaction())
+                {
+                    var markerGen = new Geometry.ServitudeMarkerGenerator(_logger!);
+                    markerGen.GenerateMarkers(_servitudePline, tr, startL, startR);
+                    tr.Commit();
+                }
+
+                AppendLog("  Точките са генерирани в чертежа успешно.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"\nГРЕШКА при генериране на точки: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        // ================================================================
+        //  SEGMENTATION EVENT
+        // ================================================================
+        private void BtnSegment_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_servitudePline == null)
+                {
+                    AppendLog("Моля, първо изберете сервитут (🔲 Сервитут) от бутоните горе!");
+                    return;
+                }
+                
+                if (!double.TryParse(_txtSegmentDistance.Text, out double dist))
+                {
+                    dist = 50.0;
+                }
+
+                AppendLog($"── Сегментиране на избрания сервитут (на {dist}м) ──");
+                
+                using (var tr = _txMgr!.StartTransaction())
+                {
+                    var doc = Application.DocumentManager.MdiActiveDocument;
+                    var db = doc.Database;
+                    
+                    // Sanitize the servitude polyline
+                    using (Polyline cleanServitude = Geometry.GeometrySanitizer.Sanitize(_servitudePline, dist, 0.05))
+                    {
+                        if (cleanServitude != null)
+                        {
+                            var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+                            
+                            EnsureLayerExists(db, tr, "segmented SERV", 3);
+                            
+                            // Clone it because we are inside a using block
+                            Polyline newPline = (Polyline)cleanServitude.Clone();
+                            
+                            // Make it green to distinguish it from the original
+                            newPline.Layer = "segmented SERV";
+                            newPline.ColorIndex = 3; 
+                            newPline.ConstantWidth = 0.5; // Make it thicker to see it!
+                            
+                            btr.AppendEntity(newPline);
+                            tr.AddNewlyCreatedDBObject(newPline, true);
+                        }
+                    }
+
+                    tr.Commit();
+                    
+                    // Force AutoCAD to display the new entity immediately,
+                    // since the top-level _activeTransaction hasn't committed yet.
+                    doc.TransactionManager.QueueForGraphicsFlush();
+                    doc.Editor.UpdateScreen();
+                }
+
+                // Force a commit to the database so it is saved instantly
+                CommitAndRefreshTransaction();
+
+                AppendLog("  Сегментираната линия е добавена в чертежа (Слой: segmented SERV).");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"\nГРЕШКА при сегментиране: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        private void EnsureLayerExists(Database db, Transaction tr, string layerName, short colorIndex)
+        {
+            LayerTable lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+            if (!lt.Has(layerName))
+            {
+                lt.UpgradeOpen();
+                LayerTableRecord ltr = new LayerTableRecord();
+                ltr.Name = layerName;
+                ltr.Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, colorIndex);
+                lt.Add(ltr);
+                tr.AddNewlyCreatedDBObject(ltr, true);
+            }
+        }
+
+        private void CommitAndRefreshTransaction()
+        {
+            if (_activeTransaction == null || _activeTransaction.IsDisposed) return;
+            
+            // Save ObjectIds
+            var servitudeId = _servitudePline?.ObjectId;
+            
+            var poleIds = _polePolylines.Select(p => new { Key = p.Key, Id = p.Value.ObjectId }).ToList();
+            var parcelIds = _parcelPolylines.Select(p => new { Key = p.Key, Id = p.Value.ObjectId }).ToList();
+
+            // Commit and dispose current
+            _activeTransaction.Commit();
+            _activeTransaction.Dispose();
+
+            // Start a new one
+            _activeTransaction = _txMgr!.StartTransaction();
+
+            // Re-open objects
+            if (servitudeId.HasValue && !servitudeId.Value.IsNull)
+            {
+                _servitudePline = (Polyline)_activeTransaction.GetObject(servitudeId.Value, OpenMode.ForRead);
+            }
+
+            _polePolylines.Clear();
+            foreach (var p in poleIds)
+            {
+                if (!p.Id.IsNull)
+                    _polePolylines.Add(new KeyValuePair<string, Polyline>(p.Key, (Polyline)_activeTransaction.GetObject(p.Id, OpenMode.ForRead)));
+            }
+
+            _parcelPolylines.Clear();
+            foreach (var p in parcelIds)
+            {
+                if (!p.Id.IsNull)
+                    _parcelPolylines.Add(new KeyValuePair<string, Polyline>(p.Key, (Polyline)_activeTransaction.GetObject(p.Id, OpenMode.ForRead)));
+            }
+        }
+
 
         // ================================================================
         //  HELPERS

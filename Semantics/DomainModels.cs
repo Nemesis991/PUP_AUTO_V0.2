@@ -29,6 +29,16 @@ namespace PUP_AUTO.Semantics
         public string OwnershipType { get; set; } = string.Empty;
         public string OwnerId { get; set; } = string.Empty;
         public string OwnerName { get; set; } = string.Empty;
+
+        // --- MVP Math Test Fields ---
+        public double TotalAreaSqm { get; set; }
+        public double ServitudeGrossAreaSqm { get; set; }
+        public double ServitudeNetAreaSqm { get; set; }
+        public double PoleAreaSqm { get; set; }
+        public double MathDifference { get; set; }
+        
+        public List<string> AssignedPoleNumbers { get; set; } = new List<string>();
+        public Dictionary<string, double> IndividualPoleAreas { get; set; } = new Dictionary<string, double>();
     }
 
     /// <summary>
@@ -48,7 +58,7 @@ namespace PUP_AUTO.Semantics
     public class Pole
     {
         public string PoleId { get; set; } = string.Empty;
-        public string AssignedParcelId { get; set; } = string.Empty;
+        public Dictionary<string, double> OverlappingParcels { get; set; } = new Dictionary<string, double>();
 
         /// <summary>Sequential number of the pole along the line.</summary>
         public int PoleNumber { get; set; }
