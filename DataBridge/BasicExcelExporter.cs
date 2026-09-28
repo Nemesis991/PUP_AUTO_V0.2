@@ -4,6 +4,7 @@ using System.IO;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
+using PUP_AUTO.Core;
 using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.DataBridge
@@ -41,12 +42,12 @@ namespace PUP_AUTO.DataBridge
                 Row headerRow = new Row();
                 headerRow.Append(
                     CreateCell("1. Идентификатор"),
-                    CreateCell("2. TotalArea"),
-                    CreateCell("3. ServitudeGrossAreaSqm"),
-                    CreateCell("4. ServitudeNetAreaSqm"),
-                    CreateCell("5. PoleAreaSqm"),
-                    CreateCell("6. Остатък в дка"),
-                    CreateCell("7. MathDifference"),
+                    CreateCell("2. TotalArea (дка)"),
+                    CreateCell("3. ServitudeGrossArea (дка)"),
+                    CreateCell("4. ServitudeNetArea (дка)"),
+                    CreateCell("5. PoleArea (дка)"),
+                    CreateCell("6. Остатък (дка)"),
+                    CreateCell("7. MathDifference (дка)"),
                     CreateCell("8. PoleNumbers")
                 );
                 sheetData.Append(headerRow);
@@ -54,17 +55,18 @@ namespace PUP_AUTO.DataBridge
                 // Add Data Rows
                 foreach (var parcel in parcels)
                 {
-                    double mathDiff = Math.Round(parcel.ServitudeGrossAreaSqm - (parcel.ServitudeNetAreaSqm + parcel.PoleAreaSqm), 3);
-                    string checkStatus = Math.Abs(mathDiff) <= 0.001 ? "ОК" : "ГРЕШКА";
-                    string diffStr = $"{mathDiff} - {checkStatus}";
+                    // The balance check decides OK/ГРЕШКА on the raw, unrounded square-meter
+                    // difference — never on an already-rounded decare value.
+                    double diffSqm = parcel.ServitudeGrossAreaSqm - (parcel.ServitudeNetAreaSqm + parcel.PoleAreaSqm);
+                    string checkStatus = Math.Abs(diffSqm) <= 0.001 ? "ОК" : "ГРЕШКА";
+                    string diffStr = $"{AreaUnits.FormatDka(diffSqm)} - {checkStatus}";
 
                     // If there is no pole, we output 0 for ServitudeNetAreaSqm per user request.
                     string netAreaStr = parcel.PoleAreaSqm > 0.001
-                        ? Math.Round(parcel.ServitudeNetAreaSqm, 2).ToString()
-                        : "0";
+                        ? AreaUnits.FormatDka(parcel.ServitudeNetAreaSqm)
+                        : "0.000";
 
-                    double remainderSqm = Math.Round(parcel.TotalAreaSqm - parcel.ServitudeNetAreaSqm - parcel.PoleAreaSqm, 2);
-                    string remainderStr = remainderSqm.ToString();
+                    string remainderStr = AreaUnits.FormatDka(parcel.RemainderAreaSqm);
 
                     int poleCount = parcel.AssignedPoleNumbers?.Count ?? 0;
 
@@ -75,10 +77,10 @@ namespace PUP_AUTO.DataBridge
                         string poleNumbersStr = poleCount == 1 ? parcel.AssignedPoleNumbers[0] : "";
                         row.Append(
                             CreateCell(parcel.ParcelId),
-                            CreateCell(Math.Round(parcel.TotalAreaSqm, 2).ToString()),
-                            CreateCell(Math.Round(parcel.ServitudeGrossAreaSqm, 2).ToString()),
+                            CreateCell(AreaUnits.FormatDka(parcel.TotalAreaSqm)),
+                            CreateCell(AreaUnits.FormatDka(parcel.ServitudeGrossAreaSqm)),
                             CreateCell(netAreaStr),
-                            CreateCell(Math.Round(parcel.PoleAreaSqm, 2).ToString()),
+                            CreateCell(AreaUnits.FormatDka(parcel.PoleAreaSqm)),
                             CreateCell(remainderStr),
                             CreateCell(diffStr),
                             CreateCell(poleNumbersStr)
@@ -101,10 +103,10 @@ namespace PUP_AUTO.DataBridge
                             {
                                 row.Append(
                                     CreateCell(parcel.ParcelId),
-                                    CreateCell(Math.Round(parcel.TotalAreaSqm, 2).ToString()),
-                                    CreateCell(Math.Round(parcel.ServitudeGrossAreaSqm, 2).ToString()),
+                                    CreateCell(AreaUnits.FormatDka(parcel.TotalAreaSqm)),
+                                    CreateCell(AreaUnits.FormatDka(parcel.ServitudeGrossAreaSqm)),
                                     CreateCell(netAreaStr),
-                                    CreateCell(Math.Round(indArea, 2).ToString()),
+                                    CreateCell(AreaUnits.FormatDka(indArea)),
                                     CreateCell(remainderStr),
                                     CreateCell(diffStr),
                                     CreateCell(pNum)
@@ -117,7 +119,7 @@ namespace PUP_AUTO.DataBridge
                                     CreateCell(""),
                                     CreateCell(""),
                                     CreateCell(""),
-                                    CreateCell(Math.Round(indArea, 2).ToString()),
+                                    CreateCell(AreaUnits.FormatDka(indArea)),
                                     CreateCell(""),
                                     CreateCell(""),
                                     CreateCell(pNum)

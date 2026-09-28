@@ -39,21 +39,22 @@ namespace PUP_AUTO.DataBridge
         private const string SheetNameBalances = "Баланси";
 
         // ---- Column indices: Sheet "Засегнати имоти" ----
-        private const int P_ColRowNum        = 0;
-        private const int P_ColEkatte        = 1;
-        private const int P_ColSubDivision   = 2;
-        private const int P_ColTerritoryType = 3;
-        private const int P_ColUsage         = 4;
-        private const int P_ColParcelId      = 5;
-        private const int P_ColLocality      = 6;
-        private const int P_ColDocArea       = 7;
-        private const int P_ColCategory      = 8;
-        private const int P_ColOwnershipType = 9;
-        private const int P_ColOwnerId       = 10;
-        private const int P_ColOwnerName     = 11;
-        private const int P_ColServArea      = 12;
-        private const int P_ColPoleCount     = 13;
-        private const int P_ColPoleArea      = 14;
+        // These must match the 14-column header in TemplateX.xls; the same order is
+        // used by the Word parcel register (Template02).
+        private const int P_ColParcelId      = 0;
+        private const int P_ColSubDivision   = 1;
+        private const int P_ColTerritoryType = 2;
+        private const int P_ColUsage         = 3;
+        private const int P_ColLocality      = 4;
+        private const int P_ColCategory      = 5;
+        private const int P_ColDocArea       = 6;
+        private const int P_ColServArea      = 7;
+        private const int P_ColRemainder     = 8;
+        private const int P_ColPoleNumbers   = 9;
+        private const int P_ColPoleArea      = 10;
+        private const int P_ColOwnershipType = 11;
+        private const int P_ColOwnerId       = 12;
+        private const int P_ColOwnerName     = 13;
 
         // ---- Column indices: Sheet "Стълбове" ----
         private const int T_ColRowNum    = 0;
@@ -74,6 +75,14 @@ namespace PUP_AUTO.DataBridge
 
         private readonly Logger _logger;
         private readonly string _templatePath;
+
+        /// <summary>
+        /// Caches one cloned, 3-decimal-formatted cell style per distinct source style,
+        /// so repeated area-cell writes don't each allocate a new ICellStyle (the legacy
+        /// .xls format caps the number of distinct styles per workbook). Reset per
+        /// <see cref="GenerateReport"/> call, since style indices are workbook-specific.
+        /// </summary>
+        private readonly Dictionary<short, ICellStyle> _areaStyleCache = new Dictionary<short, ICellStyle>();
 
         /// <param name="projectDirectory">
         /// The root directory of the project; _Templates is resolved relative to it.
@@ -112,6 +121,8 @@ namespace PUP_AUTO.DataBridge
                 return;
             }
 
+            _areaStyleCache.Clear();
+
             IWorkbook workbook;
             try
             {
@@ -146,24 +157,26 @@ namespace PUP_AUTO.DataBridge
                     (row, styleRow, index) =>
                     {
                         var d = data[index];
-                        int rowNum = index + 1;
 
-                        SetCell(row, P_ColRowNum,        rowNum,                 GetCellStyle(workbook, styleRow, P_ColRowNum));
-                        SetCell(row, P_ColEkatte,        d.ParcelId.Split('.').FirstOrDefault() ?? d.ParcelId,
-                                                                                 GetCellStyle(workbook, styleRow, P_ColEkatte));
+                        SetCell(row, P_ColParcelId,      d.ParcelId,             GetCellStyle(workbook, styleRow, P_ColParcelId));
                         SetCell(row, P_ColSubDivision,   d.SubDivision,          GetCellStyle(workbook, styleRow, P_ColSubDivision));
                         SetCell(row, P_ColTerritoryType, d.TerritoryType,        GetCellStyle(workbook, styleRow, P_ColTerritoryType));
                         SetCell(row, P_ColUsage,         d.Usage,                GetCellStyle(workbook, styleRow, P_ColUsage));
-                        SetCell(row, P_ColParcelId,      d.ParcelId,             GetCellStyle(workbook, styleRow, P_ColParcelId));
                         SetCell(row, P_ColLocality,      d.Locality,             GetCellStyle(workbook, styleRow, P_ColLocality));
-                        SetCell(row, P_ColDocArea,       d.DocumentAreaDecares,   GetCellStyle(workbook, styleRow, P_ColDocArea));
                         SetCell(row, P_ColCategory,      d.Category,             GetCellStyle(workbook, styleRow, P_ColCategory));
+                        SetCell(row, P_ColDocArea,       AreaUnits.SqmToDka(d.DocumentAreaSqM),  GetAreaCellStyle(workbook, GetCellStyle(workbook, styleRow, P_ColDocArea)));
+                        SetCell(row, P_ColServArea,      AreaUnits.SqmToDka(d.ServitudeAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(workbook, styleRow, P_ColServArea)));
+                        SetCell(row, P_ColRemainder,     AreaUnits.SqmToDka(d.RemainderAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(workbook, styleRow, P_ColRemainder)));
+                        SetCell(row, P_ColPoleNumbers,   d.PoleNumbers,          GetCellStyle(workbook, styleRow, P_ColPoleNumbers));
                         SetCell(row, P_ColOwnershipType, d.OwnershipType,        GetCellStyle(workbook, styleRow, P_ColOwnershipType));
-                        SetCell(row, P_ColOwnerId,       d.OwnerId,             GetCellStyle(workbook, styleRow, P_ColOwnerId));
+                        SetCell(row, P_ColOwnerId,       d.OwnerId,              GetCellStyle(workbook, styleRow, P_ColOwnerId));
                         SetCell(row, P_ColOwnerName,     d.OwnerName,            GetCellStyle(workbook, styleRow, P_ColOwnerName));
-                        SetCell(row, P_ColServArea,      d.ServitudeAreaDecares,  GetCellStyle(workbook, styleRow, P_ColServArea));
-                        SetCell(row, P_ColPoleCount,     d.PoleCount,            GetCellStyle(workbook, styleRow, P_ColPoleCount));
-                        SetCell(row, P_ColPoleArea,      d.PoleAreaDecares,       GetCellStyle(workbook, styleRow, P_ColPoleArea));
+
+                        // The template leaves the pole-step area blank for parcels without a pole.
+                        if (d.PoleCount > 0)
+                            SetCell(row, P_ColPoleArea, AreaUnits.SqmToDka(d.PoleAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(workbook, styleRow, P_ColPoleArea)));
+                        else
+                            SetCell(row, P_ColPoleArea, string.Empty, GetCellStyle(workbook, styleRow, P_ColPoleArea));
                     });
 
                 _logger.LogSuccess(
@@ -223,11 +236,9 @@ namespace PUP_AUTO.DataBridge
                                 ownerName = pd.OwnerName;
                             }
 
-                            double areaDecares = Math.Round(flat.area / 1000.0, 3);
-
                             SetCell(row, T_ColRowNum,    rowNum,               GetCellStyle(workbook, styleRow, T_ColRowNum));
                             SetCell(row, T_ColPoleNum,   pole.PoleNumber,      GetCellStyle(workbook, styleRow, T_ColPoleNum));
-                            SetCell(row, T_ColPoleArea,  areaDecares,          GetCellStyle(workbook, styleRow, T_ColPoleArea));
+                            SetCell(row, T_ColPoleArea,  AreaUnits.SqmToDka(flat.area), GetAreaCellStyle(workbook, GetCellStyle(workbook, styleRow, T_ColPoleArea)));
                             SetCell(row, T_ColParcelId,  flat.parcelId,        GetCellStyle(workbook, styleRow, T_ColParcelId));
                             SetCell(row, T_ColOwnerName, ownerName,            GetCellStyle(workbook, styleRow, T_ColOwnerName));
                         });
@@ -419,13 +430,15 @@ namespace PUP_AUTO.DataBridge
                     ICellStyle? numStyle = templateRow != null
                         ? GetCellStyle(workbook, templateRow, B_ColParcelCount)
                         : null;
+                    ICellStyle areaStyle = GetAreaCellStyle(workbook, numStyle);
 
-                    SetCell(dataRow, B_ColGroupValue,  group.Key,                                            null);
-                    SetCell(dataRow, B_ColParcelCount, group.Count(),                                        numStyle);
-                    SetCell(dataRow, B_ColTotalArea,   Math.Round(group.Sum(r => r.DocumentAreaDecares), 3),  numStyle);
-                    SetCell(dataRow, B_ColServArea,    Math.Round(group.Sum(r => r.ServitudeAreaDecares), 3), numStyle);
-                    SetCell(dataRow, B_ColPoleCount,   group.Sum(r => r.PoleCount),                          numStyle);
-                    SetCell(dataRow, B_ColPoleArea,    Math.Round(group.Sum(r => r.PoleAreaDecares), 3),      numStyle);
+                    // Sum raw square-meter values, then convert to decares ONCE.
+                    SetCell(dataRow, B_ColGroupValue,  group.Key,                                                   null);
+                    SetCell(dataRow, B_ColParcelCount, group.Count(),                                               numStyle);
+                    SetCell(dataRow, B_ColTotalArea,   AreaUnits.SqmToDka(group.Sum(r => r.DocumentAreaSqM)),       areaStyle);
+                    SetCell(dataRow, B_ColServArea,    AreaUnits.SqmToDka(group.Sum(r => r.ServitudeAreaSqM)),      areaStyle);
+                    SetCell(dataRow, B_ColPoleCount,   group.Sum(r => r.PoleCount),                                 numStyle);
+                    SetCell(dataRow, B_ColPoleArea,    AreaUnits.SqmToDka(group.Sum(r => r.PoleAreaSqM)),           areaStyle);
 
                     currentRow++;
                 }
@@ -490,6 +503,29 @@ namespace PUP_AUTO.DataBridge
         {
             ICell? templateCell = styleSourceRow.GetCell(colIndex);
             return templateCell?.CellStyle;
+        }
+
+        /// <summary>
+        /// Returns a cell style identical to <paramref name="baseStyle"/> (borders, font,
+        /// alignment) but with a "0.000" number format, so every area value in the report
+        /// displays with exactly 3 decimals. Styles are cloned once per distinct source
+        /// style and cached in <see cref="_areaStyleCache"/> to stay under the .xls style limit.
+        /// </summary>
+        private ICellStyle GetAreaCellStyle(IWorkbook workbook, ICellStyle? baseStyle)
+        {
+            short key = baseStyle?.Index ?? short.MinValue;
+            if (_areaStyleCache.TryGetValue(key, out ICellStyle? cached))
+                return cached;
+
+            ICellStyle style = workbook.CreateCellStyle();
+            if (baseStyle != null)
+            {
+                style.CloneStyleFrom(baseStyle);
+            }
+            style.DataFormat = workbook.CreateDataFormat().GetFormat("0.000");
+
+            _areaStyleCache[key] = style;
+            return style;
         }
     }
 }

@@ -6,6 +6,7 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
+using PUP_AUTO.Core;
 
 namespace PUP_AUTO.Semantics
 {
@@ -36,7 +37,17 @@ namespace PUP_AUTO.Semantics
         public double ServitudeNetAreaSqm { get; set; }
         public double PoleAreaSqm { get; set; }
         public double MathDifference { get; set; }
-        
+
+        /// <summary>
+        /// Unaffected remainder = Total - net servitude - pole footprint, in Square Meters.
+        /// Clamped at 0 so it cannot report a negative area. Raw, unrounded — safe to use
+        /// in further arithmetic (e.g. balance/total sums).
+        /// </summary>
+        public double RemainderAreaSqm => Math.Max(0.0, TotalAreaSqm - ServitudeNetAreaSqm - PoleAreaSqm);
+
+        /// <summary>Remainder area in Decares, rounded to 3 decimals. Display only — never use in further arithmetic.</summary>
+        public double RemainderAreaDka => AreaUnits.SqmToDka(RemainderAreaSqm);
+
         public List<string> AssignedPoleNumbers { get; set; } = new List<string>();
         public Dictionary<string, double> IndividualPoleAreas { get; set; } = new Dictionary<string, double>();
     }
@@ -66,8 +77,8 @@ namespace PUP_AUTO.Semantics
         /// <summary>Footprint area of the pole in Square Meters.</summary>
         public double PoleAreaSqM { get; set; }
 
-        /// <summary>Pole footprint area converted to Decares (SqM / 1000), rounded to 3 decimal places.</summary>
-        public double PoleAreaDecares => Math.Round(PoleAreaSqM / 1000.0, 3);
+        /// <summary>Pole footprint area in Decares, rounded to 3 decimals. Display only — never use in further arithmetic.</summary>
+        public double PoleAreaDecares => AreaUnits.SqmToDka(PoleAreaSqM);
 
         public Point3d Location { get; set; }
         public ObjectId ObjectId { get; set; } = ObjectId.Null;
@@ -112,18 +123,26 @@ namespace PUP_AUTO.Semantics
         /// </summary>
         public List<Pole> AssignedPoles { get; set; } = new List<Pole>();
 
-        // --- Computed Decare Helpers ---
-        /// <summary>Total parcel area converted to Decares (SqM / 1000), rounded to 3 decimal places.</summary>
-        public double DocumentAreaDecares => Math.Round(DocumentAreaSqM / 1000.0, 3);
+        /// <summary>
+        /// Remainder = Total Area - Servitude Area, in Square Meters. Raw, unrounded —
+        /// safe to use in further arithmetic (e.g. balance/total sums).
+        /// ServitudeAreaSqM is the gross parcel/servitude intersection, which already
+        /// contains the pole footprints, so the pole area must NOT be subtracted again here.
+        /// </summary>
+        public double RemainderAreaSqM => Math.Max(0.0, DocumentAreaSqM - ServitudeAreaSqM);
 
-        /// <summary>Servitude area converted to Decares (SqM / 1000), rounded to 3 decimal places.</summary>
-        public double ServitudeAreaDecares => Math.Round(ServitudeAreaSqM / 1000.0, 3);
+        // --- Computed Decare Helpers (display only — never use in further arithmetic) ---
+        /// <summary>Total parcel area in Decares, rounded to 3 decimals.</summary>
+        public double DocumentAreaDecares => AreaUnits.SqmToDka(DocumentAreaSqM);
 
-        /// <summary>Pole area converted to Decares (SqM / 1000), rounded to 3 decimal places.</summary>
-        public double PoleAreaDecares => Math.Round(PoleAreaSqM / 1000.0, 3);
+        /// <summary>Servitude area in Decares, rounded to 3 decimals.</summary>
+        public double ServitudeAreaDecares => AreaUnits.SqmToDka(ServitudeAreaSqM);
 
-        /// <summary>Remainder = Total Area - Servitude Area, in Decares, rounded to 3 decimal places.</summary>
-        public double RemainderAreaDecares => Math.Round(DocumentAreaDecares - ServitudeAreaDecares, 3);
+        /// <summary>Pole area in Decares, rounded to 3 decimals.</summary>
+        public double PoleAreaDecares => AreaUnits.SqmToDka(PoleAreaSqM);
+
+        /// <summary>Remainder area in Decares, rounded to 3 decimals.</summary>
+        public double RemainderAreaDecares => AreaUnits.SqmToDka(RemainderAreaSqM);
 
         /// <summary>
         /// Formatted pole numbers string, e.g. "Стълб №24,Стълб №23".

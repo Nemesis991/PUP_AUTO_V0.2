@@ -170,11 +170,11 @@ namespace PUP_AUTO.DataBridge
                         SetCellText(cells, 3,  d.Usage);
                         SetCellText(cells, 4,  d.Locality);
                         SetCellText(cells, 5,  d.Category);
-                        SetCellText(cells, 6,  d.DocumentAreaDecares.ToString("F3"));
-                        SetCellText(cells, 7,  d.ServitudeAreaDecares.ToString("F3"));
-                        SetCellText(cells, 8,  d.RemainderAreaDecares.ToString("F3"));
+                        SetCellText(cells, 6,  AreaUnits.FormatDka(d.DocumentAreaSqM));
+                        SetCellText(cells, 7,  AreaUnits.FormatDka(d.ServitudeAreaSqM));
+                        SetCellText(cells, 8,  AreaUnits.FormatDka(d.RemainderAreaSqM));
                         SetCellText(cells, 9,  d.PoleNumbers);
-                        SetCellText(cells, 10, d.PoleCount > 0 ? d.PoleAreaDecares.ToString("F3") : "");
+                        SetCellText(cells, 10, d.PoleCount > 0 ? AreaUnits.FormatDka(d.PoleAreaSqM) : "");
                         SetCellText(cells, 11, d.OwnershipType);
                         SetCellText(cells, 12, d.OwnerId);
                         SetCellText(cells, 13, d.OwnerName);
@@ -260,7 +260,6 @@ namespace PUP_AUTO.DataBridge
                     {
                         var pole = flat.pole;
                         var parcelId = flat.parcelId;
-                        double areaDecares = Math.Round(flat.area / 1000.0, 3);
 
                         var newRow = (TableRow)templateRow.CloneNode(true);
                         var cells = newRow.Elements<TableCell>().ToList();
@@ -279,11 +278,11 @@ namespace PUP_AUTO.DataBridge
                         // Col 7: ЕГН/БУЛСТАТ
                         // Col 8: Собственик (Име)
                         SetCellText(cells, 0, $"№{pole.PoleNumber}");
-                        SetCellText(cells, 1, areaDecares.ToString("F3"));
+                        SetCellText(cells, 1, AreaUnits.FormatDka(flat.area));
                         SetCellText(cells, 2, parcelId);
                         SetCellText(cells, 3, pd?.TerritoryType ?? "");
                         SetCellText(cells, 4, pd?.Usage ?? "");
-                        SetCellText(cells, 5, reportRow != null ? reportRow.DocumentAreaDecares.ToString("F3") : "");
+                        SetCellText(cells, 5, reportRow != null ? AreaUnits.FormatDka(reportRow.DocumentAreaSqM) : "");
                         SetCellText(cells, 6, pd?.OwnershipType ?? "");
                         SetCellText(cells, 7, pd?.OwnerId ?? "");
                         SetCellText(cells, 8, pd?.OwnerName ?? "");
@@ -295,7 +294,7 @@ namespace PUP_AUTO.DataBridge
                     var totalsRow = (TableRow)templateRow.CloneNode(true);
                     var totalCells = totalsRow.Elements<TableCell>().ToList();
                     SetCellText(totalCells, 0, "Общо:");
-                    SetCellText(totalCells, 1, Math.Round(flatPoles.Sum(p => p.area) / 1000.0, 3).ToString("F3"));
+                    SetCellText(totalCells, 1, AreaUnits.FormatDka(flatPoles.Sum(p => p.area)));
                     for (int i = 2; i < totalCells.Count; i++)
                         SetCellText(totalCells, i, "");
                     table.AppendChild(totalsRow);
@@ -390,40 +389,42 @@ namespace PUP_AUTO.DataBridge
                             // 6: Площ стълбове, дка
                             // 7: Обща засегната площ, дка (servitude + poles)
                             // 8: % (percentage)
-                            double servSum = Math.Round(group.Sum(r => r.ServitudeAreaDecares), 3);
-                            double poleSum = Math.Round(group.Sum(r => r.PoleAreaDecares), 3);
-                            double totalAffected = Math.Round(servSum + poleSum, 3);
-                            double totalServ = Math.Round(data.Sum(r => r.ServitudeAreaDecares), 3);
-                            double totalPoleAll = Math.Round(data.Sum(r => r.PoleAreaDecares), 3);
-                            double totalAll = totalServ + totalPoleAll;
-                            double pct = totalAll > 0 ? Math.Round(totalAffected / totalAll * 100.0, 2) : 0;
+                            // All sums are computed on raw square-meter values; conversion
+                            // to decares happens once, at the point of writing each cell.
+                            double servSumSqm = group.Sum(r => r.ServitudeAreaSqM);
+                            double poleSumSqm = group.Sum(r => r.PoleAreaSqM);
+                            double totalAffectedSqm = servSumSqm + poleSumSqm;
+                            double totalServSqm = data.Sum(r => r.ServitudeAreaSqM);
+                            double totalPoleAllSqm = data.Sum(r => r.PoleAreaSqM);
+                            double totalAllSqm = totalServSqm + totalPoleAllSqm;
+                            double pct = totalAllSqm > 0 ? Math.Round(totalAffectedSqm / totalAllSqm * 100.0, 2) : 0;
 
                             SetCellText(cells, 0, rowNum.ToString());
                             SetCellText(cells, 1, group.Key);
                             SetCellText(cells, 2, group.Count().ToString());
-                            SetCellText(cells, 3, Math.Round(group.Sum(r => r.DocumentAreaDecares), 3).ToString("F3"));
-                            SetCellText(cells, 4, servSum.ToString("F3"));
+                            SetCellText(cells, 3, AreaUnits.FormatDka(group.Sum(r => r.DocumentAreaSqM)));
+                            SetCellText(cells, 4, AreaUnits.FormatDka(servSumSqm));
                             SetCellText(cells, 5, group.Sum(r => r.PoleCount).ToString());
-                            SetCellText(cells, 6, poleSum.ToString("F3"));
-                            SetCellText(cells, 7, totalAffected.ToString("F3"));
+                            SetCellText(cells, 6, AreaUnits.FormatDka(poleSumSqm));
+                            SetCellText(cells, 7, AreaUnits.FormatDka(totalAffectedSqm));
                             SetCellText(cells, 8, pct.ToString("F2"));
 
                             table.AppendChild(newRow);
                         }
 
-                        // Totals row
+                        // Totals row — sum raw square meters, convert once.
                         var totRow = (TableRow)tplRow.CloneNode(true);
                         var totCells = totRow.Elements<TableCell>().ToList();
-                        double totalServAll = Math.Round(data.Sum(r => r.ServitudeAreaDecares), 3);
-                        double totalPolesAll = Math.Round(data.Sum(r => r.PoleAreaDecares), 3);
+                        double totalServAllSqm = data.Sum(r => r.ServitudeAreaSqM);
+                        double totalPolesAllSqm = data.Sum(r => r.PoleAreaSqM);
                         SetCellText(totCells, 0, "");
                         SetCellText(totCells, 1, "Общо:");
                         SetCellText(totCells, 2, data.Count.ToString());
-                        SetCellText(totCells, 3, Math.Round(data.Sum(r => r.DocumentAreaDecares), 3).ToString("F3"));
-                        SetCellText(totCells, 4, totalServAll.ToString("F3"));
+                        SetCellText(totCells, 3, AreaUnits.FormatDka(data.Sum(r => r.DocumentAreaSqM)));
+                        SetCellText(totCells, 4, AreaUnits.FormatDka(totalServAllSqm));
                         SetCellText(totCells, 5, data.Sum(r => r.PoleCount).ToString());
-                        SetCellText(totCells, 6, totalPolesAll.ToString("F3"));
-                        SetCellText(totCells, 7, Math.Round(totalServAll + totalPolesAll, 3).ToString("F3"));
+                        SetCellText(totCells, 6, AreaUnits.FormatDka(totalPolesAllSqm));
+                        SetCellText(totCells, 7, AreaUnits.FormatDka(totalServAllSqm + totalPolesAllSqm));
                         SetCellText(totCells, 8, "100.00");
                         table.AppendChild(totRow);
                     }
@@ -490,7 +491,7 @@ namespace PUP_AUTO.DataBridge
                         var headerRow = (TableRow)tplRow.CloneNode(true);
                         var hCells = headerRow.Elements<TableCell>().ToList();
                         SetCellText(hCells, 0, $"Стълб №{pole.PoleNumber}");
-                        SetCellText(hCells, 1, $"Площ: {pole.PoleAreaDecares:F3} дка");
+                        SetCellText(hCells, 1, $"Площ: {AreaUnits.FormatDka(pole.PoleAreaSqM)} дка");
                         for (int c = 2; c < hCells.Count; c++) SetCellText(hCells, c, "");
                         table.AppendChild(headerRow);
 
@@ -668,40 +669,42 @@ namespace PUP_AUTO.DataBridge
                         var newRow = (TableRow)tplRow.CloneNode(true);
                         var cells = newRow.Elements<TableCell>().ToList();
 
-                        double servSum = Math.Round(group.Sum(r => r.ServitudeAreaDecares), 3);
-                        double poleSum = Math.Round(group.Sum(r => r.PoleAreaDecares), 3);
-                        double totalAffected = Math.Round(servSum + poleSum, 3);
-                        double totalAll = Math.Round(data.Sum(r => r.ServitudeAreaDecares) + data.Sum(r => r.PoleAreaDecares), 3);
-                        double pct = totalAll > 0 ? Math.Round(totalAffected / totalAll * 100.0, 2) : 0;
+                        // All sums are computed on raw square-meter values; conversion
+                        // to decares happens once, at the point of writing each cell.
+                        double servSumSqm = group.Sum(r => r.ServitudeAreaSqM);
+                        double poleSumSqm = group.Sum(r => r.PoleAreaSqM);
+                        double totalAffectedSqm = servSumSqm + poleSumSqm;
+                        double totalAllSqm = data.Sum(r => r.ServitudeAreaSqM) + data.Sum(r => r.PoleAreaSqM);
+                        double pct = totalAllSqm > 0 ? Math.Round(totalAffectedSqm / totalAllSqm * 100.0, 2) : 0;
 
                         // Columns: №, Землище, Брой имоти, Обща площ, Площ сервитут,
                         //          Брой стълбове, Площ стълбове, Обща засегната площ, %
                         SetCellText(cells, 0, rowNum.ToString());
                         SetCellText(cells, 1, group.Key);
                         SetCellText(cells, 2, group.Count().ToString());
-                        SetCellText(cells, 3, Math.Round(group.Sum(r => r.DocumentAreaDecares), 3).ToString("F3"));
-                        SetCellText(cells, 4, servSum.ToString("F3"));
+                        SetCellText(cells, 3, AreaUnits.FormatDka(group.Sum(r => r.DocumentAreaSqM)));
+                        SetCellText(cells, 4, AreaUnits.FormatDka(servSumSqm));
                         SetCellText(cells, 5, group.Sum(r => r.PoleCount).ToString());
-                        SetCellText(cells, 6, poleSum.ToString("F3"));
-                        SetCellText(cells, 7, totalAffected.ToString("F3"));
+                        SetCellText(cells, 6, AreaUnits.FormatDka(poleSumSqm));
+                        SetCellText(cells, 7, AreaUnits.FormatDka(totalAffectedSqm));
                         SetCellText(cells, 8, pct.ToString("F2"));
 
                         table.AppendChild(newRow);
                     }
 
-                    // Totals row
+                    // Totals row — sum raw square meters, convert once.
                     var totRow = (TableRow)tplRow.CloneNode(true);
                     var totCells = totRow.Elements<TableCell>().ToList();
-                    double totalServAll = Math.Round(data.Sum(r => r.ServitudeAreaDecares), 3);
-                    double totalPolesAll = Math.Round(data.Sum(r => r.PoleAreaDecares), 3);
+                    double totalServAllSqm = data.Sum(r => r.ServitudeAreaSqM);
+                    double totalPolesAllSqm = data.Sum(r => r.PoleAreaSqM);
                     SetCellText(totCells, 0, "");
                     SetCellText(totCells, 1, "Общо:");
                     SetCellText(totCells, 2, data.Count.ToString());
-                    SetCellText(totCells, 3, Math.Round(data.Sum(r => r.DocumentAreaDecares), 3).ToString("F3"));
-                    SetCellText(totCells, 4, totalServAll.ToString("F3"));
+                    SetCellText(totCells, 3, AreaUnits.FormatDka(data.Sum(r => r.DocumentAreaSqM)));
+                    SetCellText(totCells, 4, AreaUnits.FormatDka(totalServAllSqm));
                     SetCellText(totCells, 5, data.Sum(r => r.PoleCount).ToString());
-                    SetCellText(totCells, 6, totalPolesAll.ToString("F3"));
-                    SetCellText(totCells, 7, Math.Round(totalServAll + totalPolesAll, 3).ToString("F3"));
+                    SetCellText(totCells, 6, AreaUnits.FormatDka(totalPolesAllSqm));
+                    SetCellText(totCells, 7, AreaUnits.FormatDka(totalServAllSqm + totalPolesAllSqm));
                     SetCellText(totCells, 8, "100.00");
                     table.AppendChild(totRow);
 
@@ -777,27 +780,29 @@ namespace PUP_AUTO.DataBridge
 
                         // Columns: №, Вид територия, Брой имоти, Обща площ (дка),
                         //          Площ сервитут (дка), Брой стълбове, Площ стълбове (дка)
+                        // Sums are computed on raw square-meter values; conversion to
+                        // decares happens once, at the point of writing each cell.
                         SetCellText(cells, 0, rowNum.ToString());
                         SetCellText(cells, 1, group.Key);
                         SetCellText(cells, 2, group.Count().ToString());
-                        SetCellText(cells, 3, Math.Round(group.Sum(r => r.DocumentAreaDecares), 3).ToString("F3"));
-                        SetCellText(cells, 4, Math.Round(group.Sum(r => r.ServitudeAreaDecares), 3).ToString("F3"));
+                        SetCellText(cells, 3, AreaUnits.FormatDka(group.Sum(r => r.DocumentAreaSqM)));
+                        SetCellText(cells, 4, AreaUnits.FormatDka(group.Sum(r => r.ServitudeAreaSqM)));
                         SetCellText(cells, 5, group.Sum(r => r.PoleCount).ToString());
-                        SetCellText(cells, 6, Math.Round(group.Sum(r => r.PoleAreaDecares), 3).ToString("F3"));
+                        SetCellText(cells, 6, AreaUnits.FormatDka(group.Sum(r => r.PoleAreaSqM)));
 
                         table.AppendChild(newRow);
                     }
 
-                    // Grand totals row
+                    // Grand totals row — sum raw square meters, convert once.
                     var totRow = (TableRow)tplRow.CloneNode(true);
                     var totCells = totRow.Elements<TableCell>().ToList();
                     SetCellText(totCells, 0, "");
                     SetCellText(totCells, 1, "Общо:");
                     SetCellText(totCells, 2, data.Count.ToString());
-                    SetCellText(totCells, 3, Math.Round(data.Sum(r => r.DocumentAreaDecares), 3).ToString("F3"));
-                    SetCellText(totCells, 4, Math.Round(data.Sum(r => r.ServitudeAreaDecares), 3).ToString("F3"));
+                    SetCellText(totCells, 3, AreaUnits.FormatDka(data.Sum(r => r.DocumentAreaSqM)));
+                    SetCellText(totCells, 4, AreaUnits.FormatDka(data.Sum(r => r.ServitudeAreaSqM)));
                     SetCellText(totCells, 5, data.Sum(r => r.PoleCount).ToString());
-                    SetCellText(totCells, 6, Math.Round(data.Sum(r => r.PoleAreaDecares), 3).ToString("F3"));
+                    SetCellText(totCells, 6, AreaUnits.FormatDka(data.Sum(r => r.PoleAreaSqM)));
                     table.AppendChild(totRow);
 
                     doc.MainDocumentPart?.Document?.Save();
