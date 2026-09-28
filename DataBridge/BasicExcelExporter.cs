@@ -45,8 +45,9 @@ namespace PUP_AUTO.DataBridge
                     CreateCell("3. ServitudeGrossAreaSqm"),
                     CreateCell("4. ServitudeNetAreaSqm"),
                     CreateCell("5. PoleAreaSqm"),
-                    CreateCell("6. MathDifference"),
-                    CreateCell("7. PoleNumbers")
+                    CreateCell("6. Остатък в дка"),
+                    CreateCell("7. MathDifference"),
+                    CreateCell("8. PoleNumbers")
                 );
                 sheetData.Append(headerRow);
 
@@ -58,9 +59,12 @@ namespace PUP_AUTO.DataBridge
                     string diffStr = $"{mathDiff} - {checkStatus}";
 
                     // If there is no pole, we output 0 for ServitudeNetAreaSqm per user request.
-                    string netAreaStr = parcel.PoleAreaSqm > 0.001 
-                        ? Math.Round(parcel.ServitudeNetAreaSqm, 2).ToString() 
+                    string netAreaStr = parcel.PoleAreaSqm > 0.001
+                        ? Math.Round(parcel.ServitudeNetAreaSqm, 2).ToString()
                         : "0";
+
+                    double remainderSqm = Math.Round(parcel.TotalAreaSqm - parcel.ServitudeNetAreaSqm - parcel.PoleAreaSqm, 2);
+                    string remainderStr = remainderSqm.ToString();
 
                     int poleCount = parcel.AssignedPoleNumbers?.Count ?? 0;
 
@@ -75,6 +79,7 @@ namespace PUP_AUTO.DataBridge
                             CreateCell(Math.Round(parcel.ServitudeGrossAreaSqm, 2).ToString()),
                             CreateCell(netAreaStr),
                             CreateCell(Math.Round(parcel.PoleAreaSqm, 2).ToString()),
+                            CreateCell(remainderStr),
                             CreateCell(diffStr),
                             CreateCell(poleNumbersStr)
                         );
@@ -100,6 +105,7 @@ namespace PUP_AUTO.DataBridge
                                     CreateCell(Math.Round(parcel.ServitudeGrossAreaSqm, 2).ToString()),
                                     CreateCell(netAreaStr),
                                     CreateCell(Math.Round(indArea, 2).ToString()),
+                                    CreateCell(remainderStr),
                                     CreateCell(diffStr),
                                     CreateCell(pNum)
                                 );
@@ -113,6 +119,7 @@ namespace PUP_AUTO.DataBridge
                                     CreateCell(""),
                                     CreateCell(Math.Round(indArea, 2).ToString()),
                                     CreateCell(""),
+                                    CreateCell(""),
                                     CreateCell(pNum)
                                 );
                             }
@@ -125,6 +132,7 @@ namespace PUP_AUTO.DataBridge
                         mergeCells.Append(new MergeCell() { Reference = new StringValue($"C{startRow}:C{endRow}") });
                         mergeCells.Append(new MergeCell() { Reference = new StringValue($"D{startRow}:D{endRow}") });
                         mergeCells.Append(new MergeCell() { Reference = new StringValue($"F{startRow}:F{endRow}") });
+                        mergeCells.Append(new MergeCell() { Reference = new StringValue($"G{startRow}:G{endRow}") });
                     }
                 }
 
