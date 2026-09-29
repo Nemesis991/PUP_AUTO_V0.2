@@ -488,8 +488,8 @@ namespace PUP_AUTO.DataBridge
                             var centRow = (TableRow)tplRow.CloneNode(true);
                             var cCells = centRow.Elements<TableCell>().ToList();
                             SetCellText(cCells, 0, $"Център стълб");
-                            SetCellText(cCells, 1, pole.Location.X.ToString("F3"));
-                            SetCellText(cCells, 2, pole.Location.Y.ToString("F3"));
+                            SetCellText(cCells, 1, pole.LocationX.ToString("F3"));
+                            SetCellText(cCells, 2, pole.LocationY.ToString("F3"));
                             table.AppendChild(centRow);
 
                             // Vertex rows

@@ -156,8 +156,8 @@ namespace PUP_AUTO.Geometry
                     {
                         PoleId = poleId,
                         PoleAreaSqM = poleArea,
-                        Location = centroid,
-                        ObjectId = polePline.ObjectId
+                        LocationX = centroid.X,
+                        LocationY = centroid.Y
                     };
 
                     foreach (var parcelKvp in parcelPolylines)

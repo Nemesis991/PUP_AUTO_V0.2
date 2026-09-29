@@ -118,7 +118,7 @@ graph TD
 
 - **`Semantics.DomainModels`**: Съдържа POCO класове, представляващи бизнес домейна:
   - **`ParcelData`**: Кадастрални данни за имот — `ParcelId`, `Owner`, `Ekatte`, `DocumentArea`, `SubDivision`, `TerritoryType`, `Usage`, `Locality`, `Category`, `OwnershipType`, `OwnerId`, `OwnerName`.
-  - **`Pole`**: Данни за стълб — `PoleId`, `PoleNumber`, `PoleAreaSqM`, `Location` (Point3d).
+  - **`Pole`**: Данни за стълб — `PoleId`, `PoleNumber`, `PoleAreaSqM`, `LocationX`/`LocationY` (център на стъпката). Домейн моделите не зависят от AutoCAD API.
   - **`ReportRow`**: Обобщен ред за отчет, съдържащ всички кадастрални полета плюс:
     - `AssignedPoles` (`List<Pole>`) — списък на причислените стълбове.
     - `RemainderAreaSqM` — остатък: `max(0, DocumentAreaSqM - ServitudeAreaSqM)` в m². Преобразуването в декари става само при запис в отчета чрез `AreaUnits.SqmToDka()` (закръгляне до 3 знака).

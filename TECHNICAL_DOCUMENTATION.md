@@ -201,12 +201,12 @@ WPF модален прозорец, изграден изцяло в C# код 
 Дефинира структурата на данните. Всички `*SqM`/`*Sqm` полета са необработени (unrounded) стойности в $m^2$ и участват свободно в по-нататъшна аритметика. Моделите не съдържат свойства в декари — преобразуването става чрез `AreaUnits.SqmToDka(...)` / `FormatDka(...)` само при запис в изходния файл.
 
 1. **`class ParcelData`**
-   - Полета за имот: `ParcelId`, `Owner`, `Ekatte`, `DocumentArea` ($m^2$), `ObjectId`.
+   - Полета за имот: `ParcelId`, `Owner`, `Ekatte`, `DocumentArea` ($m^2$).
    - Регистрови полета: `SubDivision`, `TerritoryType`, `Usage`, `Locality`, `Category`, `OwnershipType`, `OwnerId`, `OwnerName`.
    - MVP Math Test полета: `TotalAreaSqm`, `ServitudeGrossAreaSqm`, `ServitudeNetAreaSqm`, `PoleAreaSqm` ($m^2$).
    - **`RemainderAreaSqm`** (изчислимо, $m^2$, необработено): $\max(0,\ \text{TotalAreaSqm} - \text{ServitudeNetAreaSqm} - \text{PoleAreaSqm})$.
 2. **`class Pole`**
-   - Полета: `PoleId`, `PoleNumber`, `PoleAreaSqM` ($m^2$), `Location` (`Point3d`), `ObjectId`.
+   - Полета: `PoleId`, `PoleNumber`, `PoleAreaSqM` ($m^2$), `LocationX`, `LocationY` (център на стъпката — средно от върховете).
 3. **`class ReportRow`**
    - Съдържа пълния набор от данни за ред в отчетите: `DocumentAreaSqM`, `ServitudeAreaSqM`, `PoleAreaSqM` ($m^2$, необработени).
    - **`RemainderAreaSqM`** (изчислимо, $m^2$, необработено): $\max(0,\ \text{DocumentAreaSqM} - \text{ServitudeAreaSqM})$. `ServitudeAreaSqM` е брутното сечение имот/сервитут (вече съдържа площта на стълбовете), затова тя не се изважда повторно тук.

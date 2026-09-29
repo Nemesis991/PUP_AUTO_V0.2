@@ -1,6 +1,3 @@
-using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.Geometry;
-
 namespace PUP_AUTO.Semantics
 {
     /// <summary>
@@ -12,7 +9,6 @@ namespace PUP_AUTO.Semantics
         public string Owner { get; set; } = string.Empty;
         public string Ekatte { get; set; } = string.Empty;
         public double DocumentArea { get; set; }
-        public ObjectId ObjectId { get; set; } = ObjectId.Null;
 
         // --- Cadastral Register Fields ---
         public string SubDivision { get; set; } = string.Empty;
@@ -55,8 +51,11 @@ namespace PUP_AUTO.Semantics
         /// <summary>Footprint area of the pole in Square Meters.</summary>
         public double PoleAreaSqM { get; set; }
 
-        public Point3d Location { get; set; }
-        public ObjectId ObjectId { get; set; } = ObjectId.Null;
+        /// <summary>Footprint centroid (average of the vertices), X coordinate.</summary>
+        public double LocationX { get; set; }
+
+        /// <summary>Footprint centroid (average of the vertices), Y coordinate.</summary>
+        public double LocationY { get; set; }
         
         /// <summary>The extracted 4 vertices of the pole footprint.</summary>
         public List<VertexCoordinate> FootprintVertices { get; set; } = new List<VertexCoordinate>();
