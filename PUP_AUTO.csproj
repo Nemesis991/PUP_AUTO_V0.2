@@ -7,6 +7,8 @@
     <Nullable>enable</Nullable>
     <RootNamespace>PUP_AUTO</RootNamespace>
     <AssemblyName>PUP_AUTO</AssemblyName>
+    <!-- Helper tools and tests are separate projects; keep them out of the plugin's globs -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tools/**;tests/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
