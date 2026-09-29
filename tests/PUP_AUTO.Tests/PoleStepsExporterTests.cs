@@ -52,6 +52,7 @@ namespace PUP_AUTO.Tests
             public string? NumberFormatCode(string reference)
             {
                 uint id = Format(reference).NumberFormatId?.Value ?? 0U;
+                if (id == 1U) return "0"; // built-in format
                 return Styles.NumberingFormats?.Elements<NumberingFormat>()
                     .FirstOrDefault(n => n.NumberFormatId!.Value == id)?.FormatCode?.Value;
             }
@@ -139,8 +140,9 @@ namespace PUP_AUTO.Tests
             Assert.Equal("61580.240.24", s.Text("A3"));
             Assert.True(s.IsNumeric("B3"));
             Assert.Equal(1.0, s.Number("B3"));           // 1000 m2
-            Assert.True(s.IsNumeric("C3"));              // pole number "5" is a number
+            Assert.True(s.IsNumeric("C3"));              // pole number "5" is a number, format "0"
             Assert.Equal(5.0, s.Number("C3"));
+            Assert.Equal("0", s.NumberFormatCode("C3"));
             Assert.True(s.IsNumeric("D3"));
             Assert.Equal(0.036, s.Number("D3"));
             Assert.True(s.IsNumeric("E3"));
@@ -154,14 +156,54 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void AreasAreRoundedToThreeDecimalsOnlyAtOutput()
+        public void AreasAreWrittenAsTheRoundedPrintedValues()
         {
             var s = Export(Piece("A", 10000.0, "1", 36.0004), Piece("A", 10000.0, "2", 36.0004));
 
             Assert.Equal(0.036, s.Number("D3"));
             Assert.Equal(0.036, s.Number("D4"));
-            Assert.Equal(9.928, s.Number("E3"));   // raw 9927.9992 m2 -> 9.928 dka
-            Assert.Equal(0.072, s.Number("D5"));   // total: raw 72.0008 m2
+            Assert.Equal(9.928, s.Number("E3"));   // 10.000 - 0.036 - 0.036
+            Assert.Equal(0.072, s.Number("D5"));   // total of the printed step values
+        }
+
+        [Fact]
+        public void RemainderAddsUpOnPaper_RealCases()
+        {
+            var s = Export(
+                Piece("61580.421.8", 5380.2, "1", 13.5),
+                Piece("61580.421.11", 6620.3, "2", 13.6));
+
+            // 61580.421.8 sorts before 61580.421.11 (numeric segments)
+            Assert.Equal("61580.421.8", s.Text("A3"));
+            Assert.Equal(5.380, s.Number("B3"));
+            Assert.Equal(0.014, s.Number("D3"));
+            Assert.Equal(5.366, s.Number("E3"));
+
+            Assert.Equal("61580.421.11", s.Text("A4"));
+            Assert.Equal(6.620, s.Number("B4"));
+            Assert.Equal(0.014, s.Number("D4"));
+            Assert.Equal(6.606, s.Number("E4"));
+
+            Assert.Equal(0.028, s.Number("D5"));
+        }
+
+        [Fact]
+        public void PoleNumberWithLabel_IsWrittenAsANumberWithoutTheLabel()
+        {
+            var s = Export(Piece("A", 1000.0, "Стълб №162", 36.0));
+
+            Assert.True(s.IsNumeric("C3"));
+            Assert.Equal(162.0, s.Number("C3"));
+            Assert.Equal("0", s.NumberFormatCode("C3"));
+        }
+
+        [Fact]
+        public void PoleNumberWithLabelButNotANumber_IsTextWithoutTheLabel()
+        {
+            var s = Export(Piece("A", 1000.0, "Стълб №ПС-1", 36.0));
+
+            Assert.False(s.IsNumeric("C3"));
+            Assert.Equal("ПС-1", s.Text("C3"));
         }
 
         [Fact]

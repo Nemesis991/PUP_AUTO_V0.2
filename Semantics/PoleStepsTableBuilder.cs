@@ -1,4 +1,5 @@
 using System.Globalization;
+using PUP_AUTO.Core;
 
 namespace PUP_AUTO.Semantics
 {
@@ -37,17 +38,21 @@ namespace PUP_AUTO.Semantics
         public double MissingSqm { get; set; }
     }
 
-    /// <summary>One table row: a (parcel, pole) pair. Areas are raw m².</summary>
+    /// <summary>
+    /// One table row: a (parcel, pole) pair. Areas are decares already rounded to 3 decimals,
+    /// exactly as printed, so every row satisfies ParcelAreaDka - (its parcel's steps) = RemainderDka.
+    /// </summary>
     public class PoleStepsRow
     {
         public string ParcelId { get; set; } = string.Empty;
-        public double ParcelAreaSqm { get; set; }
+        public double ParcelAreaDka { get; set; }
 
-        /// <summary>Parcel area minus the sum of all footprint pieces in the parcel.</summary>
-        public double RemainderSqm { get; set; }
+        /// <summary>Rounded parcel area minus the sum of the rounded step pieces of the whole parcel.</summary>
+        public double RemainderDka { get; set; }
 
+        /// <summary>Pole number without the "Стълб №" prefix.</summary>
         public string PoleNumber { get; set; } = string.Empty;
-        public double PieceAreaSqm { get; set; }
+        public double PieceAreaDka { get; set; }
 
         /// <summary>True on the first row of a parcel (the row that carries the merged parcel cells).</summary>
         public bool IsFirstOfParcel { get; set; }
@@ -60,13 +65,14 @@ namespace PUP_AUTO.Semantics
     {
         public List<PoleStepsRow> Rows { get; } = new List<PoleStepsRow>();
 
-        /// <summary>Sum of all piece areas, raw m².</summary>
-        public double TotalPieceAreaSqm { get; set; }
+        /// <summary>Sum of the printed (rounded) step values, in decares.</summary>
+        public double TotalPieceAreaDka { get; set; }
     }
 
     /// <summary>
-    /// Builds the pole-steps table from plain data (no AutoCAD types). All areas stay raw m²;
-    /// rounding to decares happens only when the table is written.
+    /// Builds the pole-steps table from plain data (no AutoCAD types). Areas come in as raw m² and
+    /// are rounded to decares once, per printed value, through <see cref="AreaUnits"/>; the remainder
+    /// is then derived from those printed values so the table adds up on paper.
     /// </summary>
     public static class PoleStepsTableBuilder
     {
@@ -94,26 +100,33 @@ namespace PUP_AUTO.Semantics
                 var parcelPieces = byParcel[parcelId];
                 var sorted = StableSortByPole(parcelPieces);
 
-                double parcelArea = sorted[0].ParcelAreaSqm;
-                double covered = sorted.Sum(p => p.PieceAreaSqm);
-                double remainder = parcelArea - covered;
+                // Round every printed value first, then subtract the printed values (decimal
+                // arithmetic, so 5.380 - 0.014 is exactly 5.366).
+                double parcelDka = AreaUnits.SqmToDka(sorted[0].ParcelAreaSqm);
+                decimal remainder = (decimal)parcelDka;
+                foreach (var piece in sorted)
+                {
+                    remainder -= (decimal)AreaUnits.SqmToDka(piece.PieceAreaSqm);
+                }
 
                 for (int i = 0; i < sorted.Count; i++)
                 {
                     table.Rows.Add(new PoleStepsRow
                     {
                         ParcelId = parcelId,
-                        ParcelAreaSqm = parcelArea,
-                        RemainderSqm = remainder,
-                        PoleNumber = sorted[i].PoleNumber,
-                        PieceAreaSqm = sorted[i].PieceAreaSqm,
+                        ParcelAreaDka = parcelDka,
+                        RemainderDka = (double)remainder,
+                        PoleNumber = PoleLabels.StripPrefix(sorted[i].PoleNumber),
+                        PieceAreaDka = AreaUnits.SqmToDka(sorted[i].PieceAreaSqm),
                         IsFirstOfParcel = i == 0,
                         ParcelRowCount = i == 0 ? sorted.Count : 0
                     });
                 }
             }
 
-            table.TotalPieceAreaSqm = table.Rows.Sum(r => r.PieceAreaSqm);
+            decimal total = 0m;
+            foreach (var row in table.Rows) total += (decimal)row.PieceAreaDka;
+            table.TotalPieceAreaDka = (double)total;
             return table;
         }
 
@@ -161,7 +174,7 @@ namespace PUP_AUTO.Semantics
 
         public static string FormatUncoveredWarning(UncoveredStep step)
         {
-            return $"Стъпката на стълб №{step.PoleNumber} не е изцяло в избраните имоти " +
+            return $"Стъпката на стълб №{PoleLabels.StripPrefix(step.PoleNumber)} не е изцяло в избраните имоти " +
                    $"(липсват {step.MissingSqm.ToString("F3", CultureInfo.InvariantCulture)} м²).";
         }
 
@@ -219,6 +232,8 @@ namespace PUP_AUTO.Semantics
         /// <summary>Numeric pole numbers ascending, then text pole numbers ordinally.</summary>
         public static int ComparePoleNumbers(string a, string b)
         {
+            a = PoleLabels.StripPrefix(a);
+            b = PoleLabels.StripPrefix(b);
             bool na = TryParsePoleNumber(a, out double da);
             bool nb = TryParsePoleNumber(b, out double db);
             if (na && nb)
@@ -232,14 +247,16 @@ namespace PUP_AUTO.Semantics
             return t != 0 ? t : string.CompareOrdinal(a, b);
         }
 
-        /// <summary>True if the pole number is a plain number (digits with an optional sign / decimal point).</summary>
+        /// <summary>True if the pole number is a whole number (digits with an optional sign).</summary>
         public static bool TryParsePoleNumber(string text, out double value)
         {
-            return double.TryParse(
+            bool ok = long.TryParse(
                 text.Trim(),
-                NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
+                NumberStyles.AllowLeadingSign,
                 CultureInfo.InvariantCulture,
-                out value);
+                out long whole);
+            value = whole;
+            return ok;
         }
     }
 }

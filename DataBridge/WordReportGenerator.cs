@@ -480,7 +480,7 @@ namespace PUP_AUTO.DataBridge
                             // Header row for this pole
                             var headerRow = (TableRow)tplRow.CloneNode(true);
                             var hCells = headerRow.Elements<TableCell>().ToList();
-                            SetCellText(hCells, 0, $"Стълб №{pole.PoleNumber}");
+                            SetCellText(hCells, 0, $"{PoleLabels.Prefix}{pole.PoleNumber}");
                             SetCellText(hCells, 1, $"Площ: {AreaUnits.FormatDka(pole.PoleAreaSqm)} дка");
                             for (int c = 2; c < hCells.Count; c++) SetCellText(hCells, c, "");
                             table.AppendChild(headerRow);

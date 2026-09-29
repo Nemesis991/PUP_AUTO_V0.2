@@ -111,7 +111,7 @@ namespace PUP_AUTO.Semantics
         /// </summary>
         public string PoleNumbers => AssignedPoles.Count == 0
             ? string.Empty
-            : string.Join(",", AssignedPoles.OrderBy(p => p.PoleNumber).Select(p => $"Стълб №{p.PoleNumber}"));
+            : string.Join(",", AssignedPoles.OrderBy(p => p.PoleNumber).Select(p => $"{PoleLabels.Prefix}{p.PoleNumber}"));
     }
 
     /// <summary>

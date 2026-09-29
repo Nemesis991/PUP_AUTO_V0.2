@@ -9,7 +9,8 @@ namespace PUP_AUTO.DataBridge
 {
     /// <summary>
     /// Writes the pole-steps table (Стъпки_на_стълбове.xlsx). Areas are real numbers in decares
-    /// (rounded through <see cref="AreaUnits"/> only here) with number format 0.000.
+    /// (already rounded by <see cref="PoleStepsTableBuilder"/>) with number format 0.000; a numeric
+    /// pole number uses the built-in format "0".
     /// </summary>
     public static class PoleStepsExporter
     {
@@ -150,7 +151,7 @@ namespace PUP_AUTO.DataBridge
                 if (data.IsFirstOfParcel)
                 {
                     row.Append(TextCell(1, rowIndex, data.ParcelId, StyleText));
-                    row.Append(NumberCell(2, rowIndex, Dka(data.ParcelAreaSqm), StyleNumber));
+                    row.Append(NumberCell(2, rowIndex, Clean(data.ParcelAreaDka), StyleNumber));
                 }
                 else
                 {
@@ -159,10 +160,10 @@ namespace PUP_AUTO.DataBridge
                 }
 
                 row.Append(PoleCell(3, rowIndex, data.PoleNumber));
-                row.Append(NumberCell(4, rowIndex, Dka(data.PieceAreaSqm), StyleNumber));
+                row.Append(NumberCell(4, rowIndex, Clean(data.PieceAreaDka), StyleNumber));
 
                 if (data.IsFirstOfParcel)
-                    row.Append(NumberCell(5, rowIndex, Dka(data.RemainderSqm), StyleNumber));
+                    row.Append(NumberCell(5, rowIndex, Clean(data.RemainderDka), StyleNumber));
                 else
                     row.Append(EmptyCell(5, rowIndex, StyleNumber));
 
@@ -183,7 +184,7 @@ namespace PUP_AUTO.DataBridge
             totalRow.Append(TextCell(1, rowIndex, TotalLabel, StyleTotalLabel));
             totalRow.Append(EmptyCell(2, rowIndex, StyleTotalEmpty));
             totalRow.Append(EmptyCell(3, rowIndex, StyleTotalEmpty));
-            totalRow.Append(NumberCell(4, rowIndex, Dka(table.TotalPieceAreaSqm), StyleTotalNumber));
+            totalRow.Append(NumberCell(4, rowIndex, Clean(table.TotalPieceAreaDka), StyleTotalNumber));
             totalRow.Append(EmptyCell(5, rowIndex, StyleTotalEmpty));
             sheetData.Append(totalRow);
         }
@@ -192,12 +193,8 @@ namespace PUP_AUTO.DataBridge
         //  Cells
         // -----------------------------------------------------------------
 
-        /// <summary>m² to decares, rounded once at output; negative zero is written as 0.</summary>
-        private static double Dka(double sqm)
-        {
-            double dka = AreaUnits.SqmToDka(sqm);
-            return dka == 0.0 ? 0.0 : dka;
-        }
+        /// <summary>The table already holds the printed (rounded) decare values; negative zero is written as 0.</summary>
+        private static double Clean(double dka) => dka == 0.0 ? 0.0 : dka;
 
         private static string Ref(int column, int row) => $"{(char)('A' + column - 1)}{row}";
 
@@ -273,7 +270,7 @@ namespace PUP_AUTO.DataBridge
                 Format(0U, 1U, 2U, 1U, Align(HorizontalAlignmentValues.Center, true)),               // 2 header
                 Format(0U, 0U, 0U, 1U, Align(HorizontalAlignmentValues.Left, false)),                // 3 text
                 Format(164U, 0U, 0U, 1U, Align(HorizontalAlignmentValues.Right, false)),             // 4 area 0.000
-                Format(0U, 0U, 0U, 1U, Align(HorizontalAlignmentValues.Center, false)),              // 5 pole number
+                Format(1U, 0U, 0U, 1U, Align(HorizontalAlignmentValues.Center, false)),              // 5 pole number, format "0"
                 Format(0U, 1U, 0U, 2U, Align(HorizontalAlignmentValues.Left, false)),                // 6 total label
                 Format(164U, 1U, 0U, 2U, Align(HorizontalAlignmentValues.Right, false)),             // 7 total number
                 Format(0U, 1U, 0U, 2U, Align(HorizontalAlignmentValues.Left, false)),                // 8 total empty
