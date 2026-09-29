@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -18,6 +14,7 @@ namespace PUP_AUTO.DataBridge
     /// Each template must contain a table with at least one data row
     /// (the row after the header row) that will be cloned for each record.
     /// </summary>
+    /// <remarks>PLACEHOLDER — not production.</remarks>
     public class WordReportGenerator
     {
         private readonly Logger _logger;
@@ -35,7 +32,7 @@ namespace PUP_AUTO.DataBridge
         public WordReportGenerator(Logger logger, string projectDirectory)
         {
             _logger = logger;
-            _templateDir = Path.Combine(projectDirectory, "_Templates");
+            _templateDir = Path.Combine(projectDirectory, FileNames.TemplatesFolder);
         }
 
         // ================================================================
@@ -50,10 +47,6 @@ namespace PUP_AUTO.DataBridge
             List<Pole> assignedPoles,
             Dictionary<string, ParcelData> parcelDb,
             string outputDir,
-            string settlementName = "",
-            string ekatte = "",
-            string municipality = "",
-            string oblast = "",
             Dictionary<string, List<VertexCoordinate>>? poleVertices = null,
             List<VertexCoordinate>? servitudeVertices = null)
         {
@@ -70,7 +63,7 @@ namespace PUP_AUTO.DataBridge
             GenerateBalancesTerritory(reportRows, outputDir);
 
             // 05 — Общ Баланс за общината
-            GenerateBalancesMunicipality(reportRows, parcelDb, outputDir, settlementName, municipality, oblast);
+            GenerateBalancesMunicipality(reportRows, parcelDb, outputDir);
 
             // 06 — Обща рекапитулация
             GenerateRecapitulation(reportRows, outputDir);
@@ -118,71 +111,68 @@ namespace PUP_AUTO.DataBridge
                         var body = doc.MainDocumentPart?.Document?.Body;
                         if (body == null) return;
 
-                    // Find the data table (skip small header/logo tables by finding the one with the most rows or specific column count)
-                    var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
-                    if (table == null)
-                    {
-                        _logger.LogWarning("No table found in template.");
-                        return;
-                    }
+                        // Find the data table (skip small header/logo tables by finding the one with the most rows or specific column count)
+                        var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
+                        if (table == null)
+                        {
+                            _logger.LogWarning("No table found in template.");
+                            return;
+                        }
 
-                    // Get all rows — find the last data-like row to use as template
-                    var rows = table.Elements<TableRow>().ToList();
-                    if (rows.Count < 3)
-                    {
-                        _logger.LogWarning("Parcel register template table has fewer than 3 rows.");
-                        return;
-                    }
+                        // Get all rows — find the last data-like row to use as template
+                        var rows = table.Elements<TableRow>().ToList();
+                        if (rows.Count < 3)
+                        {
+                            _logger.LogWarning("Parcel register template table has fewer than 3 rows.");
+                            return;
+                        }
 
-                    // The template data row is typically the last row in a small template
-                    // (rows[0] = title/merged, rows[1] = header, rows[2] = column numbers, rows[3+] = data)
-                    TableRow templateRow = rows.Last();
-                    var templateRowParent = templateRow.Parent;
+                        // The template data row is typically the last row in a small template
+                        // (rows[0] = title/merged, rows[1] = header, rows[2] = column numbers, rows[3+] = data)
+                        TableRow templateRow = rows.Last();
 
-                    // Remove the template row — we'll clone it for each data record
-                    templateRow.Remove();
+                        // Remove the template row — we'll clone it for each data record
+                        templateRow.Remove();
 
-                    int rowNum = 0;
-                    foreach (var d in data)
-                    {
-                        rowNum++;
-                        var newRow = (TableRow)templateRow.CloneNode(true);
-                        var cells = newRow.Elements<TableCell>().ToList();
+                        foreach (var d in data)
+                        {
+                            var newRow = (TableRow)templateRow.CloneNode(true);
+                            var cells = newRow.Elements<TableCell>().ToList();
 
-                        // Map cells to columns based on the reference document structure
-                        // Col 0: Номер на имот
-                        // Col 1: Подотдели (SubDivision)
-                        // Col 2: Трайно предназначение на територията
-                        // Col 3: Нов НТП
-                        // Col 4: Местност
-                        // Col 5: Категория
-                        // Col 6: Площ на имота в дка
-                        // Col 7: Площ с ограничение в дка
-                        // Col 8: Остатък в дка
-                        // Col 9: Номер на стълба (Стълб)
-                        // Col 10: Площ на стъпката на стълба [дка]
-                        // Col 11: Вид собственост
-                        // Col 12: ЕГН/БУЛСТАТ
-                        // Col 13: Име
-                        SetCellText(cells, 0,  d.ParcelId);
-                        SetCellText(cells, 1,  d.SubDivision);
-                        SetCellText(cells, 2,  d.TerritoryType);
-                        SetCellText(cells, 3,  d.Usage);
-                        SetCellText(cells, 4,  d.Locality);
-                        SetCellText(cells, 5,  d.Category);
-                        SetCellText(cells, 6,  AreaUnits.FormatDka(d.DocumentAreaSqM));
-                        SetCellText(cells, 7,  AreaUnits.FormatDka(d.ServitudeAreaSqM));
-                        SetCellText(cells, 8,  AreaUnits.FormatDka(d.RemainderAreaSqM));
-                        SetCellText(cells, 9,  d.PoleNumbers);
-                        SetCellText(cells, 10, d.PoleCount > 0 ? AreaUnits.FormatDka(d.PoleAreaSqM) : "");
-                        SetCellText(cells, 11, d.OwnershipType);
-                        SetCellText(cells, 12, d.OwnerId);
-                        SetCellText(cells, 13, d.OwnerName);
+                            // Map cells to columns based on the reference document structure
+                            // Col 0: Номер на имот
+                            // Col 1: Подотдели (SubDivision)
+                            // Col 2: Трайно предназначение на територията
+                            // Col 3: Нов НТП
+                            // Col 4: Местност
+                            // Col 5: Категория
+                            // Col 6: Площ на имота в дка
+                            // Col 7: Площ с ограничение в дка
+                            // Col 8: Остатък в дка
+                            // Col 9: Номер на стълба (Стълб)
+                            // Col 10: Площ на стъпката на стълба [дка]
+                            // Col 11: Вид собственост
+                            // Col 12: ЕГН/БУЛСТАТ
+                            // Col 13: Име
+                            SetCellText(cells, 0,  d.ParcelId);
+                            SetCellText(cells, 1,  d.SubDivision);
+                            SetCellText(cells, 2,  d.TerritoryType);
+                            SetCellText(cells, 3,  d.Usage);
+                            SetCellText(cells, 4,  d.Locality);
+                            SetCellText(cells, 5,  d.Category);
+                            SetCellText(cells, 6,  AreaUnits.FormatDka(d.DocumentAreaSqm));
+                            SetCellText(cells, 7,  AreaUnits.FormatDka(d.ServitudeAreaSqm));
+                            SetCellText(cells, 8,  AreaUnits.FormatDka(d.RemainderAreaSqm));
+                            SetCellText(cells, 9,  d.PoleNumbers);
+                            SetCellText(cells, 10, d.PoleCount > 0 ? AreaUnits.FormatDka(d.PoleAreaSqm) : "");
+                            SetCellText(cells, 11, d.OwnershipType);
+                            SetCellText(cells, 12, d.OwnerId);
+                            SetCellText(cells, 13, d.OwnerName);
 
-                        table.AppendChild(newRow);
-                    }
+                            table.AppendChild(newRow);
+                        }
 
-                    doc.MainDocumentPart?.Document?.Save();
+                        doc.MainDocumentPart?.Document?.Save();
                     }
                     File.WriteAllBytes(outputPath, mem.ToArray());
                 }
@@ -230,76 +220,76 @@ namespace PUP_AUTO.DataBridge
                         var body = doc.MainDocumentPart?.Document?.Body;
                         if (body == null) return;
 
-                    var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
-                    if (table == null)
-                    {
-                        _logger.LogWarning("No table found in pole steps template.");
-                        return;
-                    }
-
-                    var rows = table.Elements<TableRow>().ToList();
-                    if (rows.Count < 3) return;
-
-                    TableRow templateRow = rows.Last();
-                    templateRow.Remove();
-
-                    var sortedPoles = poles
-                        .Where(p => p.OverlappingParcels.Count > 0)
-                        .OrderBy(p => p.PoleNumber)
-                        .ToList();
-
-                    var flatPoles = new List<(Pole pole, string parcelId, double area)>();
-                    foreach(var p in sortedPoles)
-                    {
-                        foreach (var kvp in p.OverlappingParcels) {
-                            flatPoles.Add((p, kvp.Key, kvp.Value));
+                        var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
+                        if (table == null)
+                        {
+                            _logger.LogWarning("No table found in pole steps template.");
+                            return;
                         }
-                    }
 
-                    foreach (var flat in flatPoles)
-                    {
-                        var pole = flat.pole;
-                        var parcelId = flat.parcelId;
+                        var rows = table.Elements<TableRow>().ToList();
+                        if (rows.Count < 3) return;
 
-                        var newRow = (TableRow)templateRow.CloneNode(true);
-                        var cells = newRow.Elements<TableCell>().ToList();
+                        TableRow templateRow = rows.Last();
+                        templateRow.Remove();
 
-                        // Look up parcel data
-                        parcelDb.TryGetValue(parcelId, out ParcelData? pd);
-                        var reportRow = reportRows.FirstOrDefault(r => r.ParcelId == parcelId);
+                        var sortedPoles = poles
+                            .Where(p => p.OverlappingParcels.Count > 0)
+                            .OrderBy(p => p.PoleNumber)
+                            .ToList();
 
-                        // Col 0: №стълб (formatted as "Стълб №XX")
-                        // Col 1: Площ стъпка [дка]
-                        // Col 2: Номер на имот
-                        // Col 3: Трайно предназначение
-                        // Col 4: НТП
-                        // Col 5: Площ на имота [дка]
-                        // Col 6: Вид собственост
-                        // Col 7: ЕГН/БУЛСТАТ
-                        // Col 8: Собственик (Име)
-                        SetCellText(cells, 0, $"№{pole.PoleNumber}");
-                        SetCellText(cells, 1, AreaUnits.FormatDka(flat.area));
-                        SetCellText(cells, 2, parcelId);
-                        SetCellText(cells, 3, pd?.TerritoryType ?? "");
-                        SetCellText(cells, 4, pd?.Usage ?? "");
-                        SetCellText(cells, 5, reportRow != null ? AreaUnits.FormatDka(reportRow.DocumentAreaSqM) : "");
-                        SetCellText(cells, 6, pd?.OwnershipType ?? "");
-                        SetCellText(cells, 7, pd?.OwnerId ?? "");
-                        SetCellText(cells, 8, pd?.OwnerName ?? "");
+                        var flatPoles = new List<(Pole pole, string parcelId, double area)>();
+                        foreach(var p in sortedPoles)
+                        {
+                            foreach (var kvp in p.OverlappingParcels) {
+                                flatPoles.Add((p, kvp.Key, kvp.Value));
+                            }
+                        }
 
-                        table.AppendChild(newRow);
-                    }
+                        foreach (var flat in flatPoles)
+                        {
+                            var pole = flat.pole;
+                            var parcelId = flat.parcelId;
 
-                    // Add a totals row
-                    var totalsRow = (TableRow)templateRow.CloneNode(true);
-                    var totalCells = totalsRow.Elements<TableCell>().ToList();
-                    SetCellText(totalCells, 0, "Общо:");
-                    SetCellText(totalCells, 1, AreaUnits.FormatDka(flatPoles.Sum(p => p.area)));
-                    for (int i = 2; i < totalCells.Count; i++)
-                        SetCellText(totalCells, i, "");
-                    table.AppendChild(totalsRow);
+                            var newRow = (TableRow)templateRow.CloneNode(true);
+                            var cells = newRow.Elements<TableCell>().ToList();
 
-                    doc.MainDocumentPart?.Document?.Save();
+                            // Look up parcel data
+                            parcelDb.TryGetValue(parcelId, out ParcelData? pd);
+                            var reportRow = reportRows.FirstOrDefault(r => r.ParcelId == parcelId);
+
+                            // Col 0: №стълб (formatted as "Стълб №XX")
+                            // Col 1: Площ стъпка [дка]
+                            // Col 2: Номер на имот
+                            // Col 3: Трайно предназначение
+                            // Col 4: НТП
+                            // Col 5: Площ на имота [дка]
+                            // Col 6: Вид собственост
+                            // Col 7: ЕГН/БУЛСТАТ
+                            // Col 8: Собственик (Име)
+                            SetCellText(cells, 0, $"№{pole.PoleNumber}");
+                            SetCellText(cells, 1, AreaUnits.FormatDka(flat.area));
+                            SetCellText(cells, 2, parcelId);
+                            SetCellText(cells, 3, pd?.TerritoryType ?? "");
+                            SetCellText(cells, 4, pd?.Usage ?? "");
+                            SetCellText(cells, 5, reportRow != null ? AreaUnits.FormatDka(reportRow.DocumentAreaSqm) : "");
+                            SetCellText(cells, 6, pd?.OwnershipType ?? "");
+                            SetCellText(cells, 7, pd?.OwnerId ?? "");
+                            SetCellText(cells, 8, pd?.OwnerName ?? "");
+
+                            table.AppendChild(newRow);
+                        }
+
+                        // Add a totals row
+                        var totalsRow = (TableRow)templateRow.CloneNode(true);
+                        var totalCells = totalsRow.Elements<TableCell>().ToList();
+                        SetCellText(totalCells, 0, "Общо:");
+                        SetCellText(totalCells, 1, AreaUnits.FormatDka(flatPoles.Sum(p => p.area)));
+                        for (int i = 2; i < totalCells.Count; i++)
+                            SetCellText(totalCells, i, "");
+                        table.AppendChild(totalsRow);
+
+                        doc.MainDocumentPart?.Document?.Save();
                     }
                     File.WriteAllBytes(outputPath, mem.ToArray());
                 }
@@ -342,94 +332,94 @@ namespace PUP_AUTO.DataBridge
                         var body = doc.MainDocumentPart?.Document?.Body;
                         if (body == null) return;
 
-                    var tables = body.Descendants<Table>().ToList();
+                        var tables = body.Descendants<Table>().ToList();
 
-                    // The template should have 4 balance tables in order:
-                    // 0: По категория
-                    // 1: По вид собственост
-                    // 2: По вид територия
-                    // 3: По НТП (начин на трайно ползване)
-                    var groupings = new (string Title, Func<ReportRow, string> KeySelector)[]
-                    {
-                        ("По категория",                    r => string.IsNullOrEmpty(r.Category)      ? "(без категория)"      : r.Category),
-                        ("По вид собственост",              r => string.IsNullOrEmpty(r.OwnershipType) ? "(без вид собственост)" : r.OwnershipType),
-                        ("По вид територия",                r => string.IsNullOrEmpty(r.TerritoryType) ? "(без вид територия)"   : r.TerritoryType),
-                        ("По начин на трайно ползване",     r => string.IsNullOrEmpty(r.Usage)         ? "(без НТП)"             : r.Usage)
-                    };
-
-                    for (int t = 0; t < groupings.Length && t < tables.Count; t++)
-                    {
-                        var table = tables[t];
-                        var tblRows = table.Elements<TableRow>().ToList();
-                        if (tblRows.Count < 2) continue;
-
-                        // Use last row as template
-                        TableRow tplRow = tblRows.Last();
-                        tplRow.Remove();
-
-                        var grouped = data
-                            .GroupBy(groupings[t].KeySelector)
-                            .OrderBy(g => g.Key)
-                            .ToList();
-
-                        int rowNum = 0;
-                        foreach (var group in grouped)
+                        // The template should have 4 balance tables in order:
+                        // 0: По категория
+                        // 1: По вид собственост
+                        // 2: По вид територия
+                        // 3: По НТП (начин на трайно ползване)
+                        var groupings = new (string Title, Func<ReportRow, string> KeySelector)[]
                         {
-                            rowNum++;
-                            var newRow = (TableRow)tplRow.CloneNode(true);
-                            var cells = newRow.Elements<TableCell>().ToList();
+                            ("По категория",                    r => string.IsNullOrEmpty(r.Category)      ? "(без категория)"      : r.Category),
+                            ("По вид собственост",              r => string.IsNullOrEmpty(r.OwnershipType) ? "(без вид собственост)" : r.OwnershipType),
+                            ("По вид територия",                r => string.IsNullOrEmpty(r.TerritoryType) ? "(без вид територия)"   : r.TerritoryType),
+                            ("По начин на трайно ползване",     r => string.IsNullOrEmpty(r.Usage)         ? "(без НТП)"             : r.Usage)
+                        };
 
-                            // Balance columns:
-                            // 0: № (row number)
-                            // 1: Category/OwnershipType/etc. value
-                            // 2: Брой имоти (count)
-                            // 3: Обща площ, дка
-                            // 4: Площ сервитут, дка
-                            // 5: Брой стълбове
-                            // 6: Площ стълбове, дка
-                            // 7: Обща засегната площ, дка (servitude + poles)
-                            // 8: % (percentage)
-                            // All sums are computed on raw square-meter values; conversion
-                            // to decares happens once, at the point of writing each cell.
-                            double servSumSqm = group.Sum(r => r.ServitudeAreaSqM);
-                            double poleSumSqm = group.Sum(r => r.PoleAreaSqM);
-                            double totalAffectedSqm = servSumSqm + poleSumSqm;
-                            double totalServSqm = data.Sum(r => r.ServitudeAreaSqM);
-                            double totalPoleAllSqm = data.Sum(r => r.PoleAreaSqM);
-                            double totalAllSqm = totalServSqm + totalPoleAllSqm;
-                            double pct = totalAllSqm > 0 ? Math.Round(totalAffectedSqm / totalAllSqm * 100.0, 2) : 0;
+                        for (int t = 0; t < groupings.Length && t < tables.Count; t++)
+                        {
+                            var table = tables[t];
+                            var tblRows = table.Elements<TableRow>().ToList();
+                            if (tblRows.Count < 2) continue;
 
-                            SetCellText(cells, 0, rowNum.ToString());
-                            SetCellText(cells, 1, group.Key);
-                            SetCellText(cells, 2, group.Count().ToString());
-                            SetCellText(cells, 3, AreaUnits.FormatDka(group.Sum(r => r.DocumentAreaSqM)));
-                            SetCellText(cells, 4, AreaUnits.FormatDka(servSumSqm));
-                            SetCellText(cells, 5, group.Sum(r => r.PoleCount).ToString());
-                            SetCellText(cells, 6, AreaUnits.FormatDka(poleSumSqm));
-                            SetCellText(cells, 7, AreaUnits.FormatDka(totalAffectedSqm));
-                            SetCellText(cells, 8, pct.ToString("F2"));
+                            // Use last row as template
+                            TableRow tplRow = tblRows.Last();
+                            tplRow.Remove();
 
-                            table.AppendChild(newRow);
+                            var grouped = data
+                                .GroupBy(groupings[t].KeySelector)
+                                .OrderBy(g => g.Key)
+                                .ToList();
+
+                            int rowNum = 0;
+                            foreach (var group in grouped)
+                            {
+                                rowNum++;
+                                var newRow = (TableRow)tplRow.CloneNode(true);
+                                var cells = newRow.Elements<TableCell>().ToList();
+
+                                // Balance columns:
+                                // 0: № (row number)
+                                // 1: Category/OwnershipType/etc. value
+                                // 2: Брой имоти (count)
+                                // 3: Обща площ, дка
+                                // 4: Площ сервитут, дка
+                                // 5: Брой стълбове
+                                // 6: Площ стълбове, дка
+                                // 7: Обща засегната площ, дка (servitude + poles)
+                                // 8: % (percentage)
+                                // All sums are computed on raw square-meter values; conversion
+                                // to decares happens once, at the point of writing each cell.
+                                double servSumSqm = group.Sum(r => r.ServitudeAreaSqm);
+                                double poleSumSqm = group.Sum(r => r.PoleAreaSqm);
+                                double totalAffectedSqm = servSumSqm + poleSumSqm;
+                                double totalServSqm = data.Sum(r => r.ServitudeAreaSqm);
+                                double totalPoleAllSqm = data.Sum(r => r.PoleAreaSqm);
+                                double totalAllSqm = totalServSqm + totalPoleAllSqm;
+                                double pct = totalAllSqm > 0 ? Math.Round(totalAffectedSqm / totalAllSqm * 100.0, 2) : 0;
+
+                                SetCellText(cells, 0, rowNum.ToString());
+                                SetCellText(cells, 1, group.Key);
+                                SetCellText(cells, 2, group.Count().ToString());
+                                SetCellText(cells, 3, AreaUnits.FormatDka(group.Sum(r => r.DocumentAreaSqm)));
+                                SetCellText(cells, 4, AreaUnits.FormatDka(servSumSqm));
+                                SetCellText(cells, 5, group.Sum(r => r.PoleCount).ToString());
+                                SetCellText(cells, 6, AreaUnits.FormatDka(poleSumSqm));
+                                SetCellText(cells, 7, AreaUnits.FormatDka(totalAffectedSqm));
+                                SetCellText(cells, 8, pct.ToString("F2"));
+
+                                table.AppendChild(newRow);
+                            }
+
+                            // Totals row — sum raw square meters, convert once.
+                            var totRow = (TableRow)tplRow.CloneNode(true);
+                            var totCells = totRow.Elements<TableCell>().ToList();
+                            double totalServAllSqm = data.Sum(r => r.ServitudeAreaSqm);
+                            double totalPolesAllSqm = data.Sum(r => r.PoleAreaSqm);
+                            SetCellText(totCells, 0, "");
+                            SetCellText(totCells, 1, "Общо:");
+                            SetCellText(totCells, 2, data.Count.ToString());
+                            SetCellText(totCells, 3, AreaUnits.FormatDka(data.Sum(r => r.DocumentAreaSqm)));
+                            SetCellText(totCells, 4, AreaUnits.FormatDka(totalServAllSqm));
+                            SetCellText(totCells, 5, data.Sum(r => r.PoleCount).ToString());
+                            SetCellText(totCells, 6, AreaUnits.FormatDka(totalPolesAllSqm));
+                            SetCellText(totCells, 7, AreaUnits.FormatDka(totalServAllSqm + totalPolesAllSqm));
+                            SetCellText(totCells, 8, "100.00");
+                            table.AppendChild(totRow);
                         }
 
-                        // Totals row — sum raw square meters, convert once.
-                        var totRow = (TableRow)tplRow.CloneNode(true);
-                        var totCells = totRow.Elements<TableCell>().ToList();
-                        double totalServAllSqm = data.Sum(r => r.ServitudeAreaSqM);
-                        double totalPolesAllSqm = data.Sum(r => r.PoleAreaSqM);
-                        SetCellText(totCells, 0, "");
-                        SetCellText(totCells, 1, "Общо:");
-                        SetCellText(totCells, 2, data.Count.ToString());
-                        SetCellText(totCells, 3, AreaUnits.FormatDka(data.Sum(r => r.DocumentAreaSqM)));
-                        SetCellText(totCells, 4, AreaUnits.FormatDka(totalServAllSqm));
-                        SetCellText(totCells, 5, data.Sum(r => r.PoleCount).ToString());
-                        SetCellText(totCells, 6, AreaUnits.FormatDka(totalPolesAllSqm));
-                        SetCellText(totCells, 7, AreaUnits.FormatDka(totalServAllSqm + totalPolesAllSqm));
-                        SetCellText(totCells, 8, "100.00");
-                        table.AppendChild(totRow);
-                    }
-
-                    doc.MainDocumentPart?.Document?.Save();
+                        doc.MainDocumentPart?.Document?.Save();
                     }
                     File.WriteAllBytes(outputPath, mem.ToArray());
                 }
@@ -471,51 +461,51 @@ namespace PUP_AUTO.DataBridge
                         var body = doc.MainDocumentPart?.Document?.Body;
                         if (body == null) return;
 
-                    var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
-                    if (table == null) return;
+                        var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
+                        if (table == null) return;
 
-                    var rows = table.Elements<TableRow>().ToList();
-                    if (rows.Count < 2) return;
+                        var rows = table.Elements<TableRow>().ToList();
+                        if (rows.Count < 2) return;
 
-                    TableRow tplRow = rows.Last();
-                    tplRow.Remove();
+                        TableRow tplRow = rows.Last();
+                        tplRow.Remove();
 
-                    var sortedPoles = poles.OrderBy(p => p.PoleNumber).ToList();
+                        var sortedPoles = poles.OrderBy(p => p.PoleNumber).ToList();
 
-                    foreach (var pole in sortedPoles)
-                    {
-                        if (!poleVertices.TryGetValue(pole.PoleId, out var vertices))
-                            continue;
-
-                        // Header row for this pole
-                        var headerRow = (TableRow)tplRow.CloneNode(true);
-                        var hCells = headerRow.Elements<TableCell>().ToList();
-                        SetCellText(hCells, 0, $"Стълб №{pole.PoleNumber}");
-                        SetCellText(hCells, 1, $"Площ: {AreaUnits.FormatDka(pole.PoleAreaSqM)} дка");
-                        for (int c = 2; c < hCells.Count; c++) SetCellText(hCells, c, "");
-                        table.AppendChild(headerRow);
-
-                        // Centroid row
-                        var centRow = (TableRow)tplRow.CloneNode(true);
-                        var cCells = centRow.Elements<TableCell>().ToList();
-                        SetCellText(cCells, 0, $"Център стълб");
-                        SetCellText(cCells, 1, pole.Location.X.ToString("F3"));
-                        SetCellText(cCells, 2, pole.Location.Y.ToString("F3"));
-                        table.AppendChild(centRow);
-
-                        // Vertex rows
-                        foreach (var v in vertices)
+                        foreach (var pole in sortedPoles)
                         {
-                            var vRow = (TableRow)tplRow.CloneNode(true);
-                            var vCells = vRow.Elements<TableCell>().ToList();
-                            SetCellText(vCells, 0, v.PointLabel);
-                            SetCellText(vCells, 1, v.X.ToString("F3"));
-                            SetCellText(vCells, 2, v.Y.ToString("F3"));
-                            table.AppendChild(vRow);
-                        }
-                    }
+                            if (!poleVertices.TryGetValue(pole.PoleId, out var vertices))
+                                continue;
 
-                    doc.MainDocumentPart?.Document?.Save();
+                            // Header row for this pole
+                            var headerRow = (TableRow)tplRow.CloneNode(true);
+                            var hCells = headerRow.Elements<TableCell>().ToList();
+                            SetCellText(hCells, 0, $"Стълб №{pole.PoleNumber}");
+                            SetCellText(hCells, 1, $"Площ: {AreaUnits.FormatDka(pole.PoleAreaSqm)} дка");
+                            for (int c = 2; c < hCells.Count; c++) SetCellText(hCells, c, "");
+                            table.AppendChild(headerRow);
+
+                            // Centroid row
+                            var centRow = (TableRow)tplRow.CloneNode(true);
+                            var cCells = centRow.Elements<TableCell>().ToList();
+                            SetCellText(cCells, 0, $"Център стълб");
+                            SetCellText(cCells, 1, pole.LocationX.ToString("F3"));
+                            SetCellText(cCells, 2, pole.LocationY.ToString("F3"));
+                            table.AppendChild(centRow);
+
+                            // Vertex rows
+                            foreach (var v in vertices)
+                            {
+                                var vRow = (TableRow)tplRow.CloneNode(true);
+                                var vCells = vRow.Elements<TableCell>().ToList();
+                                SetCellText(vCells, 0, v.PointLabel);
+                                SetCellText(vCells, 1, v.X.ToString("F3"));
+                                SetCellText(vCells, 2, v.Y.ToString("F3"));
+                                table.AppendChild(vRow);
+                            }
+                        }
+
+                        doc.MainDocumentPart?.Document?.Save();
                     }
                     File.WriteAllBytes(outputPath, mem.ToArray());
                 }
@@ -556,33 +546,33 @@ namespace PUP_AUTO.DataBridge
                         var body = doc.MainDocumentPart?.Document?.Body;
                         if (body == null) return;
 
-                    var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
-                    if (table == null) return;
+                        var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
+                        if (table == null) return;
 
-                    var rows = table.Elements<TableRow>().ToList();
-                    if (rows.Count < 2) return;
+                        var rows = table.Elements<TableRow>().ToList();
+                        if (rows.Count < 2) return;
 
-                    TableRow tplRow = rows.Last();
-                    tplRow.Remove();
+                        TableRow tplRow = rows.Last();
+                        tplRow.Remove();
 
-                    // The servitude coordinate register lists left and right boundary
-                    // vertices in a two-column layout. We write all vertices sequentially.
-                    foreach (var v in servitudeVertices)
-                    {
-                        var newRow = (TableRow)tplRow.CloneNode(true);
-                        var cells = newRow.Elements<TableCell>().ToList();
+                        // The servitude coordinate register lists left and right boundary
+                        // vertices in a two-column layout. We write all vertices sequentially.
+                        foreach (var v in servitudeVertices)
+                        {
+                            var newRow = (TableRow)tplRow.CloneNode(true);
+                            var cells = newRow.Elements<TableCell>().ToList();
 
-                        // Col 0: Point label/number
-                        // Col 1: X coordinate
-                        // Col 2: Y coordinate
-                        SetCellText(cells, 0, v.PointLabel);
-                        SetCellText(cells, 1, v.X.ToString("F3"));
-                        SetCellText(cells, 2, v.Y.ToString("F3"));
+                            // Col 0: Point label/number
+                            // Col 1: X coordinate
+                            // Col 2: Y coordinate
+                            SetCellText(cells, 0, v.PointLabel);
+                            SetCellText(cells, 1, v.X.ToString("F3"));
+                            SetCellText(cells, 2, v.Y.ToString("F3"));
 
-                        table.AppendChild(newRow);
-                    }
+                            table.AppendChild(newRow);
+                        }
 
-                    doc.MainDocumentPart?.Document?.Save();
+                        doc.MainDocumentPart?.Document?.Save();
                     }
                     File.WriteAllBytes(outputPath, mem.ToArray());
                 }
@@ -607,10 +597,7 @@ namespace PUP_AUTO.DataBridge
         private void GenerateBalancesMunicipality(
             List<ReportRow> data,
             Dictionary<string, ParcelData> parcelDb,
-            string outputDir,
-            string settlementName = "",
-            string municipality = "",
-            string oblast = "")
+            string outputDir)
         {
             string templatePath = Path.Combine(_templateDir, Template05_BalancesMunicip);
             string outputPath = Path.Combine(outputDir, Template05_BalancesMunicip);
@@ -632,83 +619,83 @@ namespace PUP_AUTO.DataBridge
                         var body = doc.MainDocumentPart?.Document?.Body;
                         if (body == null) return;
 
-                    var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
-                    if (table == null)
-                    {
-                        _logger.LogWarning("No table found in municipality balance template.");
-                        return;
-                    }
-
-                    var rows = table.Elements<TableRow>().ToList();
-                    if (rows.Count < 2) return;
-
-                    TableRow tplRow = rows.Last();
-                    tplRow.Remove();
-
-                    // Group by settlement — derive settlement name from Ekatte via parcelDb
-                    // Use the Ekatte field as the settlement key
-                    Func<ReportRow, string> settlementSelector = r =>
-                    {
-                        if (parcelDb.TryGetValue(r.ParcelId, out ParcelData? pd) && pd != null
-                            && !string.IsNullOrEmpty(pd.Ekatte))
+                        var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
+                        if (table == null)
                         {
-                            return pd.Ekatte;
+                            _logger.LogWarning("No table found in municipality balance template.");
+                            return;
                         }
-                        return "(без землище)";
-                    };
 
-                    var grouped = data
-                        .GroupBy(settlementSelector)
-                        .OrderBy(g => g.Key)
-                        .ToList();
+                        var rows = table.Elements<TableRow>().ToList();
+                        if (rows.Count < 2) return;
 
-                    int rowNum = 0;
-                    foreach (var group in grouped)
-                    {
-                        rowNum++;
-                        var newRow = (TableRow)tplRow.CloneNode(true);
-                        var cells = newRow.Elements<TableCell>().ToList();
+                        TableRow tplRow = rows.Last();
+                        tplRow.Remove();
 
-                        // All sums are computed on raw square-meter values; conversion
-                        // to decares happens once, at the point of writing each cell.
-                        double servSumSqm = group.Sum(r => r.ServitudeAreaSqM);
-                        double poleSumSqm = group.Sum(r => r.PoleAreaSqM);
-                        double totalAffectedSqm = servSumSqm + poleSumSqm;
-                        double totalAllSqm = data.Sum(r => r.ServitudeAreaSqM) + data.Sum(r => r.PoleAreaSqM);
-                        double pct = totalAllSqm > 0 ? Math.Round(totalAffectedSqm / totalAllSqm * 100.0, 2) : 0;
+                        // Group by settlement — derive settlement name from Ekatte via parcelDb
+                        // Use the Ekatte field as the settlement key
+                        Func<ReportRow, string> settlementSelector = r =>
+                        {
+                            if (parcelDb.TryGetValue(r.ParcelId, out ParcelData? pd) && pd != null
+                                && !string.IsNullOrEmpty(pd.Ekatte))
+                            {
+                                return pd.Ekatte;
+                            }
+                            return "(без землище)";
+                        };
 
-                        // Columns: №, Землище, Брой имоти, Обща площ, Площ сервитут,
-                        //          Брой стълбове, Площ стълбове, Обща засегната площ, %
-                        SetCellText(cells, 0, rowNum.ToString());
-                        SetCellText(cells, 1, group.Key);
-                        SetCellText(cells, 2, group.Count().ToString());
-                        SetCellText(cells, 3, AreaUnits.FormatDka(group.Sum(r => r.DocumentAreaSqM)));
-                        SetCellText(cells, 4, AreaUnits.FormatDka(servSumSqm));
-                        SetCellText(cells, 5, group.Sum(r => r.PoleCount).ToString());
-                        SetCellText(cells, 6, AreaUnits.FormatDka(poleSumSqm));
-                        SetCellText(cells, 7, AreaUnits.FormatDka(totalAffectedSqm));
-                        SetCellText(cells, 8, pct.ToString("F2"));
+                        var grouped = data
+                            .GroupBy(settlementSelector)
+                            .OrderBy(g => g.Key)
+                            .ToList();
 
-                        table.AppendChild(newRow);
-                    }
+                        int rowNum = 0;
+                        foreach (var group in grouped)
+                        {
+                            rowNum++;
+                            var newRow = (TableRow)tplRow.CloneNode(true);
+                            var cells = newRow.Elements<TableCell>().ToList();
 
-                    // Totals row — sum raw square meters, convert once.
-                    var totRow = (TableRow)tplRow.CloneNode(true);
-                    var totCells = totRow.Elements<TableCell>().ToList();
-                    double totalServAllSqm = data.Sum(r => r.ServitudeAreaSqM);
-                    double totalPolesAllSqm = data.Sum(r => r.PoleAreaSqM);
-                    SetCellText(totCells, 0, "");
-                    SetCellText(totCells, 1, "Общо:");
-                    SetCellText(totCells, 2, data.Count.ToString());
-                    SetCellText(totCells, 3, AreaUnits.FormatDka(data.Sum(r => r.DocumentAreaSqM)));
-                    SetCellText(totCells, 4, AreaUnits.FormatDka(totalServAllSqm));
-                    SetCellText(totCells, 5, data.Sum(r => r.PoleCount).ToString());
-                    SetCellText(totCells, 6, AreaUnits.FormatDka(totalPolesAllSqm));
-                    SetCellText(totCells, 7, AreaUnits.FormatDka(totalServAllSqm + totalPolesAllSqm));
-                    SetCellText(totCells, 8, "100.00");
-                    table.AppendChild(totRow);
+                            // All sums are computed on raw square-meter values; conversion
+                            // to decares happens once, at the point of writing each cell.
+                            double servSumSqm = group.Sum(r => r.ServitudeAreaSqm);
+                            double poleSumSqm = group.Sum(r => r.PoleAreaSqm);
+                            double totalAffectedSqm = servSumSqm + poleSumSqm;
+                            double totalAllSqm = data.Sum(r => r.ServitudeAreaSqm) + data.Sum(r => r.PoleAreaSqm);
+                            double pct = totalAllSqm > 0 ? Math.Round(totalAffectedSqm / totalAllSqm * 100.0, 2) : 0;
 
-                    doc.MainDocumentPart?.Document?.Save();
+                            // Columns: №, Землище, Брой имоти, Обща площ, Площ сервитут,
+                            //          Брой стълбове, Площ стълбове, Обща засегната площ, %
+                            SetCellText(cells, 0, rowNum.ToString());
+                            SetCellText(cells, 1, group.Key);
+                            SetCellText(cells, 2, group.Count().ToString());
+                            SetCellText(cells, 3, AreaUnits.FormatDka(group.Sum(r => r.DocumentAreaSqm)));
+                            SetCellText(cells, 4, AreaUnits.FormatDka(servSumSqm));
+                            SetCellText(cells, 5, group.Sum(r => r.PoleCount).ToString());
+                            SetCellText(cells, 6, AreaUnits.FormatDka(poleSumSqm));
+                            SetCellText(cells, 7, AreaUnits.FormatDka(totalAffectedSqm));
+                            SetCellText(cells, 8, pct.ToString("F2"));
+
+                            table.AppendChild(newRow);
+                        }
+
+                        // Totals row — sum raw square meters, convert once.
+                        var totRow = (TableRow)tplRow.CloneNode(true);
+                        var totCells = totRow.Elements<TableCell>().ToList();
+                        double totalServAllSqm = data.Sum(r => r.ServitudeAreaSqm);
+                        double totalPolesAllSqm = data.Sum(r => r.PoleAreaSqm);
+                        SetCellText(totCells, 0, "");
+                        SetCellText(totCells, 1, "Общо:");
+                        SetCellText(totCells, 2, data.Count.ToString());
+                        SetCellText(totCells, 3, AreaUnits.FormatDka(data.Sum(r => r.DocumentAreaSqm)));
+                        SetCellText(totCells, 4, AreaUnits.FormatDka(totalServAllSqm));
+                        SetCellText(totCells, 5, data.Sum(r => r.PoleCount).ToString());
+                        SetCellText(totCells, 6, AreaUnits.FormatDka(totalPolesAllSqm));
+                        SetCellText(totCells, 7, AreaUnits.FormatDka(totalServAllSqm + totalPolesAllSqm));
+                        SetCellText(totCells, 8, "100.00");
+                        table.AppendChild(totRow);
+
+                        doc.MainDocumentPart?.Document?.Save();
                     }
                     File.WriteAllBytes(outputPath, mem.ToArray());
                 }
@@ -751,61 +738,61 @@ namespace PUP_AUTO.DataBridge
                         var body = doc.MainDocumentPart?.Document?.Body;
                         if (body == null) return;
 
-                    var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
-                    if (table == null)
-                    {
-                        _logger.LogWarning("No table found in recapitulation template.");
-                        return;
-                    }
+                        var table = body.Descendants<Table>().OrderByDescending(t => t.Elements<TableRow>().Count()).FirstOrDefault();
+                        if (table == null)
+                        {
+                            _logger.LogWarning("No table found in recapitulation template.");
+                            return;
+                        }
 
-                    var rows = table.Elements<TableRow>().ToList();
-                    if (rows.Count < 2) return;
+                        var rows = table.Elements<TableRow>().ToList();
+                        if (rows.Count < 2) return;
 
-                    TableRow tplRow = rows.Last();
-                    tplRow.Remove();
+                        TableRow tplRow = rows.Last();
+                        tplRow.Remove();
 
-                    // Group by TerritoryType for recapitulation
-                    var grouped = data
-                        .GroupBy(r => string.IsNullOrEmpty(r.TerritoryType)
-                            ? "(без вид територия)" : r.TerritoryType)
-                        .OrderBy(g => g.Key)
-                        .ToList();
+                        // Group by TerritoryType for recapitulation
+                        var grouped = data
+                            .GroupBy(r => string.IsNullOrEmpty(r.TerritoryType)
+                                ? "(без вид територия)" : r.TerritoryType)
+                            .OrderBy(g => g.Key)
+                            .ToList();
 
-                    int rowNum = 0;
-                    foreach (var group in grouped)
-                    {
-                        rowNum++;
-                        var newRow = (TableRow)tplRow.CloneNode(true);
-                        var cells = newRow.Elements<TableCell>().ToList();
+                        int rowNum = 0;
+                        foreach (var group in grouped)
+                        {
+                            rowNum++;
+                            var newRow = (TableRow)tplRow.CloneNode(true);
+                            var cells = newRow.Elements<TableCell>().ToList();
 
-                        // Columns: №, Вид територия, Брой имоти, Обща площ (дка),
-                        //          Площ сервитут (дка), Брой стълбове, Площ стълбове (дка)
-                        // Sums are computed on raw square-meter values; conversion to
-                        // decares happens once, at the point of writing each cell.
-                        SetCellText(cells, 0, rowNum.ToString());
-                        SetCellText(cells, 1, group.Key);
-                        SetCellText(cells, 2, group.Count().ToString());
-                        SetCellText(cells, 3, AreaUnits.FormatDka(group.Sum(r => r.DocumentAreaSqM)));
-                        SetCellText(cells, 4, AreaUnits.FormatDka(group.Sum(r => r.ServitudeAreaSqM)));
-                        SetCellText(cells, 5, group.Sum(r => r.PoleCount).ToString());
-                        SetCellText(cells, 6, AreaUnits.FormatDka(group.Sum(r => r.PoleAreaSqM)));
+                            // Columns: №, Вид територия, Брой имоти, Обща площ (дка),
+                            //          Площ сервитут (дка), Брой стълбове, Площ стълбове (дка)
+                            // Sums are computed on raw square-meter values; conversion to
+                            // decares happens once, at the point of writing each cell.
+                            SetCellText(cells, 0, rowNum.ToString());
+                            SetCellText(cells, 1, group.Key);
+                            SetCellText(cells, 2, group.Count().ToString());
+                            SetCellText(cells, 3, AreaUnits.FormatDka(group.Sum(r => r.DocumentAreaSqm)));
+                            SetCellText(cells, 4, AreaUnits.FormatDka(group.Sum(r => r.ServitudeAreaSqm)));
+                            SetCellText(cells, 5, group.Sum(r => r.PoleCount).ToString());
+                            SetCellText(cells, 6, AreaUnits.FormatDka(group.Sum(r => r.PoleAreaSqm)));
 
-                        table.AppendChild(newRow);
-                    }
+                            table.AppendChild(newRow);
+                        }
 
-                    // Grand totals row — sum raw square meters, convert once.
-                    var totRow = (TableRow)tplRow.CloneNode(true);
-                    var totCells = totRow.Elements<TableCell>().ToList();
-                    SetCellText(totCells, 0, "");
-                    SetCellText(totCells, 1, "Общо:");
-                    SetCellText(totCells, 2, data.Count.ToString());
-                    SetCellText(totCells, 3, AreaUnits.FormatDka(data.Sum(r => r.DocumentAreaSqM)));
-                    SetCellText(totCells, 4, AreaUnits.FormatDka(data.Sum(r => r.ServitudeAreaSqM)));
-                    SetCellText(totCells, 5, data.Sum(r => r.PoleCount).ToString());
-                    SetCellText(totCells, 6, AreaUnits.FormatDka(data.Sum(r => r.PoleAreaSqM)));
-                    table.AppendChild(totRow);
+                        // Grand totals row — sum raw square meters, convert once.
+                        var totRow = (TableRow)tplRow.CloneNode(true);
+                        var totCells = totRow.Elements<TableCell>().ToList();
+                        SetCellText(totCells, 0, "");
+                        SetCellText(totCells, 1, "Общо:");
+                        SetCellText(totCells, 2, data.Count.ToString());
+                        SetCellText(totCells, 3, AreaUnits.FormatDka(data.Sum(r => r.DocumentAreaSqm)));
+                        SetCellText(totCells, 4, AreaUnits.FormatDka(data.Sum(r => r.ServitudeAreaSqm)));
+                        SetCellText(totCells, 5, data.Sum(r => r.PoleCount).ToString());
+                        SetCellText(totCells, 6, AreaUnits.FormatDka(data.Sum(r => r.PoleAreaSqm)));
+                        table.AppendChild(totRow);
 
-                    doc.MainDocumentPart?.Document?.Save();
+                        doc.MainDocumentPart?.Document?.Save();
                     }
                     File.WriteAllBytes(outputPath, mem.ToArray());
                 }

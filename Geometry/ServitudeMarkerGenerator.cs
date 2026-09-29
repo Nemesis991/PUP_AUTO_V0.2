@@ -1,13 +1,10 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using PUP_AUTO.Core;
 
 namespace PUP_AUTO.Geometry
 {
+    /// <summary>PLACEHOLDER — not production.</summary>
     public class ServitudeMarkerGenerator
     {
         private readonly Logger _logger;
@@ -108,19 +105,12 @@ namespace PUP_AUTO.Geometry
             }
         }
 
-        private bool IsSameSegment(LineSegment2d a, LineSegment2d b)
-        {
-            double tol = 0.01;
-            return (a.StartPoint.GetDistanceTo(b.StartPoint) < tol && a.EndPoint.GetDistanceTo(b.EndPoint) < tol) ||
-                   (a.StartPoint.GetDistanceTo(b.EndPoint) < tol && a.EndPoint.GetDistanceTo(b.StartPoint) < tol);
-        }
-
         private List<Point2d> RemoveAdjacentDuplicates(List<Point2d> pts)
         {
             var res = new List<Point2d>();
             foreach (var p in pts)
             {
-                if (res.Count == 0 || res.Last().GetDistanceTo(p) > 0.01)
+                if (res.Count == 0 || res.Last().GetDistanceTo(p) > GeometryTolerances.DuplicatePointDistanceM)
                     res.Add(p);
             }
             return res;
@@ -139,8 +129,8 @@ namespace PUP_AUTO.Geometry
         private void PlaceMarkersAlongPolyline(Polyline pline, Transaction tr, int startNum)
         {
             double totalLength = pline.Length;
-            double step = 20.0;
-            double parasiteTolerance = 15.0;
+            double step = GeometryTolerances.MarkerStepM;
+            double parasiteTolerance = GeometryTolerances.MarkerParasiteToleranceM;
 
             var db = pline.Database ?? HostApplicationServices.WorkingDatabase;
             var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
@@ -169,12 +159,12 @@ namespace PUP_AUTO.Geometry
                 var dbText = new DBText();
                 dbText.Position = pt;
                 dbText.TextString = currentNum.ToString();
-                dbText.Height = 2.0; // Adjust text height as needed
+                dbText.Height = GeometryTolerances.MarkerTextHeight; // Adjust text height as needed
                 dbText.Rotation = textAngle;
                 
                 // Offset text slightly so it's not exactly on the point
                 Vector3d offsetDir = new Vector3d(Math.Cos(textAngle), Math.Sin(textAngle), 0);
-                dbText.Position = pt + offsetDir * 1.5; 
+                dbText.Position = pt + offsetDir * GeometryTolerances.MarkerTextOffsetM; 
 
                 btr.AppendEntity(dbText);
                 tr.AddNewlyCreatedDBObject(dbText, true);

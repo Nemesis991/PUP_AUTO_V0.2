@@ -1,18 +1,15 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using Newtonsoft.Json.Linq;
 using PUP_AUTO.Core;
 using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.DataBridge
 {
-    public class CadLibraryReader
+    /// <summary>PLACEHOLDER — not production.</summary>
+    public class ParcelRegisterReader
     {
         private readonly Logger _logger;
 
-        public CadLibraryReader(Logger logger)
+        public ParcelRegisterReader(Logger logger)
         {
             _logger = logger;
         }
@@ -128,7 +125,7 @@ namespace PUP_AUTO.DataBridge
             {
                 string jsonContent = File.ReadAllText(fileName);
                 JObject root = JObject.Parse(jsonContent);
-                JArray features = (JArray)root["features"];
+                JArray features = (JArray)root["features"]!;
 
                 if (features == null)
                 {
@@ -138,7 +135,7 @@ namespace PUP_AUTO.DataBridge
 
                 foreach (JObject feature in features)
                 {
-                    JObject props = (JObject)feature["properties"];
+                    JObject? props = (JObject?)feature["properties"];
                     if (props == null) continue;
 
                     string ident = props["Идентификатор"]?.ToString() ?? "";
@@ -164,12 +161,12 @@ namespace PUP_AUTO.DataBridge
 
                     // Extract owner from rights_data JSON string
                     string ownerName = "";
-                    string rightsDataStr = props["rights_data"]?.ToString();
+                    string? rightsDataStr = props["rights_data"]?.ToString();
                     if (!string.IsNullOrEmpty(rightsDataStr))
                     {
                         try
                         {
-                            JArray rightsArray = JArray.Parse(rightsDataStr);
+                            JArray rightsArray = JArray.Parse(rightsDataStr!);
                             if (rightsArray.Count > 0)
                             {
                                 ownerName = rightsArray[0]["person_name"]?.ToString() ?? "";
@@ -216,8 +213,7 @@ namespace PUP_AUTO.DataBridge
 
         /// <summary>
         /// Loads GeoJSON polygon geometries and computes their centroids.
-        /// Used for spatial matching of AutoCAD polylines to parcel IDs
-        /// when Map3D Object Data is not available.
+        /// Used for spatial matching of AutoCAD polylines to parcel IDs.
         /// </summary>
         public List<GeoParcel> LoadGeoJsonGeometries(string fileName)
         {
@@ -232,12 +228,12 @@ namespace PUP_AUTO.DataBridge
             {
                 string jsonContent = File.ReadAllText(fileName);
                 JObject root = JObject.Parse(jsonContent);
-                JArray features = (JArray)root["features"];
+                JArray? features = (JArray?)root["features"];
                 if (features == null) return parcels;
 
                 foreach (JObject feature in features)
                 {
-                    JObject props = (JObject)feature["properties"];
+                    JObject? props = (JObject?)feature["properties"];
                     if (props == null) continue;
 
                     string ident = props["Идентификатор"]?.ToString() ?? "";
@@ -259,11 +255,11 @@ namespace PUP_AUTO.DataBridge
                     }
 
                     // Extract polygon centroid from geometry coordinates
-                    JObject geometry = (JObject)feature["geometry"];
+                    JObject? geometry = (JObject?)feature["geometry"];
                     if (geometry == null) continue;
 
                     string geoType = geometry["type"]?.ToString() ?? "";
-                    JArray coordinates = (JArray)geometry["coordinates"];
+                    JArray? coordinates = (JArray?)geometry["coordinates"];
                     if (coordinates == null) continue;
 
                     double cx = 0, cy = 0;
@@ -312,7 +308,7 @@ namespace PUP_AUTO.DataBridge
                             ParcelId = parcelId,
                             CentroidX = cx,
                             CentroidY = cy,
-                            AreaSqM = area
+                            AreaSqm = area
                         });
                     }
                 }

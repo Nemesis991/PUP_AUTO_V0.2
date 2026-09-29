@@ -1,24 +1,29 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
-using Autodesk.AutoCAD.Geometry;
-using Autodesk.AutoCAD.Runtime;
 using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.Core
 {
+    /// <summary>What <see cref="SelectionService.SelectMultiplePolylines"/> skipped or could not identify.</summary>
+    public class PolylineSelectionStats
+    {
+        public int SkippedPluginLayer { get; set; }
+        public bool ServitudeExcluded { get; set; }
+
+        /// <summary>Handles of kept polylines that fell back to the Handle as their ID (no parcel XData / GeoJSON match).</summary>
+        public List<string> HandleFallbacks { get; } = new List<string>();
+    }
+
     /// <summary>
     /// Wraps AutoCAD document / transaction operations, providing helpers
     /// for opening transactions and prompting users for entity selection.
     /// </summary>
-    public class TransactionManager
+    public class SelectionService
     {
         private readonly Logger _logger;
 
-        public TransactionManager(Logger logger)
+        public SelectionService(Logger logger)
         {
             _logger = logger;
         }
@@ -92,12 +97,14 @@ namespace PUP_AUTO.Core
         /// 
         /// When <paramref name="geoParcels"/> is provided, polylines are matched
         /// to GeoJSON parcels by centroid proximity. Otherwise falls back to
-        /// Map3D OD / XData / Handle.
+        /// XData / Handle.
         /// </summary>
         public List<KeyValuePair<string, Polyline>> SelectMultiplePolylines(
             Transaction transaction,
             string promptMessage,
-            List<GeoParcel>? geoParcels = null)
+            List<GeoParcel>? geoParcels = null,
+            ObjectId excludeId = default,
+            PolylineSelectionStats? stats = null)
         {
             var polylines = new List<KeyValuePair<string, Polyline>>();
             Editor ed = GetEditor();
@@ -133,12 +140,24 @@ namespace PUP_AUTO.Core
                     continue;
                 }
 
+                // Never treat the plugin's own drawing output or the servitude as a parcel
+                if (PluginLayers.IsPluginLayer(pline.Layer))
+                {
+                    if (stats != null) stats.SkippedPluginLayer++;
+                    continue;
+                }
+                if (!excludeId.IsNull && selObj.ObjectId == excludeId)
+                {
+                    if (stats != null) stats.ServitudeExcluded = true;
+                    continue;
+                }
+
                 bool isClosed = pline.Closed;
                 if (!isClosed && pline.NumberOfVertices > 2)
                 {
                     var p1 = pline.GetPoint2dAt(0);
                     var p2 = pline.GetPoint2dAt(pline.NumberOfVertices - 1);
-                    if (p1.GetDistanceTo(p2) < 0.01)
+                    if (p1.GetDistanceTo(p2) < GeometryTolerances.ClosureDistanceM)
                     {
                         isClosed = true;
                     }
@@ -166,6 +185,7 @@ namespace PUP_AUTO.Core
                     else
                     {
                         fallbackToHandle++;
+                        stats?.HandleFallbacks.Add(entityId);
                         _logger.LogWarning(
                             $"Could not spatially match polyline (Handle: {pline.Handle}) to any GeoJSON parcel. Using Handle as ID.");
                     }
@@ -173,10 +193,9 @@ namespace PUP_AUTO.Core
                 else
                 {
                     // === STRATEGY 2: XData Extractor ===
-                    string parcelId = PUP_AUTO.DataBridge.XDataExtractor.GetParcelId(pline);
-                    double areaSqm = pline.Area; // Extract geometry area as requested
-                    
-                    if (parcelId != "Неизвестен_Имот" && parcelId != "Грешка_XData")
+                    string parcelId = XDataExtractor.GetParcelId(pline);
+
+                    if (parcelId != XDataNames.UnknownParcel && parcelId != XDataNames.XDataError)
                     {
                         entityId = parcelId;
                         matchedByXData++;
@@ -184,6 +203,7 @@ namespace PUP_AUTO.Core
                     else
                     {
                         fallbackToHandle++;
+                        stats?.HandleFallbacks.Add(entityId);
                     }
                 }
 
@@ -232,15 +252,15 @@ namespace PUP_AUTO.Core
                 double dist = Math.Sqrt(dx * dx + dy * dy);
 
                 // Must be within 50m tolerance (cadastral parcels can have large extents)
-                if (dist < bestDist && dist < 50.0)
+                if (dist < bestDist && dist < GeometryTolerances.GeoMatchRadiusM)
                 {
                     // If area data is available, check area ratio as secondary validation
-                    if (gp.AreaSqM > 0 && plineArea > 0)
+                    if (gp.AreaSqm > 0 && plineArea > 0)
                     {
-                        double areaRatio = Math.Min(plineArea, gp.AreaSqM) / Math.Max(plineArea, gp.AreaSqM);
+                        double areaRatio = Math.Min(plineArea, gp.AreaSqm) / Math.Max(plineArea, gp.AreaSqm);
                         // Area must be within 50% to be considered a match
                         // (allow generous tolerance for projection differences)
-                        if (areaRatio < 0.5) continue;
+                        if (areaRatio < GeometryTolerances.GeoMatchMinAreaRatio) continue;
                     }
 
                     bestDist = dist;
@@ -299,8 +319,7 @@ namespace PUP_AUTO.Core
                     var attRef = transaction.GetObject(attId, OpenMode.ForRead) as AttributeReference;
                     if (attRef != null)
                     {
-                        string tag = attRef.Tag.ToUpper();
-                        if (tag == "НОМЕР_НА_СТЪЛБА" || tag == "СТЪЛБ_№" || tag == "NOMER")
+                        if (PoleAttributeTags.IsPoleNumberTag(attRef.Tag))
                         {
                             entityId = attRef.TextString;
                             foundAttr = true;
@@ -334,9 +353,5 @@ namespace PUP_AUTO.Core
 
             return blocks;
         }
-
-        // -----------------------------------------------------------------
-        //  Object Data (Map 3D) Helper removed
-        // -----------------------------------------------------------------
     }
 }

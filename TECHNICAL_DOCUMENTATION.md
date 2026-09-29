@@ -12,15 +12,15 @@
 Архитектурата е организирана в 5 строго изолирани слоя (Layers), гарантиращи висока модулност, лесна поддръжка и възможност за самостоятелно модулно тестване:
 
 1. **`Core` (Определящ и системен слой):**
-   - Управлява взаимодействията с базата данни на AutoCAD DWG чертежа, транзакциите (`TransactionManager`) и логването на системни събития и грешки (`Logger`).
+   - Управлява взаимодействията с базата данни на AutoCAD DWG чертежа, транзакциите (`SelectionService`) и логването на системни събития и грешки (`Logger`).
    - Гарантира термична памет и безупречно управление на CAD ресурсите.
 
 2. **`Semantics` (Домейнов слой):**
-   - Съдържа чисто домейнови бизнес модели (`ParcelData`, `Servitude`, `Pole`, `ReportRow`, `VertexCoordinate`).
+   - Съдържа чисто домейнови бизнес модели (`ParcelData`, `Pole`, `ReportRow`, `VertexCoordinate`).
    - Независим от AutoCAD API интерфейсите, капсулира математиката за преобразуване на мерни единици (от квадратни метри $m^2$ в декари $\text{дка}$).
 
 3. **`DataBridge` (Интеграционен слой за данни):**
-   - **Входен мост (`CadLibraryReader`):** Парсва външни текстови бази данни (`TemplateC.cad`), съдържащи кадастрални регистрови данни.
+   - **Входен мост (`ParcelRegisterReader`):** Парсва външни текстови бази данни (`TemplateC.cad`), съдържащи кадастрални регистрови данни.
    - **Изходен мост — Excel (`ExcelReportGenerator`):** Обвива NPOI библиотеката за работа с Excel шаблони (`TemplateX.xls`), извършва динамично вмъкване на редове и агрегиране на данни.
    - **Изходен мост — Word (`WordReportGenerator`):** Използва OpenXML SDK (`DocumentFormat.OpenXml`) за генерация на 7 Word (.docm) регистъра от шаблони, без да изисква инсталиран Microsoft Office.
 
@@ -31,8 +31,8 @@
    - `ServitudeMarkerGenerator` генерира точки и номерирани текстови етикети на всеки 20 м по двете страни на сервитутния коридор (диагностична/чертожна функция, не участва в отчетния pipeline).
 
 5. **`UI` (Потребителски и команден слой):**
-   - `App` е входната точка на плагина (`IExtensionApplication`), създаваща Ribbon таб "ПУП АВТОМАТИЗАЦИЯ" с два бутона.
-   - `MainCommands` регистрира двете AutoCAD команди: `PUP_GENERATE` (CLI) и `PUP_WINDOW` (GUI).
+   - `App` е входната точка на плагина (`IExtensionApplication`), създаваща Ribbon таб "ПУП АВТОМАТИЗАЦИЯ" с бутон "Отвори Прозорец".
+   - `MainCommands` регистрира AutoCAD командите: `PUP_WINDOW` (GUI) и диагностичните `PUP_SERV` и `PUP_DRAW_FOOTPRINTS`.
    - `MainWindow` е WPF модален прозорец с тъмна Catppuccin Mocha тема, предоставящ визуален интерфейс за избор на геометрии, файлове и опции за генериране.
 
 ### Интеграция с Autodesk Civil 3D / Map 3D API:
@@ -47,7 +47,7 @@
 ### Преглед на потока на данните (Data Flow Overview):
 1. **Вход 1 (Чертеж):** Потребителят избира сервитутна полилиния, полилинии на стълбове и кадастрални имоти от DWG чертежа.
 2. **Вход 2 (Външен файл):** Чете се текстов файл `TemplateC.cad` с кадастралните собственици, категории, начини на трайно ползване (НТП) и видове собственост.
-3. **Обработка:** `TopologyProcessor` пресича геометричните контури и пресмята площи. `MergeResultsStatic` свързва графичните Handle/XData идентификатори с текстовите регистри. `ExtractPolylineVertices` извлича координати.
+3. **Обработка:** `TopologyProcessor` пресича геометричните контури и пресмята площи. `BuildReportRows` свързва графичните Handle/XData идентификатори с текстовите регистри. `ExtractPolylineVertices` извлича координати.
 4. **Изход:** Генерира се Excel доклад (`PUP_Report.xls`) с 3 работни листа, 7 Word регистъра (.docm) и текстов лог файл (`PUP_AUTO_Logs.txt`).
 
 ---
@@ -57,86 +57,14 @@
 ### 2.1. Зареждане на плагина (Plugin Load)
 При `NETLOAD` на `PUP_AUTO.dll`, AutoCAD изпълнява:
 1. `App.Initialize()` → абонира се за `Application.Idle`.
-2. `OnAppIdle()` → еднократно създава Ribbon таб "ПУП АВТОМАТИЗАЦИЯ" с два бутона:
-   - "Генерирай Отчети" → `PUP_GENERATE`
+2. `OnAppIdle()` → еднократно създава Ribbon таб "ПУП АВТОМАТИЗАЦИЯ" с бутон:
    - "Отвори Прозорец" → `PUP_WINDOW`
 
-### 2.2. Процес 'PUP_GENERATE' (Команден Ред)
+> Командата `PUP_GENERATE` (команден ред) и бутонът "Генерирай Отчети" са премахнати. Генерирането на отчети се стартира само от прозореца `PUP_WINDOW`.
 
-При въвеждане на командата `PUP_GENERATE` в командния ред на Civil 3D, системата преминава през следната строга хронологична последователност:
+### 2.2. Процес 'PUP_WINDOW' (Графичен Прозорец)
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Графичен Потребител (Civil 3D)
-    participant APP as UI.App (Ribbon)
-    participant MC as UI.MainCommands
-    participant TM as Core.TransactionManager
-    participant CR as DataBridge.CadLibraryReader
-    participant TP as Geometry.TopologyProcessor
-    participant EG as DataBridge.ExcelReportGenerator
-    participant WG as DataBridge.WordReportGenerator
-    participant LG as Core.Logger
-
-    User->>APP: NETLOAD → Initialize() → CreateRibbon()
-    User->>MC: Задейства команда 'PUP_GENERATE'
-    MC->>MC: ResolveProjectDirectory() → Намира работната папка
-    MC->>LG: Инициализира Logger("PUP_AUTO_Logs.txt")
-    MC->>TM: Инициализира TransactionManager(logger)
-    MC->>TP: Инициализира TopologyProcessor(logger)
-
-    rect rgb(235, 245, 255)
-        note over MC,TM: 1. Графична селекция от DWG чертежа
-        MC->>TM: StartTransaction()
-        TM-->>MC: Transaction (tr)
-        MC->>TM: SelectSinglePolyline(tr, "Servitude Prompt")
-        TM-->>MC: Polyline (servitudePline)
-        MC->>TM: SelectMultiplePolylines(tr, "Poles Prompt")
-        TM-->>MC: List<KeyValuePair<string, Polyline>> (polePolylines)
-        MC->>TM: SelectMultiplePolylines(tr, "Parcels Prompt")
-        TM-->>MC: List<KeyValuePair<string, Polyline>> (parcelPolylines)
-    end
-
-    rect rgb(255, 248, 230)
-        note over MC,CR: 2. Зареждане на външната база данни
-        MC->>CR: CadLibraryReader(logger)
-        MC->>CR: LoadLibrary("TemplateC.cad")
-        CR-->>MC: Dictionary<string, ParcelData> (parcelDb)
-    end
-
-    rect rgb(235, 255, 235)
-        note over MC,TP: 3. Топологични и векторни изчисления
-        MC->>TP: CalculateServitudeIntersections(servitudePline, parcelPolylines, tr)
-        TP-->>MC: Dictionary<string, double> (servitudeAreas)
-        MC->>TP: AssignPolesToParcels(polePolylines, parcelPolylines, tr)
-        TP-->>MC: List<Pole> (assignedPoles)
-    end
-
-    rect rgb(255, 235, 245)
-        note over MC,EG: 4. Обединяване на данни и генерация
-        MC->>MC: MergeResultsStatic(parcelPolylines, parcelDb, servitudeAreas, assignedPoles, logger)
-        MC-->>MC: List<ReportRow> (reportRows)
-        MC->>EG: ExcelReportGenerator(logger, projectDir)
-        MC->>EG: GenerateReport(reportRows, assignedPoles, parcelDb, "PUP_Report.xls")
-    end
-
-    rect rgb(245, 235, 255)
-        note over MC,WG: 5. Координати и Word регистри
-        MC->>TP: ExtractPolylineVertices() × N стълба + сервитут
-        TP-->>MC: Dictionary<string, List<VertexCoordinate>> + List<VertexCoordinate>
-        MC->>WG: WordReportGenerator(logger, projectDir)
-        MC->>WG: GenerateAllReports(reportRows, poles, parcelDb, dir, poleVertices, servitudeVertices)
-        WG->>WG: 7 × Word .docm регистъра
-    end
-
-    MC->>TM: tr.Commit()
-    MC->>LG: LogSuccess("PUP_GENERATE COMPLETE")
-    MC->>User: Извежда обобщение в командния ред
-```
-
-### 2.3. Процес 'PUP_WINDOW' (Графичен Прозорец)
-
-Извършва същите стъпки, но чрез WPF модален прозорец (`MainWindow`):
+Бутонът "ГЕНЕРИРАЙ ОТЧЕТИ" изпълнява pipeline-а (зареждане на регистъра → топология → `BuildReportRows` → Excel → координати → Word) чрез WPF прозореца (`MainWindow`):
 1. Потребителят избира геометрии чрез бутони в GUI (прозорецът се скрива по време на селекция в AutoCAD).
 2. Потребителят избира кои отчети да генерира чрез checkboxes (Excel / Word / Координатни регистри).
 3. Целият прогрес се показва в реално време в лог конзолата на прозореца.
@@ -158,8 +86,7 @@ sequenceDiagram
 2. **`private void OnAppIdle(object sender, EventArgs e)`**
    - **Логика:** Извиква се еднократно, незабавно се отписва от `Application.Idle`, след което извиква `CreateRibbon()`.
 3. **`private void CreateRibbon()`**
-   - **Логика:** Създава нов Ribbon Tab "ПУП АВТОМАТИЗАЦИЯ" с панел, съдържащ два `RibbonButton`:
-     - "Генерирай Отчети" → `PUP_GENERATE`
+   - **Логика:** Създава нов Ribbon Tab "ПУП АВТОМАТИЗАЦИЯ" с панел, съдържащ един `RibbonButton`:
      - "Отвори Прозорец" → `PUP_WINDOW`
 4. **`class RibbonCommandHandler : ICommand`**
    - **Логика:** Маршрутизира кликвания от Ribbon бутоните към AutoCAD чрез `doc.SendStringToExecute(commandName, ...)`.
@@ -167,24 +94,21 @@ sequenceDiagram
 ---
 
 #### 📄 `UI/MainCommands.cs`
-Регистрира AutoCAD командите и оркестрира целия pipeline.
+Регистрира AutoCAD командите.
 
-1. **`[CommandMethod("PUP_GENERATE")] public void PupGenerate()`**
-   - **Сигнатура:** `() -> void`
-   - **Логика:** Изпълнява последователно стъпки 1 до 6 от жизнения цикъл (селекция → зареждане → топология → обединяване → Excel → координати → Word → обобщение). Обхванат от глобален `try-catch` за безопасно логване на непокрити грешки.
-2. **`[CommandMethod("PUP_WINDOW")] public void PupWindow()`**
+1. **`[CommandMethod("PUP_WINDOW")] public void PupWindow()`**
    - **Сигнатура:** `() -> void`
    - **Логика:** Създава инстанция на `MainWindow` и я показва чрез `Application.ShowModelessWindow(window)` (немодален прозорец — потребителят може да превключва между него и AutoCAD, без да го затваря).
-3. **`[CommandMethod("PUP_SERV")] public void PupServ()`**
+2. **`[CommandMethod("PUP_SERV")] public void PupServ()`**
    - **Сигнатура:** `() -> void`
    - **Логика:** Диагностична/чертожна команда извън основния отчетен pipeline. Подканва потребителя за полилиния (сервитут) и разстояние за сегментиране (по подразбиране 20.0 м), извиква `GeometrySanitizer.Sanitize()` и добавя резултата като нова полилиния в чертежа на автоматично създаван слой `"segmented SERV"` (цвят ACI 3, `ConstantWidth = 0.5`).
-4. **`[CommandMethod("PUP_DRAW_FOOTPRINTS")] public void PupDrawFootprints()`**
+3. **`[CommandMethod("PUP_DRAW_FOOTPRINTS")] public void PupDrawFootprints()`**
    - **Сигнатура:** `() -> void`
    - **Логика:** Диагностична команда, която обхожда **всички** блокови референции в текущото Model Space, извиква `PoleFootprintExtractor.ExtractFootprint()` за всяка от тях и чертае извлечените 4-точкови контури на слой `"POLE_STEPS"`, диагоналите между върховете на слой `"diagonali"` и номера на стълба като `DBText` на слой `"Текст"`. Автоматично създава трите слоя, ако липсват. Извежда обобщение (обработени / успешни / неуспешни) в командния ред.
-5. **`public static List<ReportRow> MergeResultsStatic(...)`**
+4. **`public static List<ReportRow> BuildReportRows(...)`**
    - **Сигнатура:** `(List<KeyValuePair<string, Polyline>> parcelPolylines, Dictionary<string, ParcelData> parcelDb, Dictionary<string, double> servitudeAreas, List<Pole> assignedPoles, Logger logger) -> List<ReportRow>`
-   - **Логика:** Обединява данните от геометрията и текста. За имоти от чертежа, които липсват в `.cad` файла, задава `Owner = "NO DATA"` и записва Warning в лога. **Публичен статичен метод**, споделен между CLI и GUI входните точки.
-6. **`private static string ResolveProjectDirectory()`**
+   - **Логика:** Обединява данните от геометрията и текста. За имоти от чертежа, които липсват в `.cad` файла, задава `Owner = "NO DATA"` и записва Warning в лога. **Публичен статичен метод**, извикван от `MainWindow`.
+5. **`private static string ResolveProjectDirectory()`**
    - **Сигнатура:** `() -> string`
    - **Логика:** Извлича папката на текущия чертеж от `Path.GetDirectoryName(doc.Name)` (абсолютен път) или използва `Environment.CurrentDirectory` като fallback.
 
@@ -204,11 +128,11 @@ WPF модален прозорец, изграден изцяло в C# код 
      - Ред 4: Лог конзола (`Consolas` шрифт)
      - Ред 5: Бутон "🚀 ГЕНЕРИРАЙ ОТЧЕТИ"
 3. **`private void BtnPickServitude_Click / BtnPickPoles_Click / BtnPickParcels_Click(object sender, RoutedEventArgs e)`**
-   - **Логика:** Всяка от трите обвива селекцията в `ed.StartUserInteraction(this)`, извиква `EnsureTransaction()` и съответния метод на `TransactionManager`/`PoleFootprintExtractor`. Обновява статус етикета (✅/❌) и лог конзолата. Изборът на имоти зарежда GeoJSON геометрии за пространствено съвпадение, ако е посочен `.geojson` файл.
+   - **Логика:** Всяка от трите обвива селекцията в `ed.StartUserInteraction(this)`, извиква `EnsureTransaction()` и съответния метод на `SelectionService`/`PoleFootprintExtractor`. Обновява статус етикета (✅/❌) и лог конзолата. Изборът на имоти зарежда GeoJSON геометрии за пространствено съвпадение, ако е посочен `.geojson` файл.
 4. **`private void EnsureTransaction()`**
-   - **Логика:** Lazy-инициализира `Logger`, `TransactionManager` и `Transaction` ако не съществуват или са disposed. Поддържа персистираща транзакция между pick операциите.
+   - **Логика:** Lazy-инициализира `Logger`, `SelectionService` и `Transaction` ако не съществуват или са disposed. Поддържа персистираща транзакция между pick операциите.
 5. **`private void BtnGenerate_Click(object sender, RoutedEventArgs e)`**
-   - **Логика:** Валидира, че всички геометрии са избрани. Ако е отметнат `🧪 MVP Математически тест`, изпълнява `TopologyProcessor.RunMvpMathTest()` и `BasicExcelExporter.ExportMathTest()`, записва `MVP_Math_Test_Parcels.xlsx` и прекратява (не генерира стандартните отчети). Иначе изпълнява 7-стъпков pipeline (Load CAD → Topology → Merge → Coordinates → Excel → Word → Commit). Извежда прогрес в лог конзолата.
+   - **Логика:** Валидира, че всички геометрии са избрани. Ако е отметнат `🧪 MVP Математически тест`, изпълнява `TopologyProcessor.RunMvpMathTest()` и `MvpMathTestExporter.ExportMathTest()`, записва `MVP_Math_Test_Parcels.xlsx` и прекратява (не генерира стандартните отчети). Иначе изпълнява 7-стъпков pipeline (Load CAD → Topology → Merge → Coordinates → Excel → Word → Commit). Извежда прогрес в лог конзолата.
 6. **`private void BtnGenMarkers_Click(object sender, RoutedEventArgs e)`**
    - **Логика:** Извиква `ServitudeMarkerGenerator.GenerateMarkers()` върху избрания сервитут с началните номера от полетата "Старт Ляво"/"Старт Дясно" (по подразбиране 5001/1).
 7. **`private void BtnSegment_Click(object sender, RoutedEventArgs e)`**
@@ -220,10 +144,10 @@ WPF модален прозорец, изграден изцяло в C# код 
 
 ### 📁 Core Layer
 
-#### 📄 `Core/TransactionManager.cs`
+#### 📄 `Core/SelectionService.cs`
 Управлява жизнения цикъл на транзакциите в DWG базата данни и събирането на обекти от чертежа.
 
-1. **`public TransactionManager(Logger logger)`**
+1. **`public SelectionService(Logger logger)`**
    - **Сигнатура:** `(Logger logger) -> void`
    - **Логика:** Приема и инжектира логер съобщението в локално поле `_logger`.
 2. **`public Document GetActiveDocument()`**
@@ -274,31 +198,22 @@ WPF модален прозорец, изграден изцяло в C# код 
 - **Правило (валидно за целия проект):** всяко изчисление — сборуване, изваждане, сумиране в LINQ групиране, проверка на толеранс — работи с необработени стойности в $m^2$ (`double`). Преобразуването в декари и закръгляването до 3 знака става **само веднъж**, в момента на записване в Excel/Word клетка.
 
 #### 📄 `Semantics/DomainModels.cs`
-Дефинира структурата на данните. Всички `*SqM`/`*Sqm` полета са необработени (unrounded) стойности в $m^2$ и участват свободно в по-нататъшна аритметика. Всички `*Decares`/`*Dka` свойства са **само за показване** — тънки обвивки върху `AreaUnits.SqmToDka(...)`, които никога не се сумират или изваждат едно от друго.
+Дефинира структурата на данните. Всички `*SqM`/`*Sqm` полета са необработени (unrounded) стойности в $m^2$ и участват свободно в по-нататъшна аритметика. Моделите не съдържат свойства в декари — преобразуването става чрез `AreaUnits.SqmToDka(...)` / `FormatDka(...)` само при запис в изходния файл.
 
 1. **`class ParcelData`**
-   - Полета за имот: `ParcelId`, `Owner`, `Ekatte`, `DocumentArea` ($m^2$), `ObjectId`.
+   - Полета за имот: `ParcelId`, `Owner`, `Ekatte`, `DocumentArea` ($m^2$).
    - Регистрови полета: `SubDivision`, `TerritoryType`, `Usage`, `Locality`, `Category`, `OwnershipType`, `OwnerId`, `OwnerName`.
-   - MVP Math Test полета: `TotalAreaSqm`, `ServitudeGrossAreaSqm`, `ServitudeNetAreaSqm`, `PoleAreaSqm`, `MathDifference` ($m^2$).
+   - MVP Math Test полета: `TotalAreaSqm`, `ServitudeGrossAreaSqm`, `ServitudeNetAreaSqm`, `PoleAreaSqm` ($m^2$).
    - **`RemainderAreaSqm`** (изчислимо, $m^2$, необработено): $\max(0,\ \text{TotalAreaSqm} - \text{ServitudeNetAreaSqm} - \text{PoleAreaSqm})$.
-   - **`RemainderAreaDka`** (само за показване): `AreaUnits.SqmToDka(RemainderAreaSqm)`.
-2. **`class Servitude`**
-   - Полета: `ServitudeId`, `AssignedParcelId`, `Area` ($m^2$), `ObjectId`.
-3. **`class Pole`**
-   - Полета: `PoleId`, `AssignedParcelId`, `PoleNumber`, `PoleAreaSqM` ($m^2$), `Location` (`Point3d`), `ObjectId`.
-   - **`PoleAreaDecares`** (само за показване): `AreaUnits.SqmToDka(PoleAreaSqM)`.
-4. **`class ReportRow`**
-   - Съдържа пълния набор от данни за ред в отчетите: `DocumentAreaSqM`, `ServitudeAreaSqM`, `PoleAreaSqM` ($m^2$, необработени).
-   - **`RemainderAreaSqM`** (изчислимо, $m^2$, необработено): $\max(0,\ \text{DocumentAreaSqM} - \text{ServitudeAreaSqM})$. `ServitudeAreaSqM` е брутното сечение имот/сервитут (вече съдържа площта на стълбовете), затова тя не се изважда повторно тук.
-   - **Преобразувания в декари (само за показване):**
-     $$\text{DocumentAreaDecares} \implies \text{AreaUnits.SqmToDka}(\text{DocumentAreaSqM})$$
-     $$\text{ServitudeAreaDecares} \implies \text{AreaUnits.SqmToDka}(\text{ServitudeAreaSqM})$$
-     $$\text{PoleAreaDecares} \implies \text{AreaUnits.SqmToDka}(\text{PoleAreaSqM})$$
-     $$\text{RemainderAreaDecares} \implies \text{AreaUnits.SqmToDka}(\text{RemainderAreaSqM})$$
+2. **`class Pole`**
+   - Полета: `PoleId`, `PoleNumber`, `PoleAreaSqm` ($m^2$), `LocationX`, `LocationY` (център на стъпката — средно от върховете).
+3. **`class ReportRow`**
+   - Съдържа пълния набор от данни за ред в отчетите: `DocumentAreaSqm`, `ServitudeAreaSqm`, `PoleAreaSqm` ($m^2$, необработени).
+   - **`RemainderAreaSqm`** (изчислимо, $m^2$, необработено): $\max(0,\ \text{DocumentAreaSqm} - \text{ServitudeAreaSqm})$. `ServitudeAreaSqm` е брутното сечение имот/сервитут (вече съдържа площта на стълбовете), затова тя не се изважда повторно тук.
    - **Допълнителни изчислими свойства:**
      - `AssignedPoles` (`List<Pole>`) — списък на причислените стълбове към имота.
      - `PoleNumbers` — форматиран низ от номера: `"Стълб №24,Стълб №23"` (сортиран по `PoleNumber`).
-5. **`class VertexCoordinate`**
+4. **`class VertexCoordinate`**
    - Полета: `PointIndex`, `PointLabel` (string), `X` (double), `Y` (double).
    - Използва се за координатните регистри (Word шаблони 07 и 08).
 
@@ -306,10 +221,10 @@ WPF модален прозорец, изграден изцяло в C# код 
 
 ### 📁 DataBridge Layer
 
-#### 📄 `DataBridge/CadLibraryReader.cs`
+#### 📄 `DataBridge/ParcelRegisterReader.cs`
 Парсва текстовия регистър от външни среди.
 
-1. **`public CadLibraryReader(Logger logger)`**
+1. **`public ParcelRegisterReader(Logger logger)`**
    - **Логика:** Инжектира `Logger`.
 2. **`public Dictionary<string, ParcelData> LoadLibrary(string fileName)`**
    - **Сигнатура:** `(string fileName) -> Dictionary<string, ParcelData>`
@@ -334,7 +249,7 @@ WPF модален прозорец, изграден изцяло в C# код 
 3. **`private void PopulateSheet(ISheet sheet, int startRowIndex, int rowCount, Action<IRow, IRow, int> writeAction)`**
    - **Логика:** Взема примерния ред (за преписване на стила). Извиква `ShiftRowsDown` за изместване на формулите и футера надолу, след което изписва данните реда по ред.
 4. **`private void PopulateBalancesSheet(IWorkbook workbook, ISheet sheet, List<ReportRow> data)`**
-   - **Логика:** Изпълнява 4 групиращи LINQ заявки (по `Category`, `OwnershipType`, `TerritoryType`, `Usage`). За всяко групиране измества съдържанието надолу, изписва заглавие, заглавни колони и сумите. Сумирането става върху необработените `*SqM` полета на всеки ред от групата (`group.Sum(r => r.DocumentAreaSqM)` и т.н.), а преобразуването в декари — веднъж, чрез `AreaUnits.SqmToDka(...)`, при записа на клетката. Броячите (`PoleCount`) остават цели числа без преобразуване.
+   - **Логика:** Изпълнява 4 групиращи LINQ заявки (по `Category`, `OwnershipType`, `TerritoryType`, `Usage`). За всяко групиране измества съдържанието надолу, изписва заглавие, заглавни колони и сумите. Сумирането става върху необработените `*SqM` полета на всеки ред от групата (`group.Sum(r => r.DocumentAreaSqm)` и т.н.), а преобразуването в декари — веднъж, чрез `AreaUnits.SqmToDka(...)`, при записа на клетката. Броячите (`PoleCount`) остават цели числа без преобразуване.
 5. **`private void ShiftRowsDown(ISheet sheet, int firstRowIndex, int count)`**
    - **Логика:** Използва `sheet.ShiftRows(firstRowIndex, sheet.LastRowNum, count, copyRowHeight: true, resetOriginalRowHeight: false)`.
 6. **`private void SetCell(...)` (Overloads)**
@@ -350,7 +265,7 @@ WPF модален прозорец, изграден изцяло в C# код 
 1. **`public WordReportGenerator(Logger logger, string projectDirectory)`**
    - **Логика:** Инжектира `Logger` и задава пътя до `_Templates` папката.
 2. **`public void GenerateAllReports(...)`**
-   - **Сигнатура:** `(List<ReportRow> reportRows, List<Pole> assignedPoles, Dictionary<string, ParcelData> parcelDb, string outputDir, string settlementName, string ekatte, string municipality, string oblast, Dictionary<string, List<VertexCoordinate>>? poleVertices, List<VertexCoordinate>? servitudeVertices) -> void`
+   - **Сигнатура:** `(List<ReportRow> reportRows, List<Pole> assignedPoles, Dictionary<string, ParcelData> parcelDb, string outputDir, Dictionary<string, List<VertexCoordinate>>? poleVertices, List<VertexCoordinate>? servitudeVertices) -> void`
    - **Логика:** Диспечира генерацията на всички 7 регистъра последователно.
 3. **`private void GenerateParcelRegister(List<ReportRow> data, string outputDir)`**
    - **Шаблон:** `D306-31Y0-02` — Регистър на засегнатите имоти (14 колони).
@@ -361,7 +276,7 @@ WPF модален прозорец, изграден изцяло в C# код 
 5. **`private void GenerateBalancesTerritory(List<ReportRow> data, string outputDir)`**
    - **Шаблон:** `D306-31Y0-04` — Баланси територията (4 групирани подтаблици, 9 колони).
    - **Логика:** Работи с 4 таблици в шаблона. Групира данните по Category, OwnershipType, TerritoryType, Usage. Всяка група включва тотали и процентно разпределение.
-6. **`private void GenerateBalancesMunicipality(List<ReportRow> data, Dictionary<string, ParcelData> parcelDb, string outputDir, ...)`**
+6. **`private void GenerateBalancesMunicipality(List<ReportRow> data, Dictionary<string, ParcelData> parcelDb, string outputDir)`**
    - **Шаблон:** `D306-31Y0-05` — Общ Баланс за общината (9 колони).
    - **Логика:** Групира по землище (Ekatte от `ParcelData`). Единична агрегирана таблица с тотали за всяко населено място.
 7. **`private void GenerateRecapitulation(List<ReportRow> data, string outputDir)`**
@@ -378,12 +293,12 @@ WPF модален прозорец, изграден изцяло в C# код 
 
 ---
 
-#### 📄 `DataBridge/BasicExcelExporter.cs`
+#### 📄 `DataBridge/MvpMathTestExporter.cs`
 Диагностичен, самостоятелен експортер за "MVP Математически тест" резултатите — **не** използва NPOI/шаблони, а генерира `.xlsx` директно чрез OpenXML SDK (`DocumentFormat.OpenXml.Spreadsheet`).
 
 1. **`public static void ExportMathTest(List<ParcelData> parcels, string outputDir)`**
    - **Сигнатура:** `(List<ParcelData> parcels, string outputDir) -> void`
-   - **Логика:** Създава `MVP_Math_Test_Parcels.xlsx` с 8 колони (Идентификатор, TotalArea, ServitudeGrossAreaSqm, ServitudeNetAreaSqm, PoleAreaSqm, Остатък, MathDifference, PoleNumbers). За имот с 0 или 1 стълб пише единичен ред; за имот с повече от 1 стълб пише по един ред на стълб и merge-ва (`MergeCells`) общите за имота колони (A, B, C, D, F, G), за да не се повтарят стойностите. `MathDifference` се изчислява като `ServitudeGrossAreaSqm − (ServitudeNetAreaSqm + PoleAreaSqm)` и се маркира текстово "ОК" при `|diff| ≤ 0.001`, иначе "ГРЕШКА".
+   - **Логика:** Създава `MVP_Math_Test_Parcels.xlsx` с 8 колони ("1. Номер на имот", "2. Площ на имота в дка", "3. Брутна площ с ограничение в дка", "4. Нетна площ с ограничение в дка", "5. Площ на стълба в дка", "6. Остатък в дка", "7. Математическа разлика в дка", "8. Номер на стълба"). За имот с 0 или 1 стълб пише единичен ред; за имот с повече от 1 стълб пише по един ред на стълб и merge-ва (`MergeCells`) общите за имота колони (A, B, C, D, F, G), за да не се повтарят стойностите. Математическата разлика се изчислява тук като `ServitudeGrossAreaSqm − (ServitudeNetAreaSqm + PoleAreaSqm)` и се маркира текстово "ОК" при `|diff| ≤ 0.001`, иначе "ГРЕШКА".
    - **Забележка:** Тук се използва отделен, паралелен формат (`.xlsx` вместо основния `.xls`) и различна имплементация от `ExcelReportGenerator` — този файл е чисто диагностичен инструмент, не част от стандартния отчетен pipeline.
 
 ---
@@ -395,13 +310,13 @@ WPF модален прозорец, изграден изцяло в C# код 
 
 1. **`public TopologyProcessor(Logger logger)`**
    - **Сигнатура:** `(Logger logger) -> void`
-2. **`public Dictionary<string, double> CalculateServitudeIntersections(Polyline servitudePline, List<KeyValuePair<string, Polyline>> parcelPolylines, Transaction transaction)`**
+2. **`public Dictionary<string, double> CalculateServitudeIntersections(Polyline servitudePline, List<KeyValuePair<string, Polyline>> parcelPolylines)`**
    - **Логика:** Санитизира сервитута и всеки имот чрез `GeometrySanitizer.Sanitize()`, преобразува ги в `Region`. За всеки имот клонира сервитутния регион и изпълнява `intersectRegion.BooleanOperation(BooleanOperationType.BoolIntersect, parcelRegion)`. Записва площта, ако е по-голяма от `SliverTolerance` ($0.001 m^2$).
-3. **`public List<Pole> AssignPolesToParcels(List<KeyValuePair<string, Polyline>> polePolylines, List<KeyValuePair<string, Polyline>> parcelPolylines, Transaction transaction)`**
+3. **`public List<Pole> AssignPolesToParcels(List<KeyValuePair<string, Polyline>> polePolylines, List<KeyValuePair<string, Polyline>> parcelPolylines)`**
    - **Логика:** ⚠️ Въпреки името "Dominant Area", методът **не** избира само доминиращия имот — за всеки стълб изчислява сечението с **всеки** имот от списъка и записва в `pole.OverlappingParcels` **всички** резултати над `SliverTolerance` (не само максимума). Ако стълб не пресича нито един имот, логва Warning с Handle и X,Y координатите на центроида ("floating geometry"). Виж коригирания раздел §4.1 по-долу за пълния анализ на последствията.
-4. **`public List<ParcelData> RunMvpMathTest(Polyline servitudePline, List<KeyValuePair<string, Polyline>> polePolylines, List<KeyValuePair<string, Polyline>> parcelPolylines, Transaction transaction)`**
+4. **`public List<ParcelData> RunMvpMathTest(Polyline servitudePline, List<KeyValuePair<string, Polyline>> polePolylines, List<KeyValuePair<string, Polyline>> parcelPolylines)`**
    - **Сигнатура:** `(...) -> List<ParcelData>`
-   - **Логика:** Диагностичен път, независим от `CalculateServitudeIntersections`/`AssignPolesToParcels`. За всеки имот изчислява: (1) `ServitudeGrossAreaSqm` — директно сечение имот∩сервитут чрез `GetPreciseIntersectionArea()`; (2) `PoleAreaSqm` и `IndividualPoleAreas` — сумата от сеченията имот∩всеки стълб; (3) `ServitudeNetAreaSqm` чрез `GetPreciseSubtractedArea()` — сечение имот∩сервитут, от което последователно се изважда ("`BoolSubtract`") площта на всеки застъпващ стълб; (4) `MathDifference = ServitudeGrossAreaSqm − (ServitudeNetAreaSqm + PoleAreaSqm)`, очаквано ≈ 0, като проверка за баланс. Резултатът се визуализира чрез `BasicExcelExporter.ExportMathTest()`.
+   - **Логика:** Диагностичен път, независим от `CalculateServitudeIntersections`/`AssignPolesToParcels`. За всеки имот изчислява: (1) `ServitudeGrossAreaSqm` — директно сечение имот∩сервитут чрез `GetPreciseIntersectionArea()`; (2) `PoleAreaSqm` и `IndividualPoleAreas` — сумата от сеченията имот∩всеки стълб; (3) `ServitudeNetAreaSqm` чрез `GetPreciseSubtractedArea()` — сечение имот∩сервитут, от което последователно се изважда ("`BoolSubtract`") площта на всеки застъпващ стълб. Балансът `ServitudeGrossAreaSqm − (ServitudeNetAreaSqm + PoleAreaSqm)` (очаквано ≈ 0) се изчислява и визуализира от `MvpMathTestExporter.ExportMathTest()`.
 5. **`private double GetPreciseIntersectionArea(...)` / `private double GetPreciseSubtractedArea(...)`**
    - **Логика:** Помощни методи за `RunMvpMathTest`. Клонират геометриите и ги транслират ("origin shift" чрез `Matrix3d.Displacement`) така, че минималната точка на имота да падне в началото на координатната система, преди да построят `Region`-и и да изпълнят булевите операции — цели се по-висока числена прецизност при координати с голяма абсолютна стойност (напр. в БГС2005).
 6. **`public List<VertexCoordinate> ExtractPolylineVertices(Polyline pline, string labelPrefix = "")`**
@@ -428,12 +343,12 @@ WPF модален прозорец, изграден изцяло в C# код 
 #### 📄 `Geometry/PoleFootprintExtractor.cs`
 Статичен клас за извличане на 4-точковия ("P-tag") контур на стъпката на стълб от динамичен блок.
 
-1. **`public static PoleFootprintResult ExtractFootprint(BlockReference blockRef, Transaction tr, Logger logger)`**
-   - **Сигнатура:** `(BlockReference blockRef, Transaction tr, Logger logger) -> PoleFootprintResult`
+1. **`public static PoleFootprintResult ExtractFootprint(BlockReference blockRef, Transaction tr)`**
+   - **Сигнатура:** `(BlockReference blockRef, Transaction tr) -> PoleFootprintResult`
    - **Логика:** Чете атрибутите на блока. Номерът на стълба се търси в тагове `НОМЕР_НА_СТЪЛБА`/`СТЪЛБ_№`/`NOMER`. Координатните точки се търсят в тагове, започващи с `P` (стриктно изключвайки тагове, започващи с `TP`).
    - **Йерархия на съвпадение:** (1) Ако блокът е динамичен и има активно състояние на видимост (`Visibility`/`Видимост`), първо се търсят тагове от вида `P1-<VISIBILITY>` … `P4-<VISIBILITY>`; (2) при непълен резултат — директно съвпадение по `P1`…`P4` без суфикс за видимост.
    - Всяка точка се парсва от низ `"X, Y"` чрез `double.TryParse(..., NumberStyles.Any, CultureInfo.InvariantCulture)`. Изисква се намирането на точно 4 валидни точки, иначе връща `ErrorMessage` и празен `FootprintPolyline`.
-   - 4-те точки се подреждат обратно на часовниковата стрелка около центроида си (`Math.Atan2`) и се конструира затворена `Polyline`. `AreaSqM` се задава от `pline.Area`.
+   - 4-те точки се подреждат обратно на часовниковата стрелка около центроида си (`Math.Atan2`) и се конструира затворена `Polyline`.
    - **`private static string GetEffectiveName(...)`** / **`private static string GetVisibilityState(...)`** — помощни методи за име на динамичен блок и текущо състояние на видимост.
 
 ---
@@ -514,7 +429,7 @@ WPF модален прозорец, изграден изцяло в C# код 
        │                                               │
        ▼                                               ▼
 +------------------------------------+  +------------------------------------+
-| TransactionManager                 |  | CadLibraryReader                   |
+| SelectionService                   |  | ParcelRegisterReader                   |
 | SelectMultiplePolylines()          |  | LoadLibrary()                      |
 | Извлича: KeyValuePair<string,Poly> |  | SafeCol(), double.TryParse()       |
 +------------------------------------+  +------------------------------------+
@@ -523,14 +438,14 @@ WPF модален прозорец, изграден изцяло в C# код 
        ▼                                               ▼
 +----------------------------------------------------------------------------+
 | TopologyProcessor & Geometry Engine                                        |
-| 1. CalculateServitudeIntersections() -> ServitudeAreaSqM = 450.25 m²       |
-| 2. AssignPolesToParcels()            -> PoleAreaSqM = 12.50 m², Count = 1 |
+| 1. CalculateServitudeIntersections() -> ServitudeAreaSqm = 450.25 m²       |
+| 2. AssignPolesToParcels()            -> PoleAreaSqm = 12.50 m², Count = 1 |
 | 3. ExtractPolylineVertices()         -> List<VertexCoordinate>             |
 +----------------------------------------------------------------------------+
                                        │
                                        ▼
 +----------------------------------------------------------------------------+
-| MainCommands.MergeResultsStatic()   (public static)                        |
+| MainCommands.BuildReportRows()   (public static)                        |
 | Напасване по ParcelId:                                                      |
 |  - Взема кадастралните полета от ParcelData (или "NO DATA" ако липсва)     |
 |  - Обединява графично изчислените площи в m²                               |
@@ -540,15 +455,15 @@ WPF модален прозорец, изграден изцяло в C# код 
 +----------------------------------------------------------------------------+
 | Semantics.ReportRow (Domain Object)                                        |
 |  Съхранени полета (m², необработени, участват в аритметика):               |
-|  - DocumentAreaSqM   = 12500.0 m²                                          |
-|  - ServitudeAreaSqM  =   450.25 m²                                         |
-|  - PoleAreaSqM       =    12.50 m²                                         |
-|  - RemainderAreaSqM  = max(0, 12500.0 - 450.25) = 12049.75 m² (необработено)|
-|  Показвани свойства (AreaUnits.SqmToDka, само в изходния файл):            |
-|  - DocumentAreaDecares  = 12.500 дка                                       |
-|  - ServitudeAreaDecares =  0.450 дка                                       |
-|  - PoleAreaDecares      =  0.013 дка   (12.50 / 1000 = 0.0125 → AwayFromZero)|
-|  - RemainderAreaDecares = AreaUnits.SqmToDka(12049.75) = 12.050 дка         |
+|  - DocumentAreaSqm   = 12500.0 m²                                          |
+|  - ServitudeAreaSqm  =   450.25 m²                                         |
+|  - PoleAreaSqm       =    12.50 m²                                         |
+|  - RemainderAreaSqm  = max(0, 12500.0 - 450.25) = 12049.75 m² (необработено)|
+|  Стойности в изходния файл (AreaUnits.SqmToDka при запис):                 |
+|  - SqmToDka(Document)   = 12.500 дка                                       |
+|  - SqmToDka(Servitude)  =  0.450 дка                                       |
+|  - SqmToDka(Pole)       =  0.013 дка   (12.50 / 1000 = 0.0125 → AwayFromZero)|
+|  - SqmToDka(Remainder)  = SqmToDka(12049.75) = 12.050 дка                  |
 |  - AssignedPoles: [Pole{...}]     ──► PoleNumbers = "Стълб №24"            |
 +----------------------------------------------------------------------------+
                                        │
@@ -572,7 +487,7 @@ WPF модален прозорец, изграден изцяло в C# код 
 
 **Последица:** обща сума в ред "Общо:" вече е `SqmToDka(Σ m²)`, а не `Σ SqmToDka(m²)` на отделните редове. Двете могат да се различават с до ±0.001 дка при много редове — това е коректно и по-точно поведение (грешките от закръгляване вече не се натрупват), **не дефект**. Пример:
 
-| Ред | ServitudeAreaSqM (m²) | Старо: закръгли, после сумирай | Ново: сумирай, после закръгли |
+| Ред | ServitudeAreaSqm (m²) | Старо: закръгли, после сумирай | Ново: сумирай, после закръгли |
 |---|---|---|---|
 | Имот А | 450.2 | 0.450 | — |
 | Имот Б | 12.35 | 0.012 | — |
@@ -596,7 +511,7 @@ dotnet build PUP_AUTO.slnx --configuration Release
 2. Отворете целевия DWG чертеж.
 3. Въведете командата `NETLOAD` в командния ред.
 4. Навигирайте и изберете компилирания файл `PUP_AUTO.dll`.
-5. Ribbon табът **"ПУП АВТОМАТИЗАЦИЯ"** ще се появи автоматично с два бутона.
+5. Ribbon табът **"ПУП АВТОМАТИЗАЦИЯ"** ще се появи автоматично с бутона "Отвори Прозорец".
 
 ### 3. Настройка на тестови папки и шаблони:
 Уверете се, че в папката на DWG чертежа съществуват следните поддиректории:
@@ -613,14 +528,7 @@ dotnet build PUP_AUTO.slnx --configuration Release
 
 ### 4. Изпълнение на командите:
 
-#### Вариант А: Команден ред (PUP_GENERATE)
-1. Напишете `PUP_GENERATE` в командния ред и натиснете `Enter`.
-2. Изберете полилинията на сервитута.
-3. Изберете полилиниите на стълбовете (натиснете `Enter` за потвърждение).
-4. Изберете полилиниите на имотите (натиснете `Enter` за потвърждение).
-5. Системата автоматично генерира всички Excel и Word отчети.
-
-#### Вариант Б: Графичен прозорец (PUP_WINDOW)
+#### Графичен прозорец (PUP_WINDOW)
 1. Напишете `PUP_WINDOW` в командния ред (или натиснете бутона "Отвори Прозорец" от Ribbon таба).
 2. Проверете/променете пътищата до `.cad` базата и папката с шаблони.
 3. Изберете геометриите чрез трите бутона (Сервитут / Стълбове / Имоти).
@@ -629,8 +537,8 @@ dotnet build PUP_AUTO.slnx --configuration Release
 6. Следете прогреса в лог конзолата.
 
 ### 5. Допълнителни / диагностични команди:
-- **`PUP_SERV`** — избира полилиния (сервитут) и разстояние за сегментиране (по подразбиране 20 м), чертае санитизирана/сегментирана версия на слой `"segmented SERV"`. Полезно за визуална проверка преди основния `PUP_GENERATE`.
-- **`PUP_DRAW_FOOTPRINTS`** — обхожда всички блокови референции в чертежа, извлича 4-точковите стъпки на стълбовете (P-tag логика) и ги чертае заедно с диагонали и номера на стълб, без да генерира отчети. Диагностичен инструмент за проверка на блоковите атрибути преди пускане на `PUP_GENERATE`.
+- **`PUP_SERV`** — избира полилиния (сервитут) и разстояние за сегментиране (по подразбиране 20 м), чертае санитизирана/сегментирана версия на слой `"segmented SERV"`. Полезно за визуална проверка преди генерирането на отчети.
+- **`PUP_DRAW_FOOTPRINTS`** — обхожда всички блокови референции в чертежа, извлича 4-точковите стъпки на стълбовете (P-tag логика) и ги чертае заедно с диагонали и номера на стълб, без да генерира отчети. Диагностичен инструмент за проверка на блоковите атрибути преди генерирането на отчети.
 - **"🧪 MVP Математически тест"** (само в `PUP_WINDOW`) — генерира `MVP_Math_Test_Parcels.xlsx` с детайлна разбивка Gross/Net/Pole площ и автоматична проверка за баланс ("ОК"/"ГРЕШКА"), без да пипа стандартните Excel/Word изходи.
 
 ### 6. Резултати и проверка на лог файла:

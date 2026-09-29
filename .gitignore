@@ -28,3 +28,7 @@ PUP_Report.xls
 scratch.ps1
 *.geojson
 *.dwg
+
+# Before/after refactor outputs (contain owner names and ЕГН/БУЛСТАТ)
+baseline/
+after/

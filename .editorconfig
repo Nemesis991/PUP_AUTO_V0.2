@@ -1,0 +1,9 @@
+root = true
+
+[*.cs]
+# Unnecessary using directive
+dotnet_diagnostic.IDE0005.severity = warning
+# Unused private member
+dotnet_diagnostic.IDE0051.severity = warning
+# Unused parameter
+dotnet_diagnostic.IDE0060.severity = warning

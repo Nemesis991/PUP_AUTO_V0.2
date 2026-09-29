@@ -1,13 +1,10 @@
-using System;
-using System.IO;
-
 namespace PUP_AUTO.Core
 {
     public class Logger
     {
         private readonly string _logFilePath;
 
-        public Logger(string logFilePath = "PUP_AUTO_Logs.txt")
+        public Logger(string logFilePath = FileNames.LogFile)
         {
             _logFilePath = logFilePath;
             

@@ -1,10 +1,8 @@
-using System;
-using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using PUP_AUTO.Core;
+using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.Geometry
 {
@@ -14,11 +12,28 @@ namespace PUP_AUTO.Geometry
     public class PoleFootprintResult
     {
         public Polyline? FootprintPolyline { get; set; }
-        public double AreaSqM { get; set; }
         public string PoleNumber { get; set; } = string.Empty;
         public Point3d LabelPosition { get; set; }
         public double LabelRotation { get; set; }
         public string ErrorMessage { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// One pole block after footprint extraction: the raw result plus the pole ID and the
+    /// footprint vertices used by the window and the coordinate reports.
+    /// </summary>
+    public class PoleFootprintEntry
+    {
+        /// <summary>Key the block was supplied with (its handle or attribute-derived ID).</summary>
+        public string Key { get; set; } = string.Empty;
+
+        public PoleFootprintResult Result { get; set; } = new PoleFootprintResult();
+
+        /// <summary>The pole number when the block has one, otherwise <see cref="Key"/>.</summary>
+        public string PoleId { get; set; } = string.Empty;
+
+        /// <summary>Footprint vertices labelled "PoleId-1" ...; null when extraction failed.</summary>
+        public List<VertexCoordinate>? Vertices { get; set; }
     }
 
     /// <summary>
@@ -28,7 +43,34 @@ namespace PUP_AUTO.Geometry
     /// </summary>
     public static class PoleFootprintExtractor
     {
-        public static PoleFootprintResult ExtractFootprint(BlockReference blockRef, Transaction tr, Logger logger)
+        /// <summary>
+        /// Extracts the footprint of every block, lazily and in order, so callers that draw
+        /// while enumerating keep their original interleaving of extraction and drawing.
+        /// </summary>
+        public static IEnumerable<PoleFootprintEntry> ExtractAll(
+            IEnumerable<KeyValuePair<string, BlockReference>> poleBlocks,
+            Transaction tr)
+        {
+            foreach (var kvp in poleBlocks)
+            {
+                var entry = new PoleFootprintEntry
+                {
+                    Key = kvp.Key,
+                    Result = ExtractFootprint(kvp.Value, tr)
+                };
+                entry.PoleId = string.IsNullOrEmpty(entry.Result.PoleNumber) ? kvp.Key : entry.Result.PoleNumber;
+
+                if (entry.Result.FootprintPolyline != null)
+                {
+                    entry.Vertices = TopologyProcessor.ExtractPolylineVertices(
+                        entry.Result.FootprintPolyline, $"{entry.PoleId}-");
+                }
+
+                yield return entry;
+            }
+        }
+
+        public static PoleFootprintResult ExtractFootprint(BlockReference blockRef, Transaction tr)
         {
             var result = new PoleFootprintResult();
             
@@ -49,10 +91,10 @@ namespace PUP_AUTO.Geometry
                     var attRef = tr.GetObject(attId, OpenMode.ForRead) as AttributeReference;
                     if (attRef != null)
                     {
-                        string tag = attRef.Tag.ToUpperInvariant();
+                        string tag = PoleAttributeTags.Normalize(attRef.Tag);
                         string val = attRef.TextString;
 
-                        if (tag == "НОМЕР_НА_СТЪЛБА" || tag == "СТЪЛБ_№" || tag == "NOMER")
+                        if (PoleAttributeTags.IsPoleNumberTag(tag))
                         {
                             poleNumber = val;
                             result.LabelPosition = (attRef.Justify == AttachmentPoint.BaseLeft) ? attRef.Position : attRef.AlignmentPoint;
@@ -84,7 +126,7 @@ namespace PUP_AUTO.Geometry
                     if (validPTags.Keys.Any(k => k.Contains(p1v) || k.StartsWith(p1v)))
                     {
                         // Found visibility specific tags
-                        foreach (string key in new[] { "P1", "P2", "P3", "P4" })
+                        foreach (string key in PoleAttributeTags.PointTags)
                         {
                             var match = validPTags.FirstOrDefault(k => k.Key.StartsWith($"{key}-{visibilityState.ToUpperInvariant()}")).Value;
                             if (match != null) pointStrings.Add(match);
@@ -96,7 +138,7 @@ namespace PUP_AUTO.Geometry
                 if (pointStrings.Count < 4)
                 {
                     pointStrings.Clear();
-                    foreach (string key in new[] { "P1", "P2", "P3", "P4" })
+                    foreach (string key in PoleAttributeTags.PointTags)
                     {
                         if (validPTags.TryGetValue(key, out string? match) && match != null)
                         {
@@ -146,7 +188,6 @@ namespace PUP_AUTO.Geometry
                 pline.Closed = true;
 
                 result.FootprintPolyline = pline;
-                result.AreaSqM = pline.Area;
 
                 return result;
             }
@@ -176,10 +217,7 @@ namespace PUP_AUTO.Geometry
             {
                 foreach (DynamicBlockReferenceProperty prop in blockRef.DynamicBlockReferencePropertyCollection)
                 {
-                    if (prop.PropertyName.Equals("Visibility", StringComparison.OrdinalIgnoreCase) ||
-                        prop.PropertyName.Equals("Visibility1", StringComparison.OrdinalIgnoreCase) ||
-                        prop.PropertyName.Equals("Видимост", StringComparison.OrdinalIgnoreCase) ||
-                        prop.PropertyName.Equals("Видимост1", StringComparison.OrdinalIgnoreCase))
+                    if (PoleAttributeTags.IsVisibilityProperty(prop.PropertyName))
                     {
                         return prop.Value.ToString();
                     }

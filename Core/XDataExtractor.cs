@@ -1,11 +1,10 @@
-using System;
 using Autodesk.AutoCAD.DatabaseServices;
 
-namespace PUP_AUTO.DataBridge
+namespace PUP_AUTO.Core
 {
     public static class XDataExtractor
     {
-        public static string GetParcelId(Entity ent, string regAppName = "TransCAD")
+        public static string GetParcelId(Entity ent, string regAppName = XDataNames.RegApp)
         {
             try
             {
@@ -13,7 +12,7 @@ namespace PUP_AUTO.DataBridge
                 {
                     if (resBuf == null)
                     {
-                        return "Неизвестен_Имот";
+                        return XDataNames.UnknownParcel;
                     }
 
                     TypedValue[] xdata = resBuf.AsArray();
@@ -23,12 +22,12 @@ namespace PUP_AUTO.DataBridge
                         return xdata[1].Value.ToString();
                     }
 
-                    return "Неизвестен_Имот";
+                    return XDataNames.UnknownParcel;
                 }
             }
             catch (Exception)
             {
-                return "Грешка_XData";
+                return XDataNames.XDataError;
             }
         }
     }

@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
@@ -9,11 +6,11 @@ using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.DataBridge
 {
-    public static class BasicExcelExporter
+    public static class MvpMathTestExporter
     {
         public static void ExportMathTest(List<ParcelData> parcels, string outputDir)
         {
-            string filePath = Path.Combine(outputDir, "MVP_Math_Test_Parcels.xlsx");
+            string filePath = Path.Combine(outputDir, FileNames.MvpMathTestFile);
 
             using (SpreadsheetDocument spreadsheetDocument = SpreadsheetDocument.Create(filePath, SpreadsheetDocumentType.Workbook))
             {
@@ -41,14 +38,14 @@ namespace PUP_AUTO.DataBridge
                 // Add Headers
                 Row headerRow = new Row();
                 headerRow.Append(
-                    CreateCell("1. Идентификатор"),
-                    CreateCell("2. TotalArea (дка)"),
-                    CreateCell("3. ServitudeGrossArea (дка)"),
-                    CreateCell("4. ServitudeNetArea (дка)"),
-                    CreateCell("5. PoleArea (дка)"),
-                    CreateCell("6. Остатък (дка)"),
-                    CreateCell("7. MathDifference (дка)"),
-                    CreateCell("8. PoleNumbers")
+                    CreateCell("1. Номер на имот"),
+                    CreateCell("2. Площ на имота в дка"),
+                    CreateCell("3. Брутна площ с ограничение в дка"),
+                    CreateCell("4. Нетна площ с ограничение в дка"),
+                    CreateCell("5. Площ на стълба в дка"),
+                    CreateCell("6. Остатък в дка"),
+                    CreateCell("7. Математическа разлика в дка"),
+                    CreateCell("8. Номер на стълба")
                 );
                 sheetData.Append(headerRow);
 
@@ -58,11 +55,11 @@ namespace PUP_AUTO.DataBridge
                     // The balance check decides OK/ГРЕШКА on the raw, unrounded square-meter
                     // difference — never on an already-rounded decare value.
                     double diffSqm = parcel.ServitudeGrossAreaSqm - (parcel.ServitudeNetAreaSqm + parcel.PoleAreaSqm);
-                    string checkStatus = Math.Abs(diffSqm) <= 0.001 ? "ОК" : "ГРЕШКА";
+                    string checkStatus = Math.Abs(diffSqm) <= GeometryTolerances.BalanceToleranceSqm ? "ОК" : "ГРЕШКА";
                     string diffStr = $"{AreaUnits.FormatDka(diffSqm)} - {checkStatus}";
 
                     // If there is no pole, we output 0 for ServitudeNetAreaSqm per user request.
-                    string netAreaStr = parcel.PoleAreaSqm > 0.001
+                    string netAreaStr = parcel.PoleAreaSqm > GeometryTolerances.PoleAreaPresenceSqm
                         ? AreaUnits.FormatDka(parcel.ServitudeNetAreaSqm)
                         : "0.000";
 
@@ -74,7 +71,7 @@ namespace PUP_AUTO.DataBridge
                     {
                         rowIndex++;
                         Row row = new Row();
-                        string poleNumbersStr = poleCount == 1 ? parcel.AssignedPoleNumbers[0] : "";
+                        string poleNumbersStr = poleCount == 1 ? parcel.AssignedPoleNumbers![0] : "";
                         row.Append(
                             CreateCell(parcel.ParcelId),
                             CreateCell(AreaUnits.FormatDka(parcel.TotalAreaSqm)),
@@ -94,7 +91,7 @@ namespace PUP_AUTO.DataBridge
                         {
                             rowIndex++;
                             Row row = new Row();
-                            string pNum = parcel.AssignedPoleNumbers[i];
+                            string pNum = parcel.AssignedPoleNumbers![i];
                             double indArea = parcel.IndividualPoleAreas != null && parcel.IndividualPoleAreas.ContainsKey(pNum) 
                                 ? parcel.IndividualPoleAreas[pNum] 
                                 : 0;

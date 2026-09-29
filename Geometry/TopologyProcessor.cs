@@ -1,13 +1,6 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
-using Autodesk.AutoCAD.Runtime;
 using PUP_AUTO.Core;
-using PUP_AUTO.DataBridge;
 using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.Geometry
@@ -24,7 +17,7 @@ namespace PUP_AUTO.Geometry
         /// Minimum area threshold (sq.m.) below which an intersection is
         /// treated as a sliver / rounding artefact and ignored.
         /// </summary>
-        private const double SliverTolerance = 0.001;
+        private const double SliverTolerance = GeometryTolerances.SliverAreaSqm;
 
         public TopologyProcessor(Logger logger)
         {
@@ -43,21 +36,19 @@ namespace PUP_AUTO.Geometry
         /// <param name="parcelPolylines">
         /// Pairs of (ParcelId, closed Polyline) for every candidate parcel.
         /// </param>
-        /// <param name="transaction">An active AutoCAD transaction.</param>
         /// <returns>ParcelId → intersected area (sq.m.).</returns>
         public Dictionary<string, double> CalculateServitudeIntersections(
             Polyline servitudePline,
-            List<KeyValuePair<string, Polyline>> parcelPolylines,
-            Transaction transaction)
+            List<KeyValuePair<string, Polyline>> parcelPolylines)
         {
             var result = new Dictionary<string, double>();
 
             Region? servitudeRegion = null;
             try
             {
-                using (Polyline cleanServitude = GeometrySanitizer.Sanitize(servitudePline, 50.0, 0.05))
+                using (Polyline? cleanServitude = GeometrySanitizer.Sanitize(servitudePline, GeometryTolerances.SanitizeMaxSegmentLengthM, GeometryTolerances.SanitizeMinVertexDistanceM))
                 {
-                    servitudeRegion = SafeCreateRegion(cleanServitude);
+                    servitudeRegion = SafeCreateRegion(cleanServitude!);
                     if (servitudeRegion == null)
                     {
                         _logger.LogError("Failed to create Region from servitude polyline.");
@@ -65,47 +56,47 @@ namespace PUP_AUTO.Geometry
                     }
 
                     foreach (var kvp in parcelPolylines)
-                {
-                    string parcelId = kvp.Key;
-                    Polyline parcelPline = kvp.Value;
-
-                    Region? parcelRegion = null;
-                    Region? intersectRegion = null;
-                    try
                     {
-                        using (Polyline cleanParcel = GeometrySanitizer.Sanitize(parcelPline, 50.0, 0.05))
+                        string parcelId = kvp.Key;
+                        Polyline parcelPline = kvp.Value;
+
+                        Region? parcelRegion = null;
+                        Region? intersectRegion = null;
+                        try
                         {
-                            parcelRegion = SafeCreateRegion(cleanParcel);
-                            if (parcelRegion == null)
+                            using (Polyline? cleanParcel = GeometrySanitizer.Sanitize(parcelPline, GeometryTolerances.SanitizeMaxSegmentLengthM, GeometryTolerances.SanitizeMinVertexDistanceM))
                             {
-                                _logger.LogWarning(
-                                    $"Failed to create Region for parcel {parcelId}. Skipped.");
-                                continue;
-                            }
+                                parcelRegion = SafeCreateRegion(cleanParcel!);
+                                if (parcelRegion == null)
+                                {
+                                    _logger.LogWarning(
+                                        $"Failed to create Region for parcel {parcelId}. Skipped.");
+                                    continue;
+                                }
 
-                            // Clone the servitude region so the original is not mutated
-                            intersectRegion = (Region)servitudeRegion.Clone();
-                            intersectRegion.BooleanOperation(
-                                BooleanOperationType.BoolIntersect, parcelRegion);
+                                // Clone the servitude region so the original is not mutated
+                                intersectRegion = (Region)servitudeRegion.Clone();
+                                intersectRegion.BooleanOperation(
+                                    BooleanOperationType.BoolIntersect, parcelRegion);
 
-                            double area = intersectRegion.Area;
-                            if (area > SliverTolerance)
-                            {
-                                result[parcelId] = area;
+                                double area = intersectRegion.Area;
+                                if (area > SliverTolerance)
+                                {
+                                    result[parcelId] = area;
+                                }
                             }
                         }
+                        catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                        {
+                            _logger.LogWarning(
+                                $"Boolean intersect failed for parcel {parcelId}: {ex.Message}");
+                        }
+                        finally
+                        {
+                            intersectRegion?.Dispose();
+                            parcelRegion?.Dispose();
+                        }
                     }
-                    catch (Autodesk.AutoCAD.Runtime.Exception ex)
-                    {
-                        _logger.LogWarning(
-                            $"Boolean intersect failed for parcel {parcelId}: {ex.Message}");
-                    }
-                    finally
-                    {
-                        intersectRegion?.Dispose();
-                        parcelRegion?.Dispose();
-                    }
-                }
                 }
             }
             finally
@@ -135,12 +126,10 @@ namespace PUP_AUTO.Geometry
         /// <param name="parcelPolylines">
         /// Pairs of (ParcelId, closed Polyline) for every candidate parcel.
         /// </param>
-        /// <param name="transaction">An active AutoCAD transaction.</param>
         /// <returns>A list of Pole domain objects with AssignedParcelId populated.</returns>
         public List<Pole> AssignPolesToParcels(
             List<KeyValuePair<string, Polyline>> polePolylines,
-            List<KeyValuePair<string, Polyline>> parcelPolylines,
-            Transaction transaction)
+            List<KeyValuePair<string, Polyline>> parcelPolylines)
         {
             var poles = new List<Pole>();
 
@@ -165,9 +154,9 @@ namespace PUP_AUTO.Geometry
                     var pole = new Pole
                     {
                         PoleId = poleId,
-                        PoleAreaSqM = poleArea,
-                        Location = centroid,
-                        ObjectId = polePline.ObjectId
+                        PoleAreaSqm = poleArea,
+                        LocationX = centroid.X,
+                        LocationY = centroid.Y
                     };
 
                     foreach (var parcelKvp in parcelPolylines)
@@ -242,8 +231,7 @@ namespace PUP_AUTO.Geometry
         public List<ParcelData> RunMvpMathTest(
             Polyline servitudePline,
             List<KeyValuePair<string, Polyline>> polePolylines,
-            List<KeyValuePair<string, Polyline>> parcelPolylines,
-            Transaction transaction)
+            List<KeyValuePair<string, Polyline>> parcelPolylines)
         {
             var results = new List<ParcelData>();
 
@@ -284,9 +272,7 @@ namespace PUP_AUTO.Geometry
 
                 // 3. Net Servitude Area
                 pData.ServitudeNetAreaSqm = GetPreciseSubtractedArea(parcelPline, servitudePline, intersectingPolesList);
-                
-                pData.MathDifference = pData.ServitudeGrossAreaSqm - (pData.ServitudeNetAreaSqm + pData.PoleAreaSqm);
-                
+
                 results.Add(pData);
             }
 
@@ -310,8 +296,8 @@ namespace PUP_AUTO.Geometry
                 p1.TransformBy(Matrix3d.Displacement(shift));
                 p2.TransformBy(Matrix3d.Displacement(shift));
 
-                using (Region r1 = SafeCreateRegion(p1))
-                using (Region r2 = SafeCreateRegion(p2))
+                using (Region? r1 = SafeCreateRegion(p1))
+                using (Region? r2 = SafeCreateRegion(p2))
                 {
                     if (r1 == null || r2 == null) return 0.0;
                     
@@ -338,8 +324,8 @@ namespace PUP_AUTO.Geometry
                 p1.TransformBy(Matrix3d.Displacement(shift));
                 p2.TransformBy(Matrix3d.Displacement(shift));
 
-                using (Region r1 = SafeCreateRegion(p1))
-                using (Region r2 = SafeCreateRegion(p2))
+                using (Region? r1 = SafeCreateRegion(p1))
+                using (Region? r2 = SafeCreateRegion(p2))
                 {
                     if (r1 == null || r2 == null) return 0.0;
                     
@@ -354,7 +340,7 @@ namespace PUP_AUTO.Geometry
                             using (Polyline poleClone = (Polyline)polePoly.Clone())
                             {
                                 poleClone.TransformBy(Matrix3d.Displacement(shift));
-                                using (Region rPole = SafeCreateRegion(poleClone))
+                                using (Region? rPole = SafeCreateRegion(poleClone))
                                 {
                                     if (rPole != null)
                                     {
@@ -386,7 +372,7 @@ namespace PUP_AUTO.Geometry
         /// </summary>
         private static Region? SafeCreateRegion(Polyline polyline)
         {
-            if (polyline == null || polyline.Area < 0.001) return null;
+            if (polyline == null || polyline.Area < GeometryTolerances.SliverAreaSqm) return null;
             
             // Clone the polyline to avoid eNotOpenForWrite when it was opened ForRead
             using (Polyline clone = (Polyline)polyline.Clone())
@@ -449,7 +435,7 @@ namespace PUP_AUTO.Geometry
         /// Optional prefix for vertex labels, e.g. "5001" or "23-".
         /// If empty, vertices are labelled by index (1, 2, 3...).
         /// </param>
-        public List<VertexCoordinate> ExtractPolylineVertices(
+        public static List<VertexCoordinate> ExtractPolylineVertices(
             Polyline pline,
             string labelPrefix = "")
         {
