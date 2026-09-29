@@ -738,18 +738,15 @@ namespace PUP_AUTO.UI.Windows
                         {
                             var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
                             
-                            EnsureLayerExists(db, tr, PluginLayers.SegmentedServitude, 3);
-                            
+                            DrawingWriter.EnsureLayer(db, tr, PluginLayers.SegmentedServitude, 3);
+
                             // Clone it because we are inside a using block
                             Polyline newPline = (Polyline)cleanServitude.Clone();
-                            
-                            // Make it green to distinguish it from the original
-                            newPline.Layer = PluginLayers.SegmentedServitude;
-                            newPline.ColorIndex = 3; 
+
                             newPline.ConstantWidth = GeometryTolerances.SegmentedServitudeWidth; // Make it thicker to see it!
-                            
-                            btr.AppendEntity(newPline);
-                            tr.AddNewlyCreatedDBObject(newPline, true);
+
+                            // Green (color 3) to distinguish it from the original
+                            DrawingWriter.Append(btr, tr, newPline, PluginLayers.SegmentedServitude, 3);
                         }
                     }
 
@@ -769,20 +766,6 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 AppendLog($"\nГРЕШКА при сегментиране: {ex.Message}\n{ex.StackTrace}");
-            }
-        }
-
-        private void EnsureLayerExists(Database db, Transaction tr, string layerName, short colorIndex)
-        {
-            LayerTable lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
-            if (!lt.Has(layerName))
-            {
-                lt.UpgradeOpen();
-                LayerTableRecord ltr = new LayerTableRecord();
-                ltr.Name = layerName;
-                ltr.Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, colorIndex);
-                lt.Add(ltr);
-                tr.AddNewlyCreatedDBObject(ltr, true);
             }
         }
 

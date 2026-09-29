@@ -83,26 +83,13 @@ namespace PUP_AUTO.UI
                     {
                         if (cleanServitude != null)
                         {
-                            // Ensure layer
-                            LayerTable lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
-                            if (!lt.Has(PluginLayers.SegmentedServitude))
-                            {
-                                lt.UpgradeOpen();
-                                LayerTableRecord ltr = new LayerTableRecord();
-                                ltr.Name = PluginLayers.SegmentedServitude;
-                                ltr.Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, 3);
-                                lt.Add(ltr);
-                                tr.AddNewlyCreatedDBObject(ltr, true);
-                            }
-                            
+                            DrawingWriter.EnsureLayer(db, tr, PluginLayers.SegmentedServitude, 3);
+
                             Polyline newPline = (Polyline)cleanServitude.Clone();
-                            newPline.Layer = PluginLayers.SegmentedServitude;
-                            newPline.ColorIndex = 3; 
                             newPline.ConstantWidth = GeometryTolerances.SegmentedServitudeWidth;
-                            
+
                             BlockTableRecord btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
-                            btr.AppendEntity(newPline);
-                            tr.AddNewlyCreatedDBObject(newPline, true);
+                            DrawingWriter.Append(btr, tr, newPline, PluginLayers.SegmentedServitude, 3);
                             
                             ed.WriteMessage($"\nУспешно сегментиран сервитут! Дължина на сегментите: {dist}м. Слой: 'segmented SERV'.");
                         }
@@ -143,24 +130,10 @@ namespace PUP_AUTO.UI
                     int failed = 0;
 
                     // Ensure required layers exist
-                    LayerTable lt = (LayerTable)tr.GetObject(txMgr.GetDatabase().LayerTableId, OpenMode.ForRead);
-                    Action<string, short, LineWeight> EnsureLayer = (name, colorIndex, lw) =>
-                    {
-                        if (!lt.Has(name))
-                        {
-                            lt.UpgradeOpen();
-                            LayerTableRecord ltr = new LayerTableRecord();
-                            ltr.Name = name;
-                            ltr.Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, colorIndex);
-                            ltr.LineWeight = lw;
-                            lt.Add(ltr);
-                            tr.AddNewlyCreatedDBObject(ltr, true);
-                        }
-                    };
-
-                    EnsureLayer(PluginLayers.PoleSteps, 7, LineWeight.LineWeight030);
-                    EnsureLayer(PluginLayers.Diagonals, 8, LineWeight.LineWeight009);
-                    EnsureLayer(PluginLayers.Text, 7, LineWeight.ByLayer);
+                    var db = txMgr.GetDatabase();
+                    DrawingWriter.EnsureLayer(db, tr, PluginLayers.PoleSteps, 7, LineWeight.LineWeight030);
+                    DrawingWriter.EnsureLayer(db, tr, PluginLayers.Diagonals, 8, LineWeight.LineWeight009);
+                    DrawingWriter.EnsureLayer(db, tr, PluginLayers.Text, 7, LineWeight.ByLayer);
 
                     foreach (var entry in PoleFootprintExtractor.ExtractAll(ModelSpaceBlocks(btr, tr, () => processed++), tr))
                     {
@@ -170,11 +143,7 @@ namespace PUP_AUTO.UI
                         {
                             success++;
                             var pline = result.FootprintPolyline;
-                            pline.Layer = PluginLayers.PoleSteps;
-                            pline.ColorIndex = 7;
-                            pline.LineWeight = LineWeight.LineWeight030;
-                            btr.AppendEntity(pline);
-                            tr.AddNewlyCreatedDBObject(pline, true);
+                            DrawingWriter.Append(btr, tr, pline, PluginLayers.PoleSteps, 7, LineWeight.LineWeight030);
 
                             // Draw DBText and Diagonals
                             
@@ -187,26 +156,16 @@ namespace PUP_AUTO.UI
                                 Point3d p3 = pline.GetPoint3dAt(3);
 
                                 Line diag1 = new Line(p0, p2);
-                                diag1.Layer = PluginLayers.Diagonals;
-                                diag1.ColorIndex = 8;
-                                diag1.LineWeight = LineWeight.LineWeight009;
-                                btr.AppendEntity(diag1);
-                                tr.AddNewlyCreatedDBObject(diag1, true);
+                                DrawingWriter.Append(btr, tr, diag1, PluginLayers.Diagonals, 8, LineWeight.LineWeight009);
 
                                 Line diag2 = new Line(p1, p3);
-                                diag2.Layer = PluginLayers.Diagonals;
-                                diag2.ColorIndex = 8;
-                                diag2.LineWeight = LineWeight.LineWeight009;
-                                btr.AppendEntity(diag2);
-                                tr.AddNewlyCreatedDBObject(diag2, true);
+                                DrawingWriter.Append(btr, tr, diag2, PluginLayers.Diagonals, 8, LineWeight.LineWeight009);
                             }
 
                             // Text
                             DBText text = new DBText();
                             text.SetDatabaseDefaults();
                             text.TextString = result.PoleNumber;
-                            text.Layer = PluginLayers.Text;
-                            text.ColorIndex = 7;
                             text.Height = GeometryTolerances.PoleLabelTextHeight;
                             
                             // CRITICAL ORDER FOR JUSTIFICATION:
@@ -215,8 +174,7 @@ namespace PUP_AUTO.UI
                             text.AlignmentPoint = result.LabelPosition;       // 3. MUST set AlignmentPoint AFTER Justify
                             text.Rotation = result.LabelRotation;             // 4. Set rotation last
                             
-                            btr.AppendEntity(text);
-                            tr.AddNewlyCreatedDBObject(text, true);
+                            DrawingWriter.Append(btr, tr, text, PluginLayers.Text, 7);
                         }
                         else
                         {
