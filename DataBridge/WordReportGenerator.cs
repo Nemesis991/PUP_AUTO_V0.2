@@ -31,7 +31,7 @@ namespace PUP_AUTO.DataBridge
         public WordReportGenerator(Logger logger, string projectDirectory)
         {
             _logger = logger;
-            _templateDir = Path.Combine(projectDirectory, "_Templates");
+            _templateDir = Path.Combine(projectDirectory, FileNames.TemplatesFolder);
         }
 
         // ================================================================

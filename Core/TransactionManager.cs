@@ -195,7 +195,7 @@ namespace PUP_AUTO.Core
                     // === STRATEGY 2: XData Extractor ===
                     string parcelId = PUP_AUTO.DataBridge.XDataExtractor.GetParcelId(pline);
 
-                    if (parcelId != "Неизвестен_Имот" && parcelId != "Грешка_XData")
+                    if (parcelId != XDataNames.UnknownParcel && parcelId != XDataNames.XDataError)
                     {
                         entityId = parcelId;
                         matchedByXData++;
@@ -319,8 +319,7 @@ namespace PUP_AUTO.Core
                     var attRef = transaction.GetObject(attId, OpenMode.ForRead) as AttributeReference;
                     if (attRef != null)
                     {
-                        string tag = attRef.Tag.ToUpper();
-                        if (tag == "НОМЕР_НА_СТЪЛБА" || tag == "СТЪЛБ_№" || tag == "NOMER")
+                        if (PoleAttributeTags.IsPoleNumberTag(attRef.Tag))
                         {
                             entityId = attRef.TextString;
                             foundAttr = true;

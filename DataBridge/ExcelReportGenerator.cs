@@ -25,7 +25,7 @@ namespace PUP_AUTO.DataBridge
         private const int DataStartRowIndex = 5;
 
         /// <summary>Relative path to the Excel template inside the project directory.</summary>
-        private const string TemplateFolderName = "_Templates";
+        private const string TemplateFolderName = FileNames.TemplatesFolder;
         private const string TemplateFileName   = "TemplateX.xls";
 
         // Sheet names (must match the template exactly)

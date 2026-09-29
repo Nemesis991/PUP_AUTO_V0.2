@@ -321,14 +321,14 @@ namespace PUP_AUTO.UI.Windows
                     {
                         _projectDir = dir;
 
-                        string cadPath = Path.Combine(dir, "_TestFiles", "TemplateC.cad");
+                        string cadPath = Path.Combine(dir, FileNames.TestFilesFolder, FileNames.CadLibraryFile);
                         if (File.Exists(cadPath))
                         {
                             _cadFilePath = cadPath;
                             _txtCadPath.Text = cadPath;
                         }
 
-                        string tplDir = Path.Combine(dir, "_Templates");
+                        string tplDir = Path.Combine(dir, FileNames.TemplatesFolder);
                         if (Directory.Exists(tplDir))
                         {
                             _templateDirPath = tplDir;
@@ -543,7 +543,7 @@ namespace PUP_AUTO.UI.Windows
         {
             if (_logger == null)
             {
-                string logPath = Path.Combine(_projectDir, "PUP_AUTO_Logs.txt");
+                string logPath = Path.Combine(_projectDir, FileNames.LogFile);
                 _logger = new Logger(logPath);
             }
             if (_txMgr == null)
@@ -572,7 +572,7 @@ namespace PUP_AUTO.UI.Windows
                     AppendLog("── СТАРТИРАНЕ НА MVP MATH TEST ──");
                     var testResults = topo.RunMvpMathTest(_servitudePline, _polePolylines, _parcelPolylines);
                     BasicExcelExporter.ExportMathTest(testResults, _projectDir);
-                    AppendLog($"  Записан MVP_Math_Test_Parcels.xlsx в {_projectDir}");
+                    AppendLog($"  Записан {FileNames.MvpMathTestFile} в {_projectDir}");
                     return;
                 }
 
@@ -580,7 +580,7 @@ namespace PUP_AUTO.UI.Windows
 
                 // Step 1 — Load CAD database
                 AppendLog("── Стъпка 1: Зареждане на CAD база ──");
-                string cadPath = _cadFilePath ?? Path.Combine(_projectDir, "_TestFiles", "TemplateC.cad");
+                string cadPath = _cadFilePath ?? Path.Combine(_projectDir, FileNames.TestFilesFolder, FileNames.CadLibraryFile);
                 var reader = new CadLibraryReader(_logger!);
                 var parcelDb = reader.LoadLibrary(cadPath);
                 AppendLog($"  Заредени {parcelDb.Count} записа от базата.");
@@ -634,7 +634,7 @@ namespace PUP_AUTO.UI.Windows
                 if (_chkExcel.IsChecked == true)
                 {
                     AppendLog("── Стъпка 4: Генериране на Excel ──");
-                    string excelPath = Path.Combine(_projectDir, "PUP_Report.xls");
+                    string excelPath = Path.Combine(_projectDir, FileNames.ReportXlsFile);
                     var excelGen = new ExcelReportGenerator(_logger!, _projectDir);
                     excelGen.GenerateReport(reportRows, assignedPoles, parcelDb, excelPath);
                     AppendLog($"  Excel запазен: {excelPath}");

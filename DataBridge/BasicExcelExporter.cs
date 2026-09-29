@@ -10,7 +10,7 @@ namespace PUP_AUTO.DataBridge
     {
         public static void ExportMathTest(List<ParcelData> parcels, string outputDir)
         {
-            string filePath = Path.Combine(outputDir, "MVP_Math_Test_Parcels.xlsx");
+            string filePath = Path.Combine(outputDir, FileNames.MvpMathTestFile);
 
             using (SpreadsheetDocument spreadsheetDocument = SpreadsheetDocument.Create(filePath, SpreadsheetDocumentType.Workbook))
             {

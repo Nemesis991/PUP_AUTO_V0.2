@@ -18,7 +18,7 @@ namespace PUP_AUTO.UI
     public class MainCommands
     {
         // Default subfolder / file names (relative to the drawing location)
-        private const string LogFileName      = "PUP_AUTO_Logs.txt";
+        private const string LogFileName      = FileNames.LogFile;
 
         // ------------------------------------------------------------------
         //  PUP_WINDOW command — Opens the WPF GUI
