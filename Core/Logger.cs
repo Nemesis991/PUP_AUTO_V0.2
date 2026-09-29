@@ -1,6 +1,3 @@
-using System;
-using System.IO;
-
 namespace PUP_AUTO.Core
 {
     public class Logger
