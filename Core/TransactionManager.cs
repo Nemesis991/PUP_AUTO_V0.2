@@ -193,7 +193,7 @@ namespace PUP_AUTO.Core
                 else
                 {
                     // === STRATEGY 2: XData Extractor ===
-                    string parcelId = PUP_AUTO.DataBridge.XDataExtractor.GetParcelId(pline);
+                    string parcelId = XDataExtractor.GetParcelId(pline);
 
                     if (parcelId != XDataNames.UnknownParcel && parcelId != XDataNames.XDataError)
                     {

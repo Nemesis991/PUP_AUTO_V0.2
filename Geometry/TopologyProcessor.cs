@@ -1,7 +1,6 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using PUP_AUTO.Core;
-using PUP_AUTO.DataBridge;
 using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.Geometry

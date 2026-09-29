@@ -1,7 +1,6 @@
 using Autodesk.AutoCAD.DatabaseServices;
-using PUP_AUTO.Core;
 
-namespace PUP_AUTO.DataBridge
+namespace PUP_AUTO.Core
 {
     public static class XDataExtractor
     {
