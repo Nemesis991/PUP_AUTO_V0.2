@@ -20,6 +20,9 @@ namespace PUP_AUTO.UI
         // Default subfolder / file names (relative to the drawing location)
         private const string LogFileName      = FileNames.LogFile;
 
+        /// <summary>The open PUP_WINDOW, if any (single instance).</summary>
+        private static Windows.MainWindow? _window;
+
         // ------------------------------------------------------------------
         //  PUP_WINDOW command — Opens the WPF GUI
         // ------------------------------------------------------------------
@@ -29,11 +32,23 @@ namespace PUP_AUTO.UI
         {
             try
             {
+                // Single instance: bring the open window forward instead of creating another
+                if (_window != null)
+                {
+                    if (_window.WindowState == System.Windows.WindowState.Minimized)
+                        _window.WindowState = System.Windows.WindowState.Normal;
+                    _window.Activate();
+                    return;
+                }
+
                 var window = new Windows.MainWindow();
+                window.Closed += (s, e) => _window = null;
+                _window = window;
                 Autodesk.AutoCAD.ApplicationServices.Application.ShowModelessWindow(window);
             }
             catch (System.Exception ex)
             {
+                _window = null;
                 var ed = Autodesk.AutoCAD.ApplicationServices.Application
                     .DocumentManager.MdiActiveDocument?.Editor;
                 ed?.WriteMessage($"\n[ERROR] Failed to open PUP_AUTO window: {ex.Message}\n");

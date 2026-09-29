@@ -38,12 +38,12 @@ namespace PUP_AUTO.UI.Windows
         private string? _cadFilePath;
         private string? _templateDirPath;
 
-        private Polyline? _servitudePline;
-        private List<KeyValuePair<string, Polyline>> _polePolylines = new List<KeyValuePair<string, Polyline>>();
-        private List<KeyValuePair<string, Polyline>> _parcelPolylines = new List<KeyValuePair<string, Polyline>>();
-        private Dictionary<string, List<VertexCoordinate>> _footprintVerticesDict = new Dictionary<string, List<VertexCoordinate>>();
+        // Picks are data (ObjectIds) bound to the drawing they were made in; see "PICK STATE".
+        private Document? _pickDoc;
+        private ObjectId _servitudeId = ObjectId.Null;
+        private List<ParcelPick> _parcelPicks = new List<ParcelPick>();
+        private List<PolePick> _polePicks = new List<PolePick>();
 
-        private Transaction? _activeTransaction;
         private SelectionService? _selection;
         private Logger? _logger;
 
@@ -65,6 +65,7 @@ namespace PUP_AUTO.UI.Windows
         {
             BuildUI();
             ResolveDefaults();
+            Application.DocumentManager.DocumentToBeDestroyed += OnDocumentToBeDestroyed;
         }
 
         // ================================================================
@@ -374,24 +375,186 @@ namespace PUP_AUTO.UI.Windows
         }
 
         // ================================================================
+        //  PICK STATE
+        //  Picks are stored as data (ObjectIds), bound to the drawing they were made in.
+        //  No transaction outlives a click; every handler locks the document, opens the
+        //  objects by ObjectId in its own short transaction and commits.
+        // ================================================================
+
+        private sealed class ParcelPick
+        {
+            public ObjectId Id;
+            public string ParcelId = string.Empty;
+        }
+
+        private sealed class PolePick
+        {
+            public ObjectId BlockId;
+            public string Key = string.Empty;
+        }
+
+        private bool HasAnyPick() =>
+            !_servitudeId.IsNull || _parcelPicks.Count > 0 || _polePicks.Count > 0;
+
+        private void ClearPicks()
+        {
+            _servitudeId = ObjectId.Null;
+            _parcelPicks = new List<ParcelPick>();
+            _polePicks = new List<PolePick>();
+
+            _lblServitude.Text = "(не е избран)";
+            _lblServitude.Foreground = YellowBrush;
+            _lblPoles.Text = "(не са избрани)";
+            _lblPoles.Foreground = YellowBrush;
+            _lblParcels.Text = "(не са избрани)";
+            _lblParcels.Foreground = YellowBrush;
+        }
+
+        /// <summary>Binds the picks to the active drawing; picks made in another drawing are cleared.</summary>
+        private bool BeginPick(out Document doc)
+        {
+            doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return false;
+
+            if (!ReferenceEquals(_pickDoc, doc))
+            {
+                bool hadPicks = HasAnyPick();
+                ClearPicks();
+                _pickDoc = doc;
+
+                // Outputs and the log follow the drawing the picks belong to
+                string? dir = string.IsNullOrEmpty(doc.Name) ? null : Path.GetDirectoryName(doc.Name);
+                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                {
+                    _projectDir = dir!;
+                }
+                _logger = null;
+                _selection = null;
+
+                if (hadPicks) AppendLog("Изборът от предишния чертеж е изчистен.");
+            }
+            return true;
+        }
+
+        /// <summary>Checks that the picks belong to the active drawing before a button uses them.</summary>
+        private bool TryUsePicks(out Document doc)
+        {
+            doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return false;
+
+            if (_pickDoc != null && !ReferenceEquals(_pickDoc, doc) && HasAnyPick())
+            {
+                AppendLog("Изборът е направен в друг чертеж — изберете отново.");
+                return false;
+            }
+            return true;
+        }
+
+        private void OnDocumentToBeDestroyed(object? sender, DocumentCollectionEventArgs e)
+        {
+            if (ReferenceEquals(e.Document, _pickDoc))
+            {
+                ClearPicks();
+                _pickDoc = null;
+            }
+        }
+
+        private void EnsureServices()
+        {
+            if (_logger == null)
+            {
+                string logPath = Path.Combine(_projectDir, FileNames.LogFile);
+                _logger = new Logger(logPath);
+            }
+            if (_selection == null)
+                _selection = new SelectionService(_logger);
+        }
+
+        // ---- Re-opening picks inside a handler's own transaction ----
+
+        private static Polyline? OpenPolyline(Transaction tr, ObjectId id)
+        {
+            if (id.IsNull || id.IsErased) return null;
+            return tr.GetObject(id, OpenMode.ForRead) as Polyline;
+        }
+
+        private List<KeyValuePair<string, Polyline>> OpenParcels(Transaction tr)
+        {
+            var parcels = new List<KeyValuePair<string, Polyline>>();
+            foreach (var pick in _parcelPicks)
+            {
+                Polyline? pline = OpenPolyline(tr, pick.Id);
+                if (pline != null)
+                    parcels.Add(new KeyValuePair<string, Polyline>(pick.ParcelId, pline));
+            }
+            return parcels;
+        }
+
+        /// <summary>
+        /// Extracts the pole footprints (in-memory polylines) of the picked pole blocks.
+        /// The caller must dispose them with <see cref="DisposeFootprints"/>.
+        /// </summary>
+        private List<PoleFootprintEntry> ExtractPoles(Transaction tr)
+        {
+            var blocks = new List<KeyValuePair<string, BlockReference>>();
+            foreach (var pick in _polePicks)
+            {
+                if (pick.BlockId.IsNull || pick.BlockId.IsErased) continue;
+                if (tr.GetObject(pick.BlockId, OpenMode.ForRead) is BlockReference blockRef)
+                    blocks.Add(new KeyValuePair<string, BlockReference>(pick.Key, blockRef));
+            }
+            return PoleFootprintExtractor.ExtractAll(blocks, tr).ToList();
+        }
+
+        private static List<KeyValuePair<string, Polyline>> PoleFootprints(List<PoleFootprintEntry> entries)
+        {
+            var poles = new List<KeyValuePair<string, Polyline>>();
+            foreach (var entry in entries)
+            {
+                if (entry.Result.FootprintPolyline != null)
+                    poles.Add(new KeyValuePair<string, Polyline>(entry.PoleId, entry.Result.FootprintPolyline));
+            }
+            return poles;
+        }
+
+        private static void DisposeFootprints(List<PoleFootprintEntry> entries)
+        {
+            foreach (var entry in entries)
+            {
+                entry.Result.FootprintPolyline?.Dispose();
+            }
+        }
+
+        private static void FlushGraphics(Document doc)
+        {
+            doc.TransactionManager.QueueForGraphicsFlush();
+            doc.Editor.UpdateScreen();
+        }
+
+        // ================================================================
         //  GEOMETRY PICKING
         // ================================================================
 
         private void BtnPickServitude_Click(object sender, RoutedEventArgs e)
         {
-            Document doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
+            if (!BeginPick(out Document doc)) return;
             Editor ed = doc.Editor;
 
             using (EditorUserInteraction interaction = ed.StartUserInteraction(this))
             {
                 try
                 {
-                    EnsureTransaction();
-                    _servitudePline = _selection!.SelectSinglePolyline(
-                        _activeTransaction!, "\nSelect the Servitude (Right of Way) polyline: ");
+                    EnsureServices();
+                    using (doc.LockDocument())
+                    using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+                    {
+                        Polyline? servitude = _selection!.SelectSinglePolyline(
+                            tr, "\nSelect the Servitude (Right of Way) polyline: ");
+                        _servitudeId = servitude?.ObjectId ?? ObjectId.Null;
+                        tr.Commit();
+                    }
 
-                    if (_servitudePline != null)
+                    if (!_servitudeId.IsNull)
                     {
                         _lblServitude.Text = "✅ Избран";
                         _lblServitude.Foreground = GreenBrush;
@@ -413,40 +576,59 @@ namespace PUP_AUTO.UI.Windows
 
         private void BtnPickPoles_Click(object sender, RoutedEventArgs e)
         {
-            Document doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
+            if (!BeginPick(out Document doc)) return;
             Editor ed = doc.Editor;
 
             using (EditorUserInteraction interaction = ed.StartUserInteraction(this))
             {
                 try
                 {
-                    EnsureTransaction();
-                    
-                    var poleBlocks = _selection!.SelectMultipleBlockReferences(
-                        _activeTransaction!, "\nSelect Pole blocks: ");
-                        
-                    _polePolylines.Clear();
-                    _footprintVerticesDict.Clear();
+                    EnsureServices();
 
-                    foreach (var entry in PoleFootprintExtractor.ExtractAll(poleBlocks, _activeTransaction!))
+                    var picks = new List<PolePick>();
+                    using (doc.LockDocument())
+                    using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                     {
-                        if (entry.Result.FootprintPolyline != null)
+                        var poleBlocks = _selection!.SelectMultipleBlockReferences(
+                            tr, "\nSelect Pole blocks: ");
+
+                        // Extract now to validate the blocks; the footprints are in-memory only
+                        // and are disposed here (each handler re-extracts what it needs).
+                        var entries = new List<PoleFootprintEntry>();
+                        try
                         {
-                            _polePolylines.Add(new KeyValuePair<string, Polyline>(entry.PoleId, entry.Result.FootprintPolyline));
-                            _footprintVerticesDict[entry.PoleId] = entry.Vertices!;
+                            int index = 0;
+                            foreach (var entry in PoleFootprintExtractor.ExtractAll(poleBlocks, tr))
+                            {
+                                entries.Add(entry);
+                                if (entry.Result.FootprintPolyline != null)
+                                {
+                                    picks.Add(new PolePick
+                                    {
+                                        BlockId = poleBlocks[index].Value.ObjectId,
+                                        Key = poleBlocks[index].Key
+                                    });
+                                }
+                                else
+                                {
+                                    AppendLog($"ПРЕДУПРЕЖДЕНИЕ: {entry.Result.ErrorMessage}");
+                                }
+                                index++;
+                            }
                         }
-                        else
+                        finally
                         {
-                            AppendLog($"ПРЕДУПРЕЖДЕНИЕ: {entry.Result.ErrorMessage}");
+                            DisposeFootprints(entries);
                         }
+                        tr.Commit();
                     }
+                    _polePicks = picks;
 
-                    if (_polePolylines.Count > 0)
+                    if (_polePicks.Count > 0)
                     {
-                        _lblPoles.Text = $"✅ {_polePolylines.Count} стълба";
+                        _lblPoles.Text = $"✅ {_polePicks.Count} стълба";
                         _lblPoles.Foreground = GreenBrush;
-                        AppendLog($"Избрани и екстрактнати {_polePolylines.Count} стълба.");
+                        AppendLog($"Избрани и екстрактнати {_polePicks.Count} стълба.");
                     }
                     else
                     {
@@ -464,15 +646,14 @@ namespace PUP_AUTO.UI.Windows
 
         private void BtnPickParcels_Click(object sender, RoutedEventArgs e)
         {
-            Document doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
+            if (!BeginPick(out Document doc)) return;
             Editor ed = doc.Editor;
 
             using (EditorUserInteraction interaction = ed.StartUserInteraction(this))
             {
                 try
                 {
-                    EnsureTransaction();
+                    EnsureServices();
 
                     // Load GeoJSON geometries for spatial matching (if GeoJSON file is selected)
                     List<GeoParcel>? geoParcels = null;
@@ -496,9 +677,19 @@ namespace PUP_AUTO.UI.Windows
                     }
 
                     var selStats = new PolylineSelectionStats();
-                    _parcelPolylines = _selection!.SelectMultiplePolylines(
-                        _activeTransaction!, "\nSelect Parcel polylines: ", geoParcels,
-                        _servitudePline?.ObjectId ?? ObjectId.Null, selStats);
+                    using (doc.LockDocument())
+                    using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+                    {
+                        var selected = _selection!.SelectMultiplePolylines(
+                            tr, "\nSelect Parcel polylines: ", geoParcels,
+                            _servitudeId, selStats);
+
+                        // Keep the ID resolved now (XData / GeoJSON / handle); it is never re-read
+                        _parcelPicks = selected
+                            .Select(kvp => new ParcelPick { Id = kvp.Value.ObjectId, ParcelId = kvp.Key })
+                            .ToList();
+                        tr.Commit();
+                    }
 
                     if (selStats.SkippedPluginLayer > 0)
                     {
@@ -510,11 +701,11 @@ namespace PUP_AUTO.UI.Windows
                                   string.Join(", ", selStats.HandleFallbacks));
                     }
 
-                    if (_parcelPolylines.Count > 0)
+                    if (_parcelPicks.Count > 0)
                     {
-                        _lblParcels.Text = $"✅ {_parcelPolylines.Count} имота";
+                        _lblParcels.Text = $"✅ {_parcelPicks.Count} имота";
                         _lblParcels.Foreground = GreenBrush;
-                        AppendLog($"Избрани {_parcelPolylines.Count} имота.");
+                        AppendLog($"Избрани {_parcelPicks.Count} имота.");
                     }
                     else
                     {
@@ -530,19 +721,6 @@ namespace PUP_AUTO.UI.Windows
             }
         }
 
-        private void EnsureTransaction()
-        {
-            if (_logger == null)
-            {
-                string logPath = Path.Combine(_projectDir, FileNames.LogFile);
-                _logger = new Logger(logPath);
-            }
-            if (_selection == null)
-                _selection = new SelectionService(_logger);
-            if (_activeTransaction == null || _activeTransaction.IsDisposed)
-                _activeTransaction = _selection.StartTransaction();
-        }
-
         // ================================================================
         //  GENERATE REPORTS
         // ================================================================
@@ -552,111 +730,36 @@ namespace PUP_AUTO.UI.Windows
         {
             try
             {
-                if (_servitudePline == null)  { AppendLog("ГРЕШКА: Не е избран сервитут!"); return; }
-                if (_polePolylines.Count == 0) { AppendLog("ГРЕШКА: Не са избрани стълбове!"); return; }
-                if (_parcelPolylines.Count == 0) { AppendLog("ГРЕШКА: Не са избрани имоти!"); return; }
+                if (!TryUsePicks(out Document doc)) return;
+                if (_servitudeId.IsNull)  { AppendLog("ГРЕШКА: Не е избран сервитут!"); return; }
+                if (_polePicks.Count == 0) { AppendLog("ГРЕШКА: Не са избрани стълбове!"); return; }
+                if (_parcelPicks.Count == 0) { AppendLog("ГРЕШКА: Не са избрани имоти!"); return; }
 
-                EnsureTransaction();
+                EnsureServices();
                 var topo = new TopologyProcessor(_logger!);
 
-                if (_chkMvpMathTest.IsChecked == true)
+                using (doc.LockDocument())
+                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                 {
-                    AppendLog("── СТАРТИРАНЕ НА MVP MATH TEST ──");
-                    var testResults = topo.RunMvpMathTest(_servitudePline, _polePolylines, _parcelPolylines);
-                    MvpMathTestExporter.ExportMathTest(testResults, _projectDir);
-                    AppendLog($"  Записан {FileNames.MvpMathTestFile} в {_projectDir}");
-                    return;
-                }
-
-                AppendLog("═══ ГЕНЕРИРАНЕ СТАРТИРАНО ═══");
-
-                // Step 1 — Load CAD database
-                AppendLog("── Стъпка 1: Зареждане на CAD база ──");
-                string cadPath = _cadFilePath ?? Path.Combine(_projectDir, FileNames.TestFilesFolder, FileNames.CadLibraryFile);
-                var reader = new ParcelRegisterReader(_logger!);
-                var parcelDb = reader.LoadLibrary(cadPath);
-                AppendLog($"  Заредени {parcelDb.Count} записа от базата.");
-
-                // Step 2 — Topology calculations
-                AppendLog("── Стъпка 2: Топологични изчисления ──");
-                var servitudeAreas = topo.CalculateServitudeIntersections(
-                    _servitudePline, _parcelPolylines);
-                AppendLog($"  Сечения сервитут: {servitudeAreas.Count} имота.");
-
-                var assignedPoles = topo.AssignPolesToParcels(
-                    _polePolylines, _parcelPolylines);
-                    
-                foreach (var p in assignedPoles)
-                {
-                    if (_footprintVerticesDict.TryGetValue(p.PoleId, out var fv))
+                    Polyline? servitude = OpenPolyline(tr, _servitudeId);
+                    if (servitude == null)
                     {
-                        p.FootprintVertices = fv;
+                        AppendLog("ГРЕШКА: Сервитутът вече не съществува в чертежа — изберете отново.");
+                        return;
+                    }
+
+                    var parcels = OpenParcels(tr);
+                    var entries = ExtractPoles(tr);
+                    try
+                    {
+                        RunGenerate(topo, servitude, PoleFootprints(entries), parcels, entries);
+                        tr.Commit();
+                    }
+                    finally
+                    {
+                        DisposeFootprints(entries);
                     }
                 }
-                
-                int assignedCount = assignedPoles.Count(p => p.OverlappingParcels.Count > 0);
-                AppendLog($"  Стълбове: {assignedPoles.Count} обработени ({assignedCount} причислени).");
-
-                // Step 3 — Merge results
-                AppendLog("── Стъпка 3: Обединяване на резултати ──");
-                var reportRows = ReportBuilder.BuildReportRows(
-                    _parcelPolylines.Select(kvp => kvp.Key), parcelDb, servitudeAreas, assignedPoles,
-                    message => _logger!.LogWarning(message));
-                AppendLog($"  Генерирани {reportRows.Count} реда за отчет.");
-
-                // Step 4 — Extract coordinates (if enabled)
-                Dictionary<string, List<VertexCoordinate>>? poleVertices = null;
-                List<VertexCoordinate>? servitudeVertices = null;
-
-                if (_chkCoordinates.IsChecked == true)
-                {
-                    AppendLog("── Стъпка 3b: Извличане на координати ──");
-                    poleVertices = new Dictionary<string, List<VertexCoordinate>>();
-                    foreach (var p in assignedPoles)
-                    {
-                        if (p.FootprintVertices != null && p.FootprintVertices.Count > 0)
-                        {
-                            poleVertices[p.PoleId] = p.FootprintVertices;
-                        }
-                    }
-                    servitudeVertices = TopologyProcessor.ExtractPolylineVertices(_servitudePline);
-                    AppendLog($"  Координати: {poleVertices.Count} стълба, {servitudeVertices.Count} точки сервитут.");
-                }
-
-                // Step 5 — Generate Excel
-                if (_chkExcel.IsChecked == true)
-                {
-                    AppendLog("── Стъпка 4: Генериране на Excel ──");
-                    string excelPath = Path.Combine(_projectDir, FileNames.ReportXlsFile);
-                    var excelGen = new ExcelReportGenerator(_logger!, _projectDir);
-                    excelGen.GenerateReport(reportRows, assignedPoles, parcelDb, excelPath);
-                    AppendLog($"  Excel запазен: {excelPath}");
-                }
-
-                // Step 6 — Generate Word documents
-                if (_chkWord.IsChecked == true)
-                {
-                    AppendLog("── Стъпка 5: Генериране на Word регистри ──");
-                    var wordGen = new WordReportGenerator(_logger!, _projectDir);
-                    wordGen.GenerateAllReports(
-                        reportRows, assignedPoles, parcelDb, _projectDir,
-                        poleVertices: poleVertices,
-                        servitudeVertices: servitudeVertices);
-                    AppendLog("  Word регистри генерирани успешно.");
-                }
-
-                // Step 7 — Commit transaction
-                _activeTransaction?.Commit();
-                _activeTransaction?.Dispose();
-                _activeTransaction = null;
-
-                int warningCount = reportRows.Count(r => r.Owner == ReportBuilder.NoDataOwner);
-                AppendLog(
-                    $"\n═══ ГЕНЕРИРАНЕ ЗАВЪРШЕНО ═══\n" +
-                    $"  Обработени имоти: {reportRows.Count}\n" +
-                    $"  Стълбове причислени: {assignedCount}/{assignedPoles.Count}\n" +
-                    $"  Липсващи данни: {warningCount} имота\n" +
-                    $"  Проверете лога за подробности.");
             }
             catch (Exception ex)
             {
@@ -671,6 +774,116 @@ namespace PUP_AUTO.UI.Windows
             }
         }
 
+        private void RunGenerate(
+            TopologyProcessor topo,
+            Polyline servitude,
+            List<KeyValuePair<string, Polyline>> poles,
+            List<KeyValuePair<string, Polyline>> parcels,
+            List<PoleFootprintEntry> entries)
+        {
+            if (_chkMvpMathTest.IsChecked == true)
+            {
+                AppendLog("── СТАРТИРАНЕ НА MVP MATH TEST ──");
+                var testResults = topo.RunMvpMathTest(servitude, poles, parcels);
+                MvpMathTestExporter.ExportMathTest(testResults, _projectDir);
+                AppendLog($"  Записан {FileNames.MvpMathTestFile} в {_projectDir}");
+                return;
+            }
+
+            AppendLog("═══ ГЕНЕРИРАНЕ СТАРТИРАНО ═══");
+
+            // Footprint vertices by pole ID (a later duplicate ID wins, as before)
+            var footprintVertices = new Dictionary<string, List<VertexCoordinate>>();
+            foreach (var entry in entries)
+            {
+                if (entry.Result.FootprintPolyline != null)
+                    footprintVertices[entry.PoleId] = entry.Vertices!;
+            }
+
+            // Step 1 — Load CAD database
+            AppendLog("── Стъпка 1: Зареждане на CAD база ──");
+            string cadPath = _cadFilePath ?? Path.Combine(_projectDir, FileNames.TestFilesFolder, FileNames.CadLibraryFile);
+            var reader = new ParcelRegisterReader(_logger!);
+            var parcelDb = reader.LoadLibrary(cadPath);
+            AppendLog($"  Заредени {parcelDb.Count} записа от базата.");
+
+            // Step 2 — Topology calculations
+            AppendLog("── Стъпка 2: Топологични изчисления ──");
+            var servitudeAreas = topo.CalculateServitudeIntersections(
+                servitude, parcels);
+            AppendLog($"  Сечения сервитут: {servitudeAreas.Count} имота.");
+
+            var assignedPoles = topo.AssignPolesToParcels(
+                poles, parcels);
+
+            foreach (var p in assignedPoles)
+            {
+                if (footprintVertices.TryGetValue(p.PoleId, out var fv))
+                {
+                    p.FootprintVertices = fv;
+                }
+            }
+
+            int assignedCount = assignedPoles.Count(p => p.OverlappingParcels.Count > 0);
+            AppendLog($"  Стълбове: {assignedPoles.Count} обработени ({assignedCount} причислени).");
+
+            // Step 3 — Merge results
+            AppendLog("── Стъпка 3: Обединяване на резултати ──");
+            var reportRows = ReportBuilder.BuildReportRows(
+                parcels.Select(kvp => kvp.Key), parcelDb, servitudeAreas, assignedPoles,
+                message => _logger!.LogWarning(message));
+            AppendLog($"  Генерирани {reportRows.Count} реда за отчет.");
+
+            // Step 4 — Extract coordinates (if enabled)
+            Dictionary<string, List<VertexCoordinate>>? poleVertices = null;
+            List<VertexCoordinate>? servitudeVertices = null;
+
+            if (_chkCoordinates.IsChecked == true)
+            {
+                AppendLog("── Стъпка 3b: Извличане на координати ──");
+                poleVertices = new Dictionary<string, List<VertexCoordinate>>();
+                foreach (var p in assignedPoles)
+                {
+                    if (p.FootprintVertices != null && p.FootprintVertices.Count > 0)
+                    {
+                        poleVertices[p.PoleId] = p.FootprintVertices;
+                    }
+                }
+                servitudeVertices = TopologyProcessor.ExtractPolylineVertices(servitude);
+                AppendLog($"  Координати: {poleVertices.Count} стълба, {servitudeVertices.Count} точки сервитут.");
+            }
+
+            // Step 5 — Generate Excel
+            if (_chkExcel.IsChecked == true)
+            {
+                AppendLog("── Стъпка 4: Генериране на Excel ──");
+                string excelPath = Path.Combine(_projectDir, FileNames.ReportXlsFile);
+                var excelGen = new ExcelReportGenerator(_logger!, _projectDir);
+                excelGen.GenerateReport(reportRows, assignedPoles, parcelDb, excelPath);
+                AppendLog($"  Excel запазен: {excelPath}");
+            }
+
+            // Step 6 — Generate Word documents
+            if (_chkWord.IsChecked == true)
+            {
+                AppendLog("── Стъпка 5: Генериране на Word регистри ──");
+                var wordGen = new WordReportGenerator(_logger!, _projectDir);
+                wordGen.GenerateAllReports(
+                    reportRows, assignedPoles, parcelDb, _projectDir,
+                    poleVertices: poleVertices,
+                    servitudeVertices: servitudeVertices);
+                AppendLog("  Word регистри генерирани успешно.");
+            }
+
+            int warningCount = reportRows.Count(r => r.Owner == ReportBuilder.NoDataOwner);
+            AppendLog(
+                $"\n═══ ГЕНЕРИРАНЕ ЗАВЪРШЕНО ═══\n" +
+                $"  Обработени имоти: {reportRows.Count}\n" +
+                $"  Стълбове причислени: {assignedCount}/{assignedPoles.Count}\n" +
+                $"  Липсващи данни: {warningCount} имота\n" +
+                $"  Проверете лога за подробности.");
+        }
+
         // ================================================================
         //  MARKER GENERATION EVENT
         // ================================================================
@@ -679,7 +892,8 @@ namespace PUP_AUTO.UI.Windows
         {
             try
             {
-                if (_servitudePline == null)
+                if (!TryUsePicks(out Document doc)) return;
+                if (_servitudeId.IsNull)
                 {
                     AppendLog("Моля, първо изберете сервитут (🔲 Сервитут) от бутоните горе!");
                     return;
@@ -692,13 +906,23 @@ namespace PUP_AUTO.UI.Windows
                 }
 
                 AppendLog("── Генериране на 20m точки по сервитута ──");
-                
-                using (var tr = _selection!.StartTransaction())
+                EnsureServices();
+
+                using (doc.LockDocument())
+                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                 {
+                    Polyline? servitude = OpenPolyline(tr, _servitudeId);
+                    if (servitude == null)
+                    {
+                        AppendLog("ГРЕШКА: Сервитутът вече не съществува в чертежа — изберете отново.");
+                        return;
+                    }
+
                     var markerGen = new Geometry.ServitudeMarkerGenerator(_logger!);
-                    markerGen.GenerateMarkers(_servitudePline, tr, startL, startR);
+                    markerGen.GenerateMarkers(servitude, tr, startL, startR);
                     tr.Commit();
                 }
+                FlushGraphics(doc);
 
                 AppendLog("  Точките са генерирани в чертежа успешно.");
             }
@@ -716,31 +940,38 @@ namespace PUP_AUTO.UI.Windows
         {
             try
             {
-                if (_servitudePline == null)
+                if (!TryUsePicks(out Document doc)) return;
+                if (_servitudeId.IsNull)
                 {
                     AppendLog("Моля, първо изберете сервитут (🔲 Сервитут) от бутоните горе!");
                     return;
                 }
-                
+
                 if (!double.TryParse(_txtSegmentDistance.Text, out double dist))
                 {
                     dist = SegmentDefaults.WindowFallbackDistanceM;
                 }
 
                 AppendLog($"── Сегментиране на избрания сервитут (на {dist}м) ──");
-                
-                using (var tr = _selection!.StartTransaction())
+
+                var db = doc.Database;
+                using (doc.LockDocument())
+                using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    var doc = Application.DocumentManager.MdiActiveDocument;
-                    var db = doc.Database;
-                    
+                    Polyline? servitude = OpenPolyline(tr, _servitudeId);
+                    if (servitude == null)
+                    {
+                        AppendLog("ГРЕШКА: Сервитутът вече не съществува в чертежа — изберете отново.");
+                        return;
+                    }
+
                     // Sanitize the servitude polyline
-                    using (Polyline? cleanServitude = Geometry.GeometrySanitizer.Sanitize(_servitudePline, dist, GeometryTolerances.SanitizeMinVertexDistanceM))
+                    using (Polyline? cleanServitude = Geometry.GeometrySanitizer.Sanitize(servitude, dist, GeometryTolerances.SanitizeMinVertexDistanceM))
                     {
                         if (cleanServitude != null)
                         {
                             var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
-                            
+
                             DrawingWriter.EnsureLayer(db, tr, PluginLayers.SegmentedServitude, 3);
 
                             // Clone it because we are inside a using block
@@ -754,15 +985,8 @@ namespace PUP_AUTO.UI.Windows
                     }
 
                     tr.Commit();
-                    
-                    // Force AutoCAD to display the new entity immediately,
-                    // since the top-level _activeTransaction hasn't committed yet.
-                    doc.TransactionManager.QueueForGraphicsFlush();
-                    doc.Editor.UpdateScreen();
                 }
-
-                // Force a commit to the database so it is saved instantly
-                CommitAndRefreshTransaction();
+                FlushGraphics(doc);
 
                 AppendLog("  Сегментираната линия е добавена в чертежа (Слой: segmented SERV).");
             }
@@ -771,45 +995,6 @@ namespace PUP_AUTO.UI.Windows
                 AppendLog($"\nГРЕШКА при сегментиране: {ex.Message}\n{ex.StackTrace}");
             }
         }
-
-        private void CommitAndRefreshTransaction()
-        {
-            if (_activeTransaction == null || _activeTransaction.IsDisposed) return;
-            
-            // Save ObjectIds
-            var servitudeId = _servitudePline?.ObjectId;
-            
-            var poleIds = _polePolylines.Select(p => new { Key = p.Key, Id = p.Value.ObjectId }).ToList();
-            var parcelIds = _parcelPolylines.Select(p => new { Key = p.Key, Id = p.Value.ObjectId }).ToList();
-
-            // Commit and dispose current
-            _activeTransaction.Commit();
-            _activeTransaction.Dispose();
-
-            // Start a new one
-            _activeTransaction = _selection!.StartTransaction();
-
-            // Re-open objects
-            if (servitudeId.HasValue && !servitudeId.Value.IsNull)
-            {
-                _servitudePline = (Polyline)_activeTransaction.GetObject(servitudeId.Value, OpenMode.ForRead);
-            }
-
-            _polePolylines.Clear();
-            foreach (var p in poleIds)
-            {
-                if (!p.Id.IsNull)
-                    _polePolylines.Add(new KeyValuePair<string, Polyline>(p.Key, (Polyline)_activeTransaction.GetObject(p.Id, OpenMode.ForRead)));
-            }
-
-            _parcelPolylines.Clear();
-            foreach (var p in parcelIds)
-            {
-                if (!p.Id.IsNull)
-                    _parcelPolylines.Add(new KeyValuePair<string, Polyline>(p.Key, (Polyline)_activeTransaction.GetObject(p.Id, OpenMode.ForRead)));
-            }
-        }
-
 
         // ================================================================
         //  HELPERS
@@ -824,11 +1009,7 @@ namespace PUP_AUTO.UI.Windows
 
         protected override void OnClosed(EventArgs e)
         {
-            if (_activeTransaction != null && !_activeTransaction.IsDisposed)
-            {
-                try { _activeTransaction.Abort(); } catch { }
-                _activeTransaction.Dispose();
-            }
+            Application.DocumentManager.DocumentToBeDestroyed -= OnDocumentToBeDestroyed;
             base.OnClosed(e);
         }
     }
