@@ -28,7 +28,7 @@ namespace PUP_AUTO.UI
 
         /// <summary>
         /// Fires once on the first Application.Idle event after loading.
-        /// Creates the PUP_AUTO Ribbon Tab with a "Генерирай" button.
+        /// Creates the PUP_AUTO Ribbon Tab with an "Отвори Прозорец" button.
         /// </summary>
         private void OnAppIdle(object sender, EventArgs e)
         {
@@ -74,17 +74,6 @@ namespace PUP_AUTO.UI
             };
             var panel = new Autodesk.Windows.RibbonPanel { Source = panelSrc };
 
-            // ── Generate Button (large) ──
-            var btnGenerate = new Autodesk.Windows.RibbonButton
-            {
-                Text = "Генерирай\nОтчети",
-                ShowText = true,
-                Size = Autodesk.Windows.RibbonItemSize.Large,
-                Orientation = System.Windows.Controls.Orientation.Vertical,
-                CommandParameter = "PUP_GENERATE ",
-                CommandHandler = new RibbonCommandHandler()
-            };
-
             // ── Open GUI Button ──
             var btnGui = new Autodesk.Windows.RibbonButton
             {
@@ -96,7 +85,6 @@ namespace PUP_AUTO.UI
                 CommandHandler = new RibbonCommandHandler()
             };
 
-            panelSrc.Items.Add(btnGenerate);
             panelSrc.Items.Add(btnGui);
 
             tab.Panels.Add(panel);

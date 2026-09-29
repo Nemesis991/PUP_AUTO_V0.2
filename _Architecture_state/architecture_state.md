@@ -3,13 +3,12 @@
 
 ## 1. Текущ статус
 - [x] Инициализация на проекта PUP_AUTO (.NET Framework 4.8, AutoCAD API 24.3.0) — Завършено
-- [x] `PUP_GENERATE` команда — пълен workflow имплементиран (Select → Load → Topo → Merge → Excel → Coords → Word → Summary)
+- [x] ~~`PUP_GENERATE` команда~~ — **премахната** (2026-09-29, refactor/cleanup); генерирането е само през `PUP_WINDOW`
 - [x] `PUP_WINDOW` команда — WPF немодален прозорец с GUI за интерактивна работа (файлове, геометрии, опции)
-- [x] `App.cs` — Ribbon таб "ПУП АВТОМАТИЗАЦИЯ" с два бутона (Генерирай / Отвори Прозорец)
+- [x] `App.cs` — Ribbon таб "ПУП АВТОМАТИЗАЦИЯ" с бутон "Отвори Прозорец" (бутонът "Генерирай Отчети" е премахнат заедно с `PUP_GENERATE`)
 - [x] `WordReportGenerator.cs` — Генерация на 7 Word (.docm) регистъра чрез OpenXML SDK
 - [x] `ExtractPolylineVertices()` — Координатен регистър за стълбове и сервитут
 - [x] Генератори за Templates 05 и 06 — имплементирани (`GenerateBalancesMunicipality`, `GenerateRecapitulation`)
-- [x] PUP_GENERATE CLI — добавен Word и координатен експорт (пълен паритет с GUI)
 - [x] TECHNICAL_DOCUMENTATION.md — пълно преписване с всички компоненти
 - [x] `GeometrySanitizer.cs` — Densify/clean на полилинии (използва се от `PUP_SERV`, "✂ Сегментиране" и `CalculateServitudeIntersections`)
 - [x] `PoleFootprintExtractor.cs` — P-tag извличане на 4-точков контур от динамичен блок, вкл. поддръжка на visibility state
@@ -37,7 +36,7 @@
   - `ServitudeMarkerGenerator.cs` — **(ново документирано)** Генерира номерирани 20м точки по двете страни на сервитута (чертожна помощна функция)
 - `UI/`
   - `App.cs` — `IExtensionApplication` входна точка, Ribbon Tab създаване
-  - `MainCommands.cs` — `PUP_GENERATE`, `PUP_WINDOW`, `PUP_SERV` **(ново документирано)**, `PUP_DRAW_FOOTPRINTS` **(ново документирано)** команди, `MergeResultsStatic()`
+  - `MainCommands.cs` — `PUP_WINDOW`, `PUP_SERV`, `PUP_DRAW_FOOTPRINTS` команди, `MergeResultsStatic()`
   - `Windows/`
     - `MainWindow.cs` — WPF модален прозорец (Catppuccin Mocha тема), вкл. MVP Math Test checkbox и бутони за маркери/сегментиране **(ново документирано)**
 - `_TestFiles/`
@@ -56,7 +55,7 @@
 
 ## 3. Архитектурни Решения
 - **Dependency Passing**: `Logger` и `TransactionManager` се предават като параметри, не като Singletons.
-- **Dual Interface**: Системата има и CLI команда (`PUP_GENERATE`) и GUI прозорец (`PUP_WINDOW`), и двете споделящи `MergeResultsStatic()` (public static).
+- **Single Interface**: Отчетите се генерират само от GUI прозореца (`PUP_WINDOW`), който извиква `MergeResultsStatic()` (public static в `MainCommands`). CLI командата `PUP_GENERATE` е премахната (2026-09-29).
 - **Dual Output**: Генерира едновременно Excel (.xls чрез NPOI) и Word (.docm чрез OpenXML SDK).
 - **Memory Safety**: Всички AutoCAD `Region` обекти се освобождават в `finally` блокове.
 - **Fault Tolerance**: Logger, CadLibraryReader и TopologyProcessor обгръщат критичните I/O операции в `try/catch`.

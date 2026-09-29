@@ -31,8 +31,8 @@
    - `ServitudeMarkerGenerator` генерира точки и номерирани текстови етикети на всеки 20 м по двете страни на сервитутния коридор (диагностична/чертожна функция, не участва в отчетния pipeline).
 
 5. **`UI` (Потребителски и команден слой):**
-   - `App` е входната точка на плагина (`IExtensionApplication`), създаваща Ribbon таб "ПУП АВТОМАТИЗАЦИЯ" с два бутона.
-   - `MainCommands` регистрира двете AutoCAD команди: `PUP_GENERATE` (CLI) и `PUP_WINDOW` (GUI).
+   - `App` е входната точка на плагина (`IExtensionApplication`), създаваща Ribbon таб "ПУП АВТОМАТИЗАЦИЯ" с бутон "Отвори Прозорец".
+   - `MainCommands` регистрира AutoCAD командите: `PUP_WINDOW` (GUI) и диагностичните `PUP_SERV` и `PUP_DRAW_FOOTPRINTS`.
    - `MainWindow` е WPF модален прозорец с тъмна Catppuccin Mocha тема, предоставящ визуален интерфейс за избор на геометрии, файлове и опции за генериране.
 
 ### Интеграция с Autodesk Civil 3D / Map 3D API:
@@ -57,86 +57,14 @@
 ### 2.1. Зареждане на плагина (Plugin Load)
 При `NETLOAD` на `PUP_AUTO.dll`, AutoCAD изпълнява:
 1. `App.Initialize()` → абонира се за `Application.Idle`.
-2. `OnAppIdle()` → еднократно създава Ribbon таб "ПУП АВТОМАТИЗАЦИЯ" с два бутона:
-   - "Генерирай Отчети" → `PUP_GENERATE`
+2. `OnAppIdle()` → еднократно създава Ribbon таб "ПУП АВТОМАТИЗАЦИЯ" с бутон:
    - "Отвори Прозорец" → `PUP_WINDOW`
 
-### 2.2. Процес 'PUP_GENERATE' (Команден Ред)
+> Командата `PUP_GENERATE` (команден ред) и бутонът "Генерирай Отчети" са премахнати. Генерирането на отчети се стартира само от прозореца `PUP_WINDOW`.
 
-При въвеждане на командата `PUP_GENERATE` в командния ред на Civil 3D, системата преминава през следната строга хронологична последователност:
+### 2.2. Процес 'PUP_WINDOW' (Графичен Прозорец)
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Графичен Потребител (Civil 3D)
-    participant APP as UI.App (Ribbon)
-    participant MC as UI.MainCommands
-    participant TM as Core.TransactionManager
-    participant CR as DataBridge.CadLibraryReader
-    participant TP as Geometry.TopologyProcessor
-    participant EG as DataBridge.ExcelReportGenerator
-    participant WG as DataBridge.WordReportGenerator
-    participant LG as Core.Logger
-
-    User->>APP: NETLOAD → Initialize() → CreateRibbon()
-    User->>MC: Задейства команда 'PUP_GENERATE'
-    MC->>MC: ResolveProjectDirectory() → Намира работната папка
-    MC->>LG: Инициализира Logger("PUP_AUTO_Logs.txt")
-    MC->>TM: Инициализира TransactionManager(logger)
-    MC->>TP: Инициализира TopologyProcessor(logger)
-
-    rect rgb(235, 245, 255)
-        note over MC,TM: 1. Графична селекция от DWG чертежа
-        MC->>TM: StartTransaction()
-        TM-->>MC: Transaction (tr)
-        MC->>TM: SelectSinglePolyline(tr, "Servitude Prompt")
-        TM-->>MC: Polyline (servitudePline)
-        MC->>TM: SelectMultiplePolylines(tr, "Poles Prompt")
-        TM-->>MC: List<KeyValuePair<string, Polyline>> (polePolylines)
-        MC->>TM: SelectMultiplePolylines(tr, "Parcels Prompt")
-        TM-->>MC: List<KeyValuePair<string, Polyline>> (parcelPolylines)
-    end
-
-    rect rgb(255, 248, 230)
-        note over MC,CR: 2. Зареждане на външната база данни
-        MC->>CR: CadLibraryReader(logger)
-        MC->>CR: LoadLibrary("TemplateC.cad")
-        CR-->>MC: Dictionary<string, ParcelData> (parcelDb)
-    end
-
-    rect rgb(235, 255, 235)
-        note over MC,TP: 3. Топологични и векторни изчисления
-        MC->>TP: CalculateServitudeIntersections(servitudePline, parcelPolylines, tr)
-        TP-->>MC: Dictionary<string, double> (servitudeAreas)
-        MC->>TP: AssignPolesToParcels(polePolylines, parcelPolylines, tr)
-        TP-->>MC: List<Pole> (assignedPoles)
-    end
-
-    rect rgb(255, 235, 245)
-        note over MC,EG: 4. Обединяване на данни и генерация
-        MC->>MC: MergeResultsStatic(parcelPolylines, parcelDb, servitudeAreas, assignedPoles, logger)
-        MC-->>MC: List<ReportRow> (reportRows)
-        MC->>EG: ExcelReportGenerator(logger, projectDir)
-        MC->>EG: GenerateReport(reportRows, assignedPoles, parcelDb, "PUP_Report.xls")
-    end
-
-    rect rgb(245, 235, 255)
-        note over MC,WG: 5. Координати и Word регистри
-        MC->>TP: ExtractPolylineVertices() × N стълба + сервитут
-        TP-->>MC: Dictionary<string, List<VertexCoordinate>> + List<VertexCoordinate>
-        MC->>WG: WordReportGenerator(logger, projectDir)
-        MC->>WG: GenerateAllReports(reportRows, poles, parcelDb, dir, poleVertices, servitudeVertices)
-        WG->>WG: 7 × Word .docm регистъра
-    end
-
-    MC->>TM: tr.Commit()
-    MC->>LG: LogSuccess("PUP_GENERATE COMPLETE")
-    MC->>User: Извежда обобщение в командния ред
-```
-
-### 2.3. Процес 'PUP_WINDOW' (Графичен Прозорец)
-
-Извършва същите стъпки, но чрез WPF модален прозорец (`MainWindow`):
+Бутонът "ГЕНЕРИРАЙ ОТЧЕТИ" изпълнява pipeline-а (зареждане на регистъра → топология → `MergeResultsStatic` → Excel → координати → Word) чрез WPF прозореца (`MainWindow`):
 1. Потребителят избира геометрии чрез бутони в GUI (прозорецът се скрива по време на селекция в AutoCAD).
 2. Потребителят избира кои отчети да генерира чрез checkboxes (Excel / Word / Координатни регистри).
 3. Целият прогрес се показва в реално време в лог конзолата на прозореца.
@@ -158,8 +86,7 @@ sequenceDiagram
 2. **`private void OnAppIdle(object sender, EventArgs e)`**
    - **Логика:** Извиква се еднократно, незабавно се отписва от `Application.Idle`, след което извиква `CreateRibbon()`.
 3. **`private void CreateRibbon()`**
-   - **Логика:** Създава нов Ribbon Tab "ПУП АВТОМАТИЗАЦИЯ" с панел, съдържащ два `RibbonButton`:
-     - "Генерирай Отчети" → `PUP_GENERATE`
+   - **Логика:** Създава нов Ribbon Tab "ПУП АВТОМАТИЗАЦИЯ" с панел, съдържащ един `RibbonButton`:
      - "Отвори Прозорец" → `PUP_WINDOW`
 4. **`class RibbonCommandHandler : ICommand`**
    - **Логика:** Маршрутизира кликвания от Ribbon бутоните към AutoCAD чрез `doc.SendStringToExecute(commandName, ...)`.
@@ -167,24 +94,21 @@ sequenceDiagram
 ---
 
 #### 📄 `UI/MainCommands.cs`
-Регистрира AutoCAD командите и оркестрира целия pipeline.
+Регистрира AutoCAD командите.
 
-1. **`[CommandMethod("PUP_GENERATE")] public void PupGenerate()`**
-   - **Сигнатура:** `() -> void`
-   - **Логика:** Изпълнява последователно стъпки 1 до 6 от жизнения цикъл (селекция → зареждане → топология → обединяване → Excel → координати → Word → обобщение). Обхванат от глобален `try-catch` за безопасно логване на непокрити грешки.
-2. **`[CommandMethod("PUP_WINDOW")] public void PupWindow()`**
+1. **`[CommandMethod("PUP_WINDOW")] public void PupWindow()`**
    - **Сигнатура:** `() -> void`
    - **Логика:** Създава инстанция на `MainWindow` и я показва чрез `Application.ShowModelessWindow(window)` (немодален прозорец — потребителят може да превключва между него и AutoCAD, без да го затваря).
-3. **`[CommandMethod("PUP_SERV")] public void PupServ()`**
+2. **`[CommandMethod("PUP_SERV")] public void PupServ()`**
    - **Сигнатура:** `() -> void`
    - **Логика:** Диагностична/чертожна команда извън основния отчетен pipeline. Подканва потребителя за полилиния (сервитут) и разстояние за сегментиране (по подразбиране 20.0 м), извиква `GeometrySanitizer.Sanitize()` и добавя резултата като нова полилиния в чертежа на автоматично създаван слой `"segmented SERV"` (цвят ACI 3, `ConstantWidth = 0.5`).
-4. **`[CommandMethod("PUP_DRAW_FOOTPRINTS")] public void PupDrawFootprints()`**
+3. **`[CommandMethod("PUP_DRAW_FOOTPRINTS")] public void PupDrawFootprints()`**
    - **Сигнатура:** `() -> void`
    - **Логика:** Диагностична команда, която обхожда **всички** блокови референции в текущото Model Space, извиква `PoleFootprintExtractor.ExtractFootprint()` за всяка от тях и чертае извлечените 4-точкови контури на слой `"POLE_STEPS"`, диагоналите между върховете на слой `"diagonali"` и номера на стълба като `DBText` на слой `"Текст"`. Автоматично създава трите слоя, ако липсват. Извежда обобщение (обработени / успешни / неуспешни) в командния ред.
-5. **`public static List<ReportRow> MergeResultsStatic(...)`**
+4. **`public static List<ReportRow> MergeResultsStatic(...)`**
    - **Сигнатура:** `(List<KeyValuePair<string, Polyline>> parcelPolylines, Dictionary<string, ParcelData> parcelDb, Dictionary<string, double> servitudeAreas, List<Pole> assignedPoles, Logger logger) -> List<ReportRow>`
-   - **Логика:** Обединява данните от геометрията и текста. За имоти от чертежа, които липсват в `.cad` файла, задава `Owner = "NO DATA"` и записва Warning в лога. **Публичен статичен метод**, споделен между CLI и GUI входните точки.
-6. **`private static string ResolveProjectDirectory()`**
+   - **Логика:** Обединява данните от геометрията и текста. За имоти от чертежа, които липсват в `.cad` файла, задава `Owner = "NO DATA"` и записва Warning в лога. **Публичен статичен метод**, извикван от `MainWindow`.
+5. **`private static string ResolveProjectDirectory()`**
    - **Сигнатура:** `() -> string`
    - **Логика:** Извлича папката на текущия чертеж от `Path.GetDirectoryName(doc.Name)` (абсолютен път) или използва `Environment.CurrentDirectory` като fallback.
 
@@ -596,7 +520,7 @@ dotnet build PUP_AUTO.slnx --configuration Release
 2. Отворете целевия DWG чертеж.
 3. Въведете командата `NETLOAD` в командния ред.
 4. Навигирайте и изберете компилирания файл `PUP_AUTO.dll`.
-5. Ribbon табът **"ПУП АВТОМАТИЗАЦИЯ"** ще се появи автоматично с два бутона.
+5. Ribbon табът **"ПУП АВТОМАТИЗАЦИЯ"** ще се появи автоматично с бутона "Отвори Прозорец".
 
 ### 3. Настройка на тестови папки и шаблони:
 Уверете се, че в папката на DWG чертежа съществуват следните поддиректории:
@@ -613,14 +537,7 @@ dotnet build PUP_AUTO.slnx --configuration Release
 
 ### 4. Изпълнение на командите:
 
-#### Вариант А: Команден ред (PUP_GENERATE)
-1. Напишете `PUP_GENERATE` в командния ред и натиснете `Enter`.
-2. Изберете полилинията на сервитута.
-3. Изберете полилиниите на стълбовете (натиснете `Enter` за потвърждение).
-4. Изберете полилиниите на имотите (натиснете `Enter` за потвърждение).
-5. Системата автоматично генерира всички Excel и Word отчети.
-
-#### Вариант Б: Графичен прозорец (PUP_WINDOW)
+#### Графичен прозорец (PUP_WINDOW)
 1. Напишете `PUP_WINDOW` в командния ред (или натиснете бутона "Отвори Прозорец" от Ribbon таба).
 2. Проверете/променете пътищата до `.cad` базата и папката с шаблони.
 3. Изберете геометриите чрез трите бутона (Сервитут / Стълбове / Имоти).
@@ -629,8 +546,8 @@ dotnet build PUP_AUTO.slnx --configuration Release
 6. Следете прогреса в лог конзолата.
 
 ### 5. Допълнителни / диагностични команди:
-- **`PUP_SERV`** — избира полилиния (сервитут) и разстояние за сегментиране (по подразбиране 20 м), чертае санитизирана/сегментирана версия на слой `"segmented SERV"`. Полезно за визуална проверка преди основния `PUP_GENERATE`.
-- **`PUP_DRAW_FOOTPRINTS`** — обхожда всички блокови референции в чертежа, извлича 4-точковите стъпки на стълбовете (P-tag логика) и ги чертае заедно с диагонали и номера на стълб, без да генерира отчети. Диагностичен инструмент за проверка на блоковите атрибути преди пускане на `PUP_GENERATE`.
+- **`PUP_SERV`** — избира полилиния (сервитут) и разстояние за сегментиране (по подразбиране 20 м), чертае санитизирана/сегментирана версия на слой `"segmented SERV"`. Полезно за визуална проверка преди генерирането на отчети.
+- **`PUP_DRAW_FOOTPRINTS`** — обхожда всички блокови референции в чертежа, извлича 4-точковите стъпки на стълбовете (P-tag логика) и ги чертае заедно с диагонали и номера на стълб, без да генерира отчети. Диагностичен инструмент за проверка на блоковите атрибути преди генерирането на отчети.
 - **"🧪 MVP Математически тест"** (само в `PUP_WINDOW`) — генерира `MVP_Math_Test_Parcels.xlsx` с детайлна разбивка Gross/Net/Pole площ и автоматична проверка за баланс ("ОК"/"ГРЕШКА"), без да пипа стандартните Excel/Word изходи.
 
 ### 6. Резултати и проверка на лог файла:
