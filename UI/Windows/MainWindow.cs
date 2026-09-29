@@ -729,7 +729,7 @@ namespace PUP_AUTO.UI.Windows
                 
                 if (!double.TryParse(_txtSegmentDistance.Text, out double dist))
                 {
-                    dist = 50.0;
+                    dist = SegmentDefaults.WindowFallbackDistanceM;
                 }
 
                 AppendLog($"── Сегментиране на избрания сервитут (на {dist}м) ──");
@@ -740,7 +740,7 @@ namespace PUP_AUTO.UI.Windows
                     var db = doc.Database;
                     
                     // Sanitize the servitude polyline
-                    using (Polyline? cleanServitude = Geometry.GeometrySanitizer.Sanitize(_servitudePline, dist, 0.05))
+                    using (Polyline? cleanServitude = Geometry.GeometrySanitizer.Sanitize(_servitudePline, dist, GeometryTolerances.SanitizeMinVertexDistanceM))
                     {
                         if (cleanServitude != null)
                         {
@@ -754,7 +754,7 @@ namespace PUP_AUTO.UI.Windows
                             // Make it green to distinguish it from the original
                             newPline.Layer = PluginLayers.SegmentedServitude;
                             newPline.ColorIndex = 3; 
-                            newPline.ConstantWidth = 0.5; // Make it thicker to see it!
+                            newPline.ConstantWidth = GeometryTolerances.SegmentedServitudeWidth; // Make it thicker to see it!
                             
                             btr.AppendEntity(newPline);
                             tr.AddNewlyCreatedDBObject(newPline, true);

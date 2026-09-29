@@ -157,7 +157,7 @@ namespace PUP_AUTO.Core
                 {
                     var p1 = pline.GetPoint2dAt(0);
                     var p2 = pline.GetPoint2dAt(pline.NumberOfVertices - 1);
-                    if (p1.GetDistanceTo(p2) < 0.01)
+                    if (p1.GetDistanceTo(p2) < GeometryTolerances.ClosureDistanceM)
                     {
                         isClosed = true;
                     }
@@ -252,7 +252,7 @@ namespace PUP_AUTO.Core
                 double dist = Math.Sqrt(dx * dx + dy * dy);
 
                 // Must be within 50m tolerance (cadastral parcels can have large extents)
-                if (dist < bestDist && dist < 50.0)
+                if (dist < bestDist && dist < GeometryTolerances.GeoMatchRadiusM)
                 {
                     // If area data is available, check area ratio as secondary validation
                     if (gp.AreaSqM > 0 && plineArea > 0)
@@ -260,7 +260,7 @@ namespace PUP_AUTO.Core
                         double areaRatio = Math.Min(plineArea, gp.AreaSqM) / Math.Max(plineArea, gp.AreaSqM);
                         // Area must be within 50% to be considered a match
                         // (allow generous tolerance for projection differences)
-                        if (areaRatio < 0.5) continue;
+                        if (areaRatio < GeometryTolerances.GeoMatchMinAreaRatio) continue;
                     }
 
                     bestDist = dist;

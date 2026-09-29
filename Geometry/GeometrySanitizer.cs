@@ -1,11 +1,12 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using PUP_AUTO.Core;
 
 namespace PUP_AUTO.Geometry
 {
     public static class GeometrySanitizer
     {
-        public static Polyline? Sanitize(Polyline source, double maxSegmentLength = 50.0, double minVertexDistance = 0.05)
+        public static Polyline? Sanitize(Polyline source, double maxSegmentLength = GeometryTolerances.SanitizeMaxSegmentLengthM, double minVertexDistance = GeometryTolerances.SanitizeMinVertexDistanceM)
         {
             if (source == null) return null;
 
@@ -30,13 +31,13 @@ namespace PUP_AUTO.Geometry
                 {
                     double originalBulge = source.GetBulgeAt(i);
                     double totalTheta = 4 * Math.Atan(originalBulge);
-                    double parasiteThreshold = 10.0;
+                    double parasiteThreshold = GeometryTolerances.SanitizeParasiteSegmentM;
 
                     List<double> dists = new List<double>();
                     dists.Add(startDist);
 
                     int numIntervals = (int)Math.Floor(length / maxSegmentLength);
-                    bool isExact = Math.Abs(length - numIntervals * maxSegmentLength) < 1e-6;
+                    bool isExact = Math.Abs(length - numIntervals * maxSegmentLength) < GeometryTolerances.ExactIntervalEpsilonM;
                     int ptsToAdd = isExact ? numIntervals : numIntervals + 1;
 
                     for (int j = 1; j < ptsToAdd; j++)
@@ -53,7 +54,7 @@ namespace PUP_AUTO.Geometry
                     {
                         double subLength = dists[k + 1] - dists[k];
                         double newBulge = 0;
-                        if (Math.Abs(originalBulge) > 1e-10)
+                        if (Math.Abs(originalBulge) > GeometryTolerances.BulgeEpsilon)
                         {
                             double subTheta = totalTheta * (subLength / length);
                             newBulge = Math.Tan(subTheta / 4);
@@ -88,7 +89,7 @@ namespace PUP_AUTO.Geometry
                         double dist = pt.GetDistanceTo(firstPt);
                         double bulge = densifiedPoly.GetBulgeAt(i);
 
-                        if (dist < minVertexDistance && Math.Abs(bulge) < 1e-10)
+                        if (dist < minVertexDistance && Math.Abs(bulge) < GeometryTolerances.BulgeEpsilon)
                         {
                             // Skip adding the last vertex to close the loop
                         }
@@ -110,7 +111,7 @@ namespace PUP_AUTO.Geometry
                 double currentBulge = densifiedPoly.GetBulgeAt(i);
                 double distanceToNext = currentPt.GetDistanceTo(nextPt);
 
-                if (distanceToNext < minVertexDistance && Math.Abs(currentBulge) < 1e-10)
+                if (distanceToNext < minVertexDistance && Math.Abs(currentBulge) < GeometryTolerances.BulgeEpsilon)
                 {
                     // Micro-segment: skip vertex i so the previous vertex connects straight to nextPt.
                     // Its bulge is 0, so there is no arc to carry over.

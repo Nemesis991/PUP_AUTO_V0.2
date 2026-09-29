@@ -18,7 +18,7 @@ namespace PUP_AUTO.Geometry
         /// Minimum area threshold (sq.m.) below which an intersection is
         /// treated as a sliver / rounding artefact and ignored.
         /// </summary>
-        private const double SliverTolerance = 0.001;
+        private const double SliverTolerance = GeometryTolerances.SliverAreaSqm;
 
         public TopologyProcessor(Logger logger)
         {
@@ -47,7 +47,7 @@ namespace PUP_AUTO.Geometry
             Region? servitudeRegion = null;
             try
             {
-                using (Polyline? cleanServitude = GeometrySanitizer.Sanitize(servitudePline, 50.0, 0.05))
+                using (Polyline? cleanServitude = GeometrySanitizer.Sanitize(servitudePline, GeometryTolerances.SanitizeMaxSegmentLengthM, GeometryTolerances.SanitizeMinVertexDistanceM))
                 {
                     servitudeRegion = SafeCreateRegion(cleanServitude!);
                     if (servitudeRegion == null)
@@ -65,7 +65,7 @@ namespace PUP_AUTO.Geometry
                         Region? intersectRegion = null;
                         try
                         {
-                            using (Polyline? cleanParcel = GeometrySanitizer.Sanitize(parcelPline, 50.0, 0.05))
+                            using (Polyline? cleanParcel = GeometrySanitizer.Sanitize(parcelPline, GeometryTolerances.SanitizeMaxSegmentLengthM, GeometryTolerances.SanitizeMinVertexDistanceM))
                             {
                                 parcelRegion = SafeCreateRegion(cleanParcel!);
                                 if (parcelRegion == null)
@@ -373,7 +373,7 @@ namespace PUP_AUTO.Geometry
         /// </summary>
         private static Region? SafeCreateRegion(Polyline polyline)
         {
-            if (polyline == null || polyline.Area < 0.001) return null;
+            if (polyline == null || polyline.Area < GeometryTolerances.SliverAreaSqm) return null;
             
             // Clone the polyline to avoid eNotOpenForWrite when it was opened ForRead
             using (Polyline clone = (Polyline)polyline.Clone())

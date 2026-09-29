@@ -55,11 +55,11 @@ namespace PUP_AUTO.DataBridge
                     // The balance check decides OK/ГРЕШКА on the raw, unrounded square-meter
                     // difference — never on an already-rounded decare value.
                     double diffSqm = parcel.ServitudeGrossAreaSqm - (parcel.ServitudeNetAreaSqm + parcel.PoleAreaSqm);
-                    string checkStatus = Math.Abs(diffSqm) <= 0.001 ? "ОК" : "ГРЕШКА";
+                    string checkStatus = Math.Abs(diffSqm) <= GeometryTolerances.BalanceToleranceSqm ? "ОК" : "ГРЕШКА";
                     string diffStr = $"{AreaUnits.FormatDka(diffSqm)} - {checkStatus}";
 
                     // If there is no pole, we output 0 for ServitudeNetAreaSqm per user request.
-                    string netAreaStr = parcel.PoleAreaSqm > 0.001
+                    string netAreaStr = parcel.PoleAreaSqm > GeometryTolerances.PoleAreaPresenceSqm
                         ? AreaUnits.FormatDka(parcel.ServitudeNetAreaSqm)
                         : "0.000";
 

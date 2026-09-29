@@ -109,7 +109,7 @@ namespace PUP_AUTO.Geometry
             var res = new List<Point2d>();
             foreach (var p in pts)
             {
-                if (res.Count == 0 || res.Last().GetDistanceTo(p) > 0.01)
+                if (res.Count == 0 || res.Last().GetDistanceTo(p) > GeometryTolerances.DuplicatePointDistanceM)
                     res.Add(p);
             }
             return res;
@@ -128,8 +128,8 @@ namespace PUP_AUTO.Geometry
         private void PlaceMarkersAlongPolyline(Polyline pline, Transaction tr, int startNum)
         {
             double totalLength = pline.Length;
-            double step = 20.0;
-            double parasiteTolerance = 15.0;
+            double step = GeometryTolerances.MarkerStepM;
+            double parasiteTolerance = GeometryTolerances.MarkerParasiteToleranceM;
 
             var db = pline.Database ?? HostApplicationServices.WorkingDatabase;
             var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
@@ -158,12 +158,12 @@ namespace PUP_AUTO.Geometry
                 var dbText = new DBText();
                 dbText.Position = pt;
                 dbText.TextString = currentNum.ToString();
-                dbText.Height = 2.0; // Adjust text height as needed
+                dbText.Height = GeometryTolerances.MarkerTextHeight; // Adjust text height as needed
                 dbText.Rotation = textAngle;
                 
                 // Offset text slightly so it's not exactly on the point
                 Vector3d offsetDir = new Vector3d(Math.Cos(textAngle), Math.Sin(textAngle), 0);
-                dbText.Position = pt + offsetDir * 1.5; 
+                dbText.Position = pt + offsetDir * GeometryTolerances.MarkerTextOffsetM; 
 
                 btr.AppendEntity(dbText);
                 tr.AddNewlyCreatedDBObject(dbText, true);

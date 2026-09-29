@@ -64,7 +64,7 @@ namespace PUP_AUTO.UI
                 
                 // 2. Ask user for the distance
                 PromptDoubleOptions pdo = new PromptDoubleOptions("\nВъведете разстояние за сегментиране [20.0]: ");
-                pdo.DefaultValue = 20.0;
+                pdo.DefaultValue = SegmentDefaults.ServCommandDistanceM;
                 pdo.AllowNegative = false;
                 pdo.AllowZero = false;
                 pdo.UseDefaultValue = true;
@@ -79,7 +79,7 @@ namespace PUP_AUTO.UI
                     Polyline? sourcePline = tr.GetObject(per.ObjectId, OpenMode.ForRead) as Polyline;
                     if (sourcePline == null) return;
                     
-                    using (Polyline? cleanServitude = GeometrySanitizer.Sanitize(sourcePline, dist, 0.05))
+                    using (Polyline? cleanServitude = GeometrySanitizer.Sanitize(sourcePline, dist, GeometryTolerances.SanitizeMinVertexDistanceM))
                     {
                         if (cleanServitude != null)
                         {
@@ -98,7 +98,7 @@ namespace PUP_AUTO.UI
                             Polyline newPline = (Polyline)cleanServitude.Clone();
                             newPline.Layer = PluginLayers.SegmentedServitude;
                             newPline.ColorIndex = 3; 
-                            newPline.ConstantWidth = 0.5;
+                            newPline.ConstantWidth = GeometryTolerances.SegmentedServitudeWidth;
                             
                             BlockTableRecord btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
                             btr.AppendEntity(newPline);
@@ -211,7 +211,7 @@ namespace PUP_AUTO.UI
                             text.TextString = result.PoleNumber;
                             text.Layer = PluginLayers.Text;
                             text.ColorIndex = 7;
-                            text.Height = 1.0;
+                            text.Height = GeometryTolerances.PoleLabelTextHeight;
                             
                             // CRITICAL ORDER FOR JUSTIFICATION:
                             text.Position = result.LabelPosition;             // 1. Set base position first
