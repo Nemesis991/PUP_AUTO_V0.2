@@ -65,47 +65,47 @@ namespace PUP_AUTO.Geometry
                     }
 
                     foreach (var kvp in parcelPolylines)
-                {
-                    string parcelId = kvp.Key;
-                    Polyline parcelPline = kvp.Value;
-
-                    Region? parcelRegion = null;
-                    Region? intersectRegion = null;
-                    try
                     {
-                        using (Polyline cleanParcel = GeometrySanitizer.Sanitize(parcelPline, 50.0, 0.05))
+                        string parcelId = kvp.Key;
+                        Polyline parcelPline = kvp.Value;
+
+                        Region? parcelRegion = null;
+                        Region? intersectRegion = null;
+                        try
                         {
-                            parcelRegion = SafeCreateRegion(cleanParcel);
-                            if (parcelRegion == null)
+                            using (Polyline cleanParcel = GeometrySanitizer.Sanitize(parcelPline, 50.0, 0.05))
                             {
-                                _logger.LogWarning(
-                                    $"Failed to create Region for parcel {parcelId}. Skipped.");
-                                continue;
-                            }
+                                parcelRegion = SafeCreateRegion(cleanParcel);
+                                if (parcelRegion == null)
+                                {
+                                    _logger.LogWarning(
+                                        $"Failed to create Region for parcel {parcelId}. Skipped.");
+                                    continue;
+                                }
 
-                            // Clone the servitude region so the original is not mutated
-                            intersectRegion = (Region)servitudeRegion.Clone();
-                            intersectRegion.BooleanOperation(
-                                BooleanOperationType.BoolIntersect, parcelRegion);
+                                // Clone the servitude region so the original is not mutated
+                                intersectRegion = (Region)servitudeRegion.Clone();
+                                intersectRegion.BooleanOperation(
+                                    BooleanOperationType.BoolIntersect, parcelRegion);
 
-                            double area = intersectRegion.Area;
-                            if (area > SliverTolerance)
-                            {
-                                result[parcelId] = area;
+                                double area = intersectRegion.Area;
+                                if (area > SliverTolerance)
+                                {
+                                    result[parcelId] = area;
+                                }
                             }
                         }
+                        catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                        {
+                            _logger.LogWarning(
+                                $"Boolean intersect failed for parcel {parcelId}: {ex.Message}");
+                        }
+                        finally
+                        {
+                            intersectRegion?.Dispose();
+                            parcelRegion?.Dispose();
+                        }
                     }
-                    catch (Autodesk.AutoCAD.Runtime.Exception ex)
-                    {
-                        _logger.LogWarning(
-                            $"Boolean intersect failed for parcel {parcelId}: {ex.Message}");
-                    }
-                    finally
-                    {
-                        intersectRegion?.Dispose();
-                        parcelRegion?.Dispose();
-                    }
-                }
                 }
             }
             finally
