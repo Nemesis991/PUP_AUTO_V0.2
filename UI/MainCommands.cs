@@ -76,10 +76,10 @@ namespace PUP_AUTO.UI
                 // 3. Segment and append
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    Polyline sourcePline = tr.GetObject(per.ObjectId, OpenMode.ForRead) as Polyline;
+                    Polyline? sourcePline = tr.GetObject(per.ObjectId, OpenMode.ForRead) as Polyline;
                     if (sourcePline == null) return;
                     
-                    using (Polyline cleanServitude = GeometrySanitizer.Sanitize(sourcePline, dist, 0.05))
+                    using (Polyline? cleanServitude = GeometrySanitizer.Sanitize(sourcePline, dist, 0.05))
                     {
                         if (cleanServitude != null)
                         {

@@ -47,9 +47,9 @@ namespace PUP_AUTO.Geometry
             Region? servitudeRegion = null;
             try
             {
-                using (Polyline cleanServitude = GeometrySanitizer.Sanitize(servitudePline, 50.0, 0.05))
+                using (Polyline? cleanServitude = GeometrySanitizer.Sanitize(servitudePline, 50.0, 0.05))
                 {
-                    servitudeRegion = SafeCreateRegion(cleanServitude);
+                    servitudeRegion = SafeCreateRegion(cleanServitude!);
                     if (servitudeRegion == null)
                     {
                         _logger.LogError("Failed to create Region from servitude polyline.");
@@ -65,9 +65,9 @@ namespace PUP_AUTO.Geometry
                         Region? intersectRegion = null;
                         try
                         {
-                            using (Polyline cleanParcel = GeometrySanitizer.Sanitize(parcelPline, 50.0, 0.05))
+                            using (Polyline? cleanParcel = GeometrySanitizer.Sanitize(parcelPline, 50.0, 0.05))
                             {
-                                parcelRegion = SafeCreateRegion(cleanParcel);
+                                parcelRegion = SafeCreateRegion(cleanParcel!);
                                 if (parcelRegion == null)
                                 {
                                     _logger.LogWarning(
@@ -297,8 +297,8 @@ namespace PUP_AUTO.Geometry
                 p1.TransformBy(Matrix3d.Displacement(shift));
                 p2.TransformBy(Matrix3d.Displacement(shift));
 
-                using (Region r1 = SafeCreateRegion(p1))
-                using (Region r2 = SafeCreateRegion(p2))
+                using (Region? r1 = SafeCreateRegion(p1))
+                using (Region? r2 = SafeCreateRegion(p2))
                 {
                     if (r1 == null || r2 == null) return 0.0;
                     
@@ -325,8 +325,8 @@ namespace PUP_AUTO.Geometry
                 p1.TransformBy(Matrix3d.Displacement(shift));
                 p2.TransformBy(Matrix3d.Displacement(shift));
 
-                using (Region r1 = SafeCreateRegion(p1))
-                using (Region r2 = SafeCreateRegion(p2))
+                using (Region? r1 = SafeCreateRegion(p1))
+                using (Region? r2 = SafeCreateRegion(p2))
                 {
                     if (r1 == null || r2 == null) return 0.0;
                     
@@ -341,7 +341,7 @@ namespace PUP_AUTO.Geometry
                             using (Polyline poleClone = (Polyline)polePoly.Clone())
                             {
                                 poleClone.TransformBy(Matrix3d.Displacement(shift));
-                                using (Region rPole = SafeCreateRegion(poleClone))
+                                using (Region? rPole = SafeCreateRegion(poleClone))
                                 {
                                     if (rPole != null)
                                     {

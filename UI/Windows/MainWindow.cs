@@ -740,7 +740,7 @@ namespace PUP_AUTO.UI.Windows
                     var db = doc.Database;
                     
                     // Sanitize the servitude polyline
-                    using (Polyline cleanServitude = Geometry.GeometrySanitizer.Sanitize(_servitudePline, dist, 0.05))
+                    using (Polyline? cleanServitude = Geometry.GeometrySanitizer.Sanitize(_servitudePline, dist, 0.05))
                     {
                         if (cleanServitude != null)
                         {

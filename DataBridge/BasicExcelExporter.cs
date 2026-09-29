@@ -71,7 +71,7 @@ namespace PUP_AUTO.DataBridge
                     {
                         rowIndex++;
                         Row row = new Row();
-                        string poleNumbersStr = poleCount == 1 ? parcel.AssignedPoleNumbers[0] : "";
+                        string poleNumbersStr = poleCount == 1 ? parcel.AssignedPoleNumbers![0] : "";
                         row.Append(
                             CreateCell(parcel.ParcelId),
                             CreateCell(AreaUnits.FormatDka(parcel.TotalAreaSqm)),
@@ -91,7 +91,7 @@ namespace PUP_AUTO.DataBridge
                         {
                             rowIndex++;
                             Row row = new Row();
-                            string pNum = parcel.AssignedPoleNumbers[i];
+                            string pNum = parcel.AssignedPoleNumbers![i];
                             double indArea = parcel.IndividualPoleAreas != null && parcel.IndividualPoleAreas.ContainsKey(pNum) 
                                 ? parcel.IndividualPoleAreas[pNum] 
                                 : 0;

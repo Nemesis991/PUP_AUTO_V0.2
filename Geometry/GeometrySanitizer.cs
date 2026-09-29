@@ -5,7 +5,7 @@ namespace PUP_AUTO.Geometry
 {
     public static class GeometrySanitizer
     {
-        public static Polyline Sanitize(Polyline source, double maxSegmentLength = 50.0, double minVertexDistance = 0.05)
+        public static Polyline? Sanitize(Polyline source, double maxSegmentLength = 50.0, double minVertexDistance = 0.05)
         {
             if (source == null) return null;
 

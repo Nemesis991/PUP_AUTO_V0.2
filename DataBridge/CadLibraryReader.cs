@@ -124,7 +124,7 @@ namespace PUP_AUTO.DataBridge
             {
                 string jsonContent = File.ReadAllText(fileName);
                 JObject root = JObject.Parse(jsonContent);
-                JArray features = (JArray)root["features"];
+                JArray features = (JArray)root["features"]!;
 
                 if (features == null)
                 {
@@ -134,7 +134,7 @@ namespace PUP_AUTO.DataBridge
 
                 foreach (JObject feature in features)
                 {
-                    JObject props = (JObject)feature["properties"];
+                    JObject? props = (JObject?)feature["properties"];
                     if (props == null) continue;
 
                     string ident = props["Идентификатор"]?.ToString() ?? "";
@@ -160,12 +160,12 @@ namespace PUP_AUTO.DataBridge
 
                     // Extract owner from rights_data JSON string
                     string ownerName = "";
-                    string rightsDataStr = props["rights_data"]?.ToString();
+                    string? rightsDataStr = props["rights_data"]?.ToString();
                     if (!string.IsNullOrEmpty(rightsDataStr))
                     {
                         try
                         {
-                            JArray rightsArray = JArray.Parse(rightsDataStr);
+                            JArray rightsArray = JArray.Parse(rightsDataStr!);
                             if (rightsArray.Count > 0)
                             {
                                 ownerName = rightsArray[0]["person_name"]?.ToString() ?? "";
@@ -227,12 +227,12 @@ namespace PUP_AUTO.DataBridge
             {
                 string jsonContent = File.ReadAllText(fileName);
                 JObject root = JObject.Parse(jsonContent);
-                JArray features = (JArray)root["features"];
+                JArray? features = (JArray?)root["features"];
                 if (features == null) return parcels;
 
                 foreach (JObject feature in features)
                 {
-                    JObject props = (JObject)feature["properties"];
+                    JObject? props = (JObject?)feature["properties"];
                     if (props == null) continue;
 
                     string ident = props["Идентификатор"]?.ToString() ?? "";
@@ -254,11 +254,11 @@ namespace PUP_AUTO.DataBridge
                     }
 
                     // Extract polygon centroid from geometry coordinates
-                    JObject geometry = (JObject)feature["geometry"];
+                    JObject? geometry = (JObject?)feature["geometry"];
                     if (geometry == null) continue;
 
                     string geoType = geometry["type"]?.ToString() ?? "";
-                    JArray coordinates = (JArray)geometry["coordinates"];
+                    JArray? coordinates = (JArray?)geometry["coordinates"];
                     if (coordinates == null) continue;
 
                     double cx = 0, cy = 0;
