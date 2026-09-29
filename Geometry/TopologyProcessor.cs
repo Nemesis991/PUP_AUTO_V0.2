@@ -436,7 +436,7 @@ namespace PUP_AUTO.Geometry
         /// Optional prefix for vertex labels, e.g. "5001" or "23-".
         /// If empty, vertices are labelled by index (1, 2, 3...).
         /// </param>
-        public List<VertexCoordinate> ExtractPolylineVertices(
+        public static List<VertexCoordinate> ExtractPolylineVertices(
             Polyline pline,
             string labelPrefix = "")
         {

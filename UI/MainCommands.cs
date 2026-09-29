@@ -162,13 +162,9 @@ namespace PUP_AUTO.UI
                     EnsureLayer(PluginLayers.Diagonals, 8, LineWeight.LineWeight009);
                     EnsureLayer(PluginLayers.Text, 7, LineWeight.ByLayer);
 
-                    foreach (ObjectId objId in btr)
+                    foreach (var entry in PoleFootprintExtractor.ExtractAll(ModelSpaceBlocks(btr, tr, () => processed++), tr))
                     {
-                        var blockRef = tr.GetObject(objId, OpenMode.ForRead) as BlockReference;
-                        if (blockRef == null) continue;
-
-                        processed++;
-                        var result = PoleFootprintExtractor.ExtractFootprint(blockRef, tr);
+                        var result = entry.Result;
 
                         if (result.FootprintPolyline != null)
                         {
@@ -243,6 +239,23 @@ namespace PUP_AUTO.UI
         // ------------------------------------------------------------------
         //  Helpers
         // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Lazily yields every BlockReference of the block table record (key = handle),
+        /// calling <paramref name="onBlock"/> for each one before it is extracted.
+        /// </summary>
+        private static IEnumerable<KeyValuePair<string, BlockReference>> ModelSpaceBlocks(
+            BlockTableRecord btr, Transaction tr, Action onBlock)
+        {
+            foreach (ObjectId objId in btr)
+            {
+                var blockRef = tr.GetObject(objId, OpenMode.ForRead) as BlockReference;
+                if (blockRef == null) continue;
+
+                onBlock();
+                yield return new KeyValuePair<string, BlockReference>(blockRef.Handle.ToString(), blockRef);
+            }
+        }
 
         /// <summary>
         /// Resolves the project directory. Prefers the directory of the

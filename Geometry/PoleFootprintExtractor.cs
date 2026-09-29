@@ -2,6 +2,7 @@ using System.Globalization;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using PUP_AUTO.Core;
+using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.Geometry
 {
@@ -18,12 +19,57 @@ namespace PUP_AUTO.Geometry
     }
 
     /// <summary>
+    /// One pole block after footprint extraction: the raw result plus the pole ID and the
+    /// footprint vertices used by the window and the coordinate reports.
+    /// </summary>
+    public class PoleFootprintEntry
+    {
+        /// <summary>Key the block was supplied with (its handle or attribute-derived ID).</summary>
+        public string Key { get; set; } = string.Empty;
+
+        public PoleFootprintResult Result { get; set; } = new PoleFootprintResult();
+
+        /// <summary>The pole number when the block has one, otherwise <see cref="Key"/>.</summary>
+        public string PoleId { get; set; } = string.Empty;
+
+        /// <summary>Footprint vertices labelled "PoleId-1" ...; null when extraction failed.</summary>
+        public List<VertexCoordinate>? Vertices { get; set; }
+    }
+
+    /// <summary>
     /// Universal Dynamic Block Footprint Extractor for PUP_AUTO.
     /// Extracts the 4-point expropriation footprint from a dynamic block reference
     /// based on strict "P-tag" logic (ignoring "TP-tags").
     /// </summary>
     public static class PoleFootprintExtractor
     {
+        /// <summary>
+        /// Extracts the footprint of every block, lazily and in order, so callers that draw
+        /// while enumerating keep their original interleaving of extraction and drawing.
+        /// </summary>
+        public static IEnumerable<PoleFootprintEntry> ExtractAll(
+            IEnumerable<KeyValuePair<string, BlockReference>> poleBlocks,
+            Transaction tr)
+        {
+            foreach (var kvp in poleBlocks)
+            {
+                var entry = new PoleFootprintEntry
+                {
+                    Key = kvp.Key,
+                    Result = ExtractFootprint(kvp.Value, tr)
+                };
+                entry.PoleId = string.IsNullOrEmpty(entry.Result.PoleNumber) ? kvp.Key : entry.Result.PoleNumber;
+
+                if (entry.Result.FootprintPolyline != null)
+                {
+                    entry.Vertices = TopologyProcessor.ExtractPolylineVertices(
+                        entry.Result.FootprintPolyline, $"{entry.PoleId}-");
+                }
+
+                yield return entry;
+            }
+        }
+
         public static PoleFootprintResult ExtractFootprint(BlockReference blockRef, Transaction tr)
         {
             var result = new PoleFootprintResult();

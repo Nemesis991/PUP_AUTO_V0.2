@@ -429,25 +429,16 @@ namespace PUP_AUTO.UI.Windows
                     _polePolylines.Clear();
                     _footprintVerticesDict.Clear();
 
-                    foreach (var kvp in poleBlocks)
+                    foreach (var entry in PoleFootprintExtractor.ExtractAll(poleBlocks, _activeTransaction!))
                     {
-                        var result = PoleFootprintExtractor.ExtractFootprint(kvp.Value, _activeTransaction!);
-                        if (result.FootprintPolyline != null)
+                        if (entry.Result.FootprintPolyline != null)
                         {
-                            string poleId = string.IsNullOrEmpty(result.PoleNumber) ? kvp.Key : result.PoleNumber;
-                            _polePolylines.Add(new KeyValuePair<string, Polyline>(poleId, result.FootprintPolyline));
-                            
-                            var pts = new List<VertexCoordinate>();
-                            for(int i=0; i<result.FootprintPolyline.NumberOfVertices; i++)
-                            {
-                                var pt = result.FootprintPolyline.GetPoint3dAt(i);
-                                pts.Add(new VertexCoordinate { PointIndex = i+1, PointLabel = $"{poleId}-{i+1}", X = Math.Round(pt.X,3), Y = Math.Round(pt.Y,3) });
-                            }
-                            _footprintVerticesDict[poleId] = pts;
+                            _polePolylines.Add(new KeyValuePair<string, Polyline>(entry.PoleId, entry.Result.FootprintPolyline));
+                            _footprintVerticesDict[entry.PoleId] = entry.Vertices!;
                         }
                         else
                         {
-                            AppendLog($"ПРЕДУПРЕЖДЕНИЕ: {result.ErrorMessage}");
+                            AppendLog($"ПРЕДУПРЕЖДЕНИЕ: {entry.Result.ErrorMessage}");
                         }
                     }
 
@@ -627,7 +618,7 @@ namespace PUP_AUTO.UI.Windows
                             poleVertices[p.PoleId] = p.FootprintVertices;
                         }
                     }
-                    servitudeVertices = topo.ExtractPolylineVertices(_servitudePline);
+                    servitudeVertices = TopologyProcessor.ExtractPolylineVertices(_servitudePline);
                     AppendLog($"  Координати: {poleVertices.Count} стълба, {servitudeVertices.Count} точки сервитут.");
                 }
 
