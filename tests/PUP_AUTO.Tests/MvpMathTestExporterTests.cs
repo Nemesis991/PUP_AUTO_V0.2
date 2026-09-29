@@ -7,7 +7,7 @@ using Xunit;
 namespace PUP_AUTO.Tests
 {
     /// <summary>Golden tests: pin the CURRENT content of MVP_Math_Test_Parcels.xlsx.</summary>
-    public class BasicExcelExporterTests : IDisposable
+    public class MvpMathTestExporterTests : IDisposable
     {
         private static readonly string[] ExpectedHeaders =
         {
@@ -23,7 +23,7 @@ namespace PUP_AUTO.Tests
 
         private readonly string _dir;
 
-        public BasicExcelExporterTests()
+        public MvpMathTestExporterTests()
         {
             _dir = Path.Combine(Path.GetTempPath(), "PUP_AUTO_Tests_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_dir);
@@ -36,7 +36,7 @@ namespace PUP_AUTO.Tests
 
         private (List<string[]> Rows, List<string> Merges, string SheetName) Export(params ParcelData[] parcels)
         {
-            BasicExcelExporter.ExportMathTest(parcels.ToList(), _dir);
+            MvpMathTestExporter.ExportMathTest(parcels.ToList(), _dir);
 
             string path = Path.Combine(_dir, "MVP_Math_Test_Parcels.xlsx");
             using (var doc = SpreadsheetDocument.Open(path, false))
@@ -135,7 +135,7 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void BalanceCheck_UsesRawSqmNotRoundedDecares()
+        public void BalanceCheck_UsesRawSqmNotRoundedDka()
         {
             // 0.0011 m2 is 0.0000011 dka -> displays as 0.000, yet the status is ГРЕШКА.
             var (rows, _, _) = Export(Parcel("A", 100000.0, 1000.0011, 1000.0, 0.0));

@@ -5,7 +5,7 @@ using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.Core
 {
-    /// <summary>What <see cref="TransactionManager.SelectMultiplePolylines"/> skipped or could not identify.</summary>
+    /// <summary>What <see cref="SelectionService.SelectMultiplePolylines"/> skipped or could not identify.</summary>
     public class PolylineSelectionStats
     {
         public int SkippedPluginLayer { get; set; }
@@ -19,11 +19,11 @@ namespace PUP_AUTO.Core
     /// Wraps AutoCAD document / transaction operations, providing helpers
     /// for opening transactions and prompting users for entity selection.
     /// </summary>
-    public class TransactionManager
+    public class SelectionService
     {
         private readonly Logger _logger;
 
-        public TransactionManager(Logger logger)
+        public SelectionService(Logger logger)
         {
             _logger = logger;
         }
@@ -255,9 +255,9 @@ namespace PUP_AUTO.Core
                 if (dist < bestDist && dist < GeometryTolerances.GeoMatchRadiusM)
                 {
                     // If area data is available, check area ratio as secondary validation
-                    if (gp.AreaSqM > 0 && plineArea > 0)
+                    if (gp.AreaSqm > 0 && plineArea > 0)
                     {
-                        double areaRatio = Math.Min(plineArea, gp.AreaSqM) / Math.Max(plineArea, gp.AreaSqM);
+                        double areaRatio = Math.Min(plineArea, gp.AreaSqm) / Math.Max(plineArea, gp.AreaSqm);
                         // Area must be within 50% to be considered a match
                         // (allow generous tolerance for projection differences)
                         if (areaRatio < GeometryTolerances.GeoMatchMinAreaRatio) continue;

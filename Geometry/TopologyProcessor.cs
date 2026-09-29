@@ -154,7 +154,7 @@ namespace PUP_AUTO.Geometry
                     var pole = new Pole
                     {
                         PoleId = poleId,
-                        PoleAreaSqM = poleArea,
+                        PoleAreaSqm = poleArea,
                         LocationX = centroid.X,
                         LocationY = centroid.Y
                     };

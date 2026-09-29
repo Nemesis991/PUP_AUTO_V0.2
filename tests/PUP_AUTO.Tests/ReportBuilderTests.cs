@@ -20,7 +20,7 @@ namespace PUP_AUTO.Tests
             List<Pole>? poles = null,
             List<string>? warnings = null)
         {
-            return ReportBuilder.MergeResultsStatic(
+            return ReportBuilder.BuildReportRows(
                 ids,
                 db ?? new Dictionary<string, ParcelData>(),
                 servitude ?? new Dictionary<string, double>(),
@@ -44,7 +44,7 @@ namespace PUP_AUTO.Tests
             var row = Assert.Single(rows);
             Assert.Equal("NO DATA", row.Owner);
             Assert.Equal(string.Empty, row.OwnerName);
-            Assert.Equal(0.0, row.DocumentAreaSqM);
+            Assert.Equal(0.0, row.DocumentAreaSqm);
             var warning = Assert.Single(warnings);
             Assert.Equal(
                 "ParcelId 'P-1' exists in CAD geometry but is MISSING from the CadLibraryReader database. Using 'NO DATA' for Owner.",
@@ -77,7 +77,7 @@ namespace PUP_AUTO.Tests
             Assert.Equal("o", row.OwnershipType);
             Assert.Equal("id", row.OwnerId);
             Assert.Equal("name", row.OwnerName);
-            Assert.Equal(1234.5, row.DocumentAreaSqM);
+            Assert.Equal(1234.5, row.DocumentAreaSqm);
         }
 
         [Fact]
@@ -87,8 +87,8 @@ namespace PUP_AUTO.Tests
                 new[] { "A", "B" },
                 servitude: new Dictionary<string, double> { ["A"] = 42.5 });
 
-            Assert.Equal(42.5, rows[0].ServitudeAreaSqM);
-            Assert.Equal(0.0, rows[1].ServitudeAreaSqM);
+            Assert.Equal(42.5, rows[0].ServitudeAreaSqm);
+            Assert.Equal(0.0, rows[1].ServitudeAreaSqm);
         }
 
         [Fact]
@@ -104,10 +104,10 @@ namespace PUP_AUTO.Tests
             var rows = Merge(new[] { "A", "B" }, poles: poles);
 
             Assert.Equal(2, rows[0].PoleCount);
-            Assert.Equal(0.036 + 0.04, rows[0].PoleAreaSqM);
+            Assert.Equal(0.036 + 0.04, rows[0].PoleAreaSqm);
             Assert.Equal(new[] { "1", "2" }, rows[0].AssignedPoles.Select(p => p.PoleId).ToArray());
             Assert.Equal(2, rows[1].PoleCount);
-            Assert.Equal(0.01 + 0.02, rows[1].PoleAreaSqM);
+            Assert.Equal(0.01 + 0.02, rows[1].PoleAreaSqm);
         }
 
         [Fact]

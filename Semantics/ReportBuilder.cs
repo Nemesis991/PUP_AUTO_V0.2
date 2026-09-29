@@ -15,7 +15,7 @@ namespace PUP_AUTO.Semantics
         /// CRUCIAL CHECK: if a ParcelId from geometry is missing from
         /// the database, calls <paramref name="logWarning"/> and uses "NO DATA" for the Owner.
         /// </summary>
-        public static List<ReportRow> MergeResultsStatic(
+        public static List<ReportRow> BuildReportRows(
             IEnumerable<string> parcelIds,
             Dictionary<string, ParcelData> parcelDb,
             Dictionary<string, double> servitudeAreas,
@@ -70,8 +70,8 @@ namespace PUP_AUTO.Semantics
                 {
                     ParcelId         = parcelId,
                     Owner            = owner,
-                    ServitudeAreaSqM = servArea,
-                    PoleAreaSqM      = poleArea,
+                    ServitudeAreaSqm = servArea,
+                    PoleAreaSqm      = poleArea,
                     PoleCount        = poleCount,
                     AssignedPoles    = polesInParcel,
 
@@ -84,7 +84,7 @@ namespace PUP_AUTO.Semantics
                     OwnershipType    = dbRecord?.OwnershipType  ?? string.Empty,
                     OwnerId          = dbRecord?.OwnerId        ?? string.Empty,
                     OwnerName        = dbRecord?.OwnerName      ?? string.Empty,
-                    DocumentAreaSqM  = dbRecord?.DocumentArea   ?? 0.0
+                    DocumentAreaSqm  = dbRecord?.DocumentArea   ?? 0.0
                 });
             }
 

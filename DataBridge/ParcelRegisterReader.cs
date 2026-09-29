@@ -4,11 +4,11 @@ using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.DataBridge
 {
-    public class CadLibraryReader
+    public class ParcelRegisterReader
     {
         private readonly Logger _logger;
 
-        public CadLibraryReader(Logger logger)
+        public ParcelRegisterReader(Logger logger)
         {
             _logger = logger;
         }
@@ -307,7 +307,7 @@ namespace PUP_AUTO.DataBridge
                             ParcelId = parcelId,
                             CentroidX = cx,
                             CentroidY = cy,
-                            AreaSqM = area
+                            AreaSqm = area
                         });
                     }
                 }

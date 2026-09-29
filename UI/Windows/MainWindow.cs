@@ -44,7 +44,7 @@ namespace PUP_AUTO.UI.Windows
         private Dictionary<string, List<VertexCoordinate>> _footprintVerticesDict = new Dictionary<string, List<VertexCoordinate>>();
 
         private Transaction? _activeTransaction;
-        private Core.TransactionManager? _txMgr;
+        private SelectionService? _selection;
         private Logger? _logger;
 
         // ---- Colors (Catppuccin Mocha dark theme) ----
@@ -388,7 +388,7 @@ namespace PUP_AUTO.UI.Windows
                 try
                 {
                     EnsureTransaction();
-                    _servitudePline = _txMgr!.SelectSinglePolyline(
+                    _servitudePline = _selection!.SelectSinglePolyline(
                         _activeTransaction!, "\nSelect the Servitude (Right of Way) polyline: ");
 
                     if (_servitudePline != null)
@@ -423,7 +423,7 @@ namespace PUP_AUTO.UI.Windows
                 {
                     EnsureTransaction();
                     
-                    var poleBlocks = _txMgr!.SelectMultipleBlockReferences(
+                    var poleBlocks = _selection!.SelectMultipleBlockReferences(
                         _activeTransaction!, "\nSelect Pole blocks: ");
                         
                     _polePolylines.Clear();
@@ -479,7 +479,7 @@ namespace PUP_AUTO.UI.Windows
                     string cadPath = _cadFilePath ?? "";
                     if (cadPath.EndsWith(".geojson", StringComparison.OrdinalIgnoreCase))
                     {
-                        var reader = new CadLibraryReader(_logger!);
+                        var reader = new ParcelRegisterReader(_logger!);
                         geoParcels = reader.LoadGeoJsonGeometries(cadPath);
                         if (geoParcels.Count > 0)
                         {
@@ -496,7 +496,7 @@ namespace PUP_AUTO.UI.Windows
                     }
 
                     var selStats = new PolylineSelectionStats();
-                    _parcelPolylines = _txMgr!.SelectMultiplePolylines(
+                    _parcelPolylines = _selection!.SelectMultiplePolylines(
                         _activeTransaction!, "\nSelect Parcel polylines: ", geoParcels,
                         _servitudePline?.ObjectId ?? ObjectId.Null, selStats);
 
@@ -537,10 +537,10 @@ namespace PUP_AUTO.UI.Windows
                 string logPath = Path.Combine(_projectDir, FileNames.LogFile);
                 _logger = new Logger(logPath);
             }
-            if (_txMgr == null)
-                _txMgr = new Core.TransactionManager(_logger);
+            if (_selection == null)
+                _selection = new SelectionService(_logger);
             if (_activeTransaction == null || _activeTransaction.IsDisposed)
-                _activeTransaction = _txMgr.StartTransaction();
+                _activeTransaction = _selection.StartTransaction();
         }
 
         // ================================================================
@@ -562,7 +562,7 @@ namespace PUP_AUTO.UI.Windows
                 {
                     AppendLog("── СТАРТИРАНЕ НА MVP MATH TEST ──");
                     var testResults = topo.RunMvpMathTest(_servitudePline, _polePolylines, _parcelPolylines);
-                    BasicExcelExporter.ExportMathTest(testResults, _projectDir);
+                    MvpMathTestExporter.ExportMathTest(testResults, _projectDir);
                     AppendLog($"  Записан {FileNames.MvpMathTestFile} в {_projectDir}");
                     return;
                 }
@@ -572,7 +572,7 @@ namespace PUP_AUTO.UI.Windows
                 // Step 1 — Load CAD database
                 AppendLog("── Стъпка 1: Зареждане на CAD база ──");
                 string cadPath = _cadFilePath ?? Path.Combine(_projectDir, FileNames.TestFilesFolder, FileNames.CadLibraryFile);
-                var reader = new CadLibraryReader(_logger!);
+                var reader = new ParcelRegisterReader(_logger!);
                 var parcelDb = reader.LoadLibrary(cadPath);
                 AppendLog($"  Заредени {parcelDb.Count} записа от базата.");
 
@@ -598,7 +598,7 @@ namespace PUP_AUTO.UI.Windows
 
                 // Step 3 — Merge results
                 AppendLog("── Стъпка 3: Обединяване на резултати ──");
-                var reportRows = ReportBuilder.MergeResultsStatic(
+                var reportRows = ReportBuilder.BuildReportRows(
                     _parcelPolylines.Select(kvp => kvp.Key), parcelDb, servitudeAreas, assignedPoles,
                     message => _logger!.LogWarning(message));
                 AppendLog($"  Генерирани {reportRows.Count} реда за отчет.");
@@ -691,7 +691,7 @@ namespace PUP_AUTO.UI.Windows
 
                 AppendLog("── Генериране на 20m точки по сервитута ──");
                 
-                using (var tr = _txMgr!.StartTransaction())
+                using (var tr = _selection!.StartTransaction())
                 {
                     var markerGen = new Geometry.ServitudeMarkerGenerator(_logger!);
                     markerGen.GenerateMarkers(_servitudePline, tr, startL, startR);
@@ -726,7 +726,7 @@ namespace PUP_AUTO.UI.Windows
 
                 AppendLog($"── Сегментиране на избрания сервитут (на {dist}м) ──");
                 
-                using (var tr = _txMgr!.StartTransaction())
+                using (var tr = _selection!.StartTransaction())
                 {
                     var doc = Application.DocumentManager.MdiActiveDocument;
                     var db = doc.Database;
@@ -784,7 +784,7 @@ namespace PUP_AUTO.UI.Windows
             _activeTransaction.Dispose();
 
             // Start a new one
-            _activeTransaction = _txMgr!.StartTransaction();
+            _activeTransaction = _selection!.StartTransaction();
 
             // Re-open objects
             if (servitudeId.HasValue && !servitudeId.Value.IsNull)

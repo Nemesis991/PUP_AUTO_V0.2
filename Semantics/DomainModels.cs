@@ -49,7 +49,7 @@ namespace PUP_AUTO.Semantics
         public int PoleNumber { get; set; }
 
         /// <summary>Footprint area of the pole in Square Meters.</summary>
-        public double PoleAreaSqM { get; set; }
+        public double PoleAreaSqm { get; set; }
 
         /// <summary>Footprint centroid (average of the vertices), X coordinate.</summary>
         public double LocationX { get; set; }
@@ -81,13 +81,13 @@ namespace PUP_AUTO.Semantics
 
         // --- Area Fields (Square Meters) ---
         /// <summary>Total parcel area from the cadastral register, in Square Meters.</summary>
-        public double DocumentAreaSqM { get; set; }
+        public double DocumentAreaSqm { get; set; }
 
         /// <summary>Servitude (right-of-way) area in Square Meters.</summary>
-        public double ServitudeAreaSqM { get; set; }
+        public double ServitudeAreaSqm { get; set; }
 
         /// <summary>Combined pole footprint area in Square Meters.</summary>
-        public double PoleAreaSqM { get; set; }
+        public double PoleAreaSqm { get; set; }
 
         public int PoleCount { get; set; }
 
@@ -100,10 +100,10 @@ namespace PUP_AUTO.Semantics
         /// <summary>
         /// Remainder = Total Area - Servitude Area, in Square Meters. Raw, unrounded —
         /// safe to use in further arithmetic (e.g. balance/total sums).
-        /// ServitudeAreaSqM is the gross parcel/servitude intersection, which already
+        /// ServitudeAreaSqm is the gross parcel/servitude intersection, which already
         /// contains the pole footprints, so the pole area must NOT be subtracted again here.
         /// </summary>
-        public double RemainderAreaSqM => Math.Max(0.0, DocumentAreaSqM - ServitudeAreaSqM);
+        public double RemainderAreaSqm => Math.Max(0.0, DocumentAreaSqm - ServitudeAreaSqm);
 
         /// <summary>
         /// Formatted pole numbers string, e.g. "Стълб №24,Стълб №23".
@@ -138,6 +138,6 @@ namespace PUP_AUTO.Semantics
         /// <summary>Centroid Y coordinate (in projected CRS, e.g. BGS2005).</summary>
         public double CentroidY { get; set; }
         /// <summary>Area in square meters from the cadastral register.</summary>
-        public double AreaSqM { get; set; }
+        public double AreaSqm { get; set; }
     }
 }

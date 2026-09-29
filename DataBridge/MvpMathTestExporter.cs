@@ -6,7 +6,7 @@ using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.DataBridge
 {
-    public static class BasicExcelExporter
+    public static class MvpMathTestExporter
     {
         public static void ExportMathTest(List<ParcelData> parcels, string outputDir)
         {

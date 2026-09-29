@@ -17,7 +17,7 @@ graph TD
         UI["MainCommands.cs<br/>(PUP_WINDOW / PUP_SERV / PUP_DRAW_FOOTPRINTS)"]
         GUI["Windows/MainWindow.cs<br/>(WPF Модален Прозорец)"]
         CAD[AutoCAD База / Редактор]
-        TM[Core / TransactionManager.cs]
+        TM[Core / SelectionService.cs]
     end
 
     subgraph Източници на Данни
@@ -33,7 +33,7 @@ graph TD
     end
 
     subgraph I/O и Външни Връзки
-        CAD_READER[DataBridge / CadLibraryReader.cs]
+        CAD_READER[DataBridge / ParcelRegisterReader.cs]
         XLS_GEN[DataBridge / ExcelReportGenerator.cs]
         WORD_GEN[DataBridge / WordReportGenerator.cs]
         LOG[Core / Logger.cs]
@@ -90,7 +90,7 @@ graph TD
 - **`UI.MainCommands`** (`MainCommands.cs`): Регистрира AutoCAD командите:
   - **`PUP_SERV`** и **`PUP_DRAW_FOOTPRINTS`**: диагностични/чертожни команди (сегментиране на сервитут; чертане на стъпките на стълбовете).
   - **`PUP_WINDOW`**: Отваря WPF модален прозорец (`MainWindow`) чрез `Application.ShowModalWindow`.
-  - **`MergeResultsStatic()`** (`public static`): Обединява геометричните изчисления (площи и принадлежност на стълбове) с текстовите метаданни от `.cad` базата по ключ `ParcelId`. При липса на парцел в базата, задава `Owner = "NO DATA"` и записва Warning в лога.
+  - **`BuildReportRows()`** (`public static`): Обединява геометричните изчисления (площи и принадлежност на стълбове) с текстовите метаданни от `.cad` базата по ключ `ParcelId`. При липса на парцел в базата, задава `Owner = "NO DATA"` и записва Warning в лога.
   - **`ResolveProjectDirectory()`** (`private static`): Намира работната директория чрез абсолютен път от `Path.GetDirectoryName(doc.Name)`, с fallback към `Environment.CurrentDirectory`.
 
 - **`UI.Windows.MainWindow`** (`Windows/MainWindow.cs`): WPF модален прозорец, изграден изцяло в C# код (без XAML), с тъмна тема **Catppuccin Mocha**. Предоставя:
@@ -103,7 +103,7 @@ graph TD
 
 ### 3.2. Слой "Ядро" (Core)
 
-- **`Core.TransactionManager`**: Опакова жизнения цикъл на транзакциите в AutoCAD API. Абстрахира стандартния код за избор от потребителя, филтриране на валидни обекти (затворени `LWPOLYLINE`) и безопасно четене (`ForRead`). Също така извлича идентификаторите на обектите от `XData` или прибягва до Handle при липса на такива.
+- **`Core.SelectionService`**: Опакова жизнения цикъл на транзакциите в AutoCAD API. Абстрахира стандартния код за избор от потребителя, филтриране на валидни обекти (затворени `LWPOLYLINE`) и безопасно четене (`ForRead`). Също така извлича идентификаторите на обектите от `XData` или прибягва до Handle при липса на такива.
 - **`Core.Logger`**: Централизиран механизъм за логване (със защита от грешки при писане), който извежда събития с времеви печат (`SUCCESS`, `WARNING` и `ERROR`) в локален текстов файл, осигурявайки непрекъсната работа дори при грешки в I/O.
 
 ### 3.3. Слой "Геометрична Обработка" (Geometry)
@@ -118,16 +118,16 @@ graph TD
 
 - **`Semantics.DomainModels`**: Съдържа POCO класове, представляващи бизнес домейна:
   - **`ParcelData`**: Кадастрални данни за имот — `ParcelId`, `Owner`, `Ekatte`, `DocumentArea`, `SubDivision`, `TerritoryType`, `Usage`, `Locality`, `Category`, `OwnershipType`, `OwnerId`, `OwnerName`.
-  - **`Pole`**: Данни за стълб — `PoleId`, `PoleNumber`, `PoleAreaSqM`, `LocationX`/`LocationY` (център на стъпката). Домейн моделите не зависят от AutoCAD API.
+  - **`Pole`**: Данни за стълб — `PoleId`, `PoleNumber`, `PoleAreaSqm`, `LocationX`/`LocationY` (център на стъпката). Домейн моделите не зависят от AutoCAD API.
   - **`ReportRow`**: Обобщен ред за отчет, съдържащ всички кадастрални полета плюс:
     - `AssignedPoles` (`List<Pole>`) — списък на причислените стълбове.
-    - `RemainderAreaSqM` — остатък: `max(0, DocumentAreaSqM - ServitudeAreaSqM)` в m². Преобразуването в декари става само при запис в отчета чрез `AreaUnits.SqmToDka()` (закръгляне до 3 знака).
+    - `RemainderAreaSqm` — остатък: `max(0, DocumentAreaSqm - ServitudeAreaSqm)` в m². Преобразуването в декари става само при запис в отчета чрез `AreaUnits.SqmToDka()` (закръгляне до 3 знака).
     - `PoleNumbers` — форматиран низ, напр. `"Стълб №24,Стълб №23"`.
   - **`VertexCoordinate`**: Координати на връх от полилиния — `PointIndex`, `PointLabel`, `X`, `Y`. Използва се за координатните регистри.
 
 ### 3.5. Слой "Мост за Данни" (DataBridge)
 
-- **`DataBridge.CadLibraryReader`**: Отговаря за извличането на външни семантични данни (от `.cad` файлове). Разполага със здрав парсер с локална функция `SafeCol(int index, string fallback = "")`, който се справя с липсващи колони (съвместимост с по-стари формати) и различни видове разделители (`,`, `;`, `\t`). Парсва 12 колони (0–11) за всеки ред.
+- **`DataBridge.ParcelRegisterReader`**: Отговаря за извличането на външни семантични данни (от `.cad` файлове). Разполага със здрав парсер с локална функция `SafeCol(int index, string fallback = "")`, който се справя с липсващи колони (съвместимост с по-стари формати) и различни видове разделители (`,`, `;`, `\t`). Парсва 12 колони (0–11) за всеки ред.
 
 - **`DataBridge.ExcelReportGenerator`**: Използва библиотеката **NPOI** за взаимодействие с Excel (формат `.xls` / BIFF8), без да изисква инсталиран Microsoft Office.
   - **Инжектиране в Шаблон**: Отваря `_Templates/TemplateX.xls`, клонира стиловете от реда-образец (ред 5) и динамично измества долната част (футъри/подписи) надолу чрез `ShiftRowsDown()`.
@@ -154,11 +154,11 @@ graph TD
 
 ### 4.1. Процесът 'PUP_WINDOW' (Графичен Прозорец)
 
-1. **Инициализация**: Стартират се Logger, TransactionManager и TopologyProcessor.
+1. **Инициализация**: Стартират се Logger, SelectionService и TopologyProcessor.
 2. **Селекция**: Потребителят избира геометриите чрез бутони в GUI — Сервитут, Стълбове и Имоти (прозорецът се скрива по време на селекция).
 3. **Зареждане на Данни**: Външните метаданни се изчитат от избрания регистър (по подразбиране `TemplateC.cad`).
 4. **Пространствен Анализ**: `TopologyProcessor` изпълнява булевите сечения и причисляване на стълбове.
-5. **Обединяване (Merge)**: `MergeResultsStatic()` свързва пространствените данни със семантичните данни по `ParcelId`. Маркира имоти с `"NO DATA"`, ако липсват в базата.
+5. **Обединяване (Merge)**: `BuildReportRows()` свързва пространствените данни със семантичните данни по `ParcelId`. Маркира имоти с `"NO DATA"`, ако липсват в базата.
 6. **Excel Експорт**: `ExcelReportGenerator` създава `PUP_Report.xls` с три листа.
 
 Допълнителни възможности:
@@ -169,10 +169,10 @@ graph TD
 
 ## 5. Архитектурни Съображения и Добри Практики
 
-- **Внедряване на Зависимости (Dependency Injection / Passing)**: Услуги като `Logger` и `TransactionManager` се предават надолу към процесорите като параметри (а не като глобални Singleton инстанции), което подобрява възможността за тестване на системата.
+- **Внедряване на Зависимости (Dependency Injection / Passing)**: Услуги като `Logger` и `SelectionService` се предават надолу към процесорите като параметри (а не като глобални Singleton инстанции), което подобрява възможността за тестване на системата.
 - **Устойчивост на Грешки (Fault Tolerance)**:
   - `ExcelReportGenerator` прихваща изключения за заключени файлове (ако Excel файлът вече е отворен от потребителя).
-  - `CadLibraryReader` използва методи за безопасно четене на колони, за да предотврати `IndexOutOfRangeException` при лошо форматирани CSV данни.
+  - `ParcelRegisterReader` използва методи за безопасно четене на колони, за да предотврати `IndexOutOfRangeException` при лошо форматирани CSV данни.
   - `TopologyProcessor` обгръща операцията `BooleanOperation` в `try/catch` блокове, за да предотврати срив на целия процес заради сложни припокриващи се геометрии.
 - **Управление на Паметта**: Обектите `Region` на AutoCAD се освобождават експлицитно (`Dispose()`) в `finally` блокове, за да се предотвратят течове в неконтролираната памет в рамките на процеса на AutoCAD.
 - **Двоен Изход**: Системата генерира едновременно Excel (.xls чрез NPOI) и Word (.docm чрез OpenXML SDK) отчети, използвайки изцяло template-based подход.

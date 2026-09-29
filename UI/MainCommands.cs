@@ -113,16 +113,16 @@ namespace PUP_AUTO.UI
             string projectDir = ResolveProjectDirectory();
             string logPath = Path.Combine(projectDir, LogFileName);
             var logger = new Logger(logPath);
-            var txMgr = new Core.TransactionManager(logger);
-            Editor ed = txMgr.GetEditor();
+            var selection = new SelectionService(logger);
+            Editor ed = selection.GetEditor();
 
             try
             {
                 ed.WriteMessage("\n═══ PUP_DRAW_FOOTPRINTS ═══\n");
 
-                using (Transaction tr = txMgr.StartTransaction())
+                using (Transaction tr = selection.StartTransaction())
                 {
-                    BlockTable bt = (BlockTable)tr.GetObject(txMgr.GetDatabase().BlockTableId, OpenMode.ForRead);
+                    BlockTable bt = (BlockTable)tr.GetObject(selection.GetDatabase().BlockTableId, OpenMode.ForRead);
                     BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
                     int processed = 0;
@@ -130,7 +130,7 @@ namespace PUP_AUTO.UI
                     int failed = 0;
 
                     // Ensure required layers exist
-                    var db = txMgr.GetDatabase();
+                    var db = selection.GetDatabase();
                     DrawingWriter.EnsureLayer(db, tr, PluginLayers.PoleSteps, 7, LineWeight.LineWeight030);
                     DrawingWriter.EnsureLayer(db, tr, PluginLayers.Diagonals, 8, LineWeight.LineWeight009);
                     DrawingWriter.EnsureLayer(db, tr, PluginLayers.Text, 7, LineWeight.ByLayer);

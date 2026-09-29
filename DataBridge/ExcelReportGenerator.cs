@@ -159,9 +159,9 @@ namespace PUP_AUTO.DataBridge
                         SetCell(row, P_ColUsage,         d.Usage,                GetCellStyle(styleRow, P_ColUsage));
                         SetCell(row, P_ColLocality,      d.Locality,             GetCellStyle(styleRow, P_ColLocality));
                         SetCell(row, P_ColCategory,      d.Category,             GetCellStyle(styleRow, P_ColCategory));
-                        SetCell(row, P_ColDocArea,       AreaUnits.SqmToDka(d.DocumentAreaSqM),  GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColDocArea)));
-                        SetCell(row, P_ColServArea,      AreaUnits.SqmToDka(d.ServitudeAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColServArea)));
-                        SetCell(row, P_ColRemainder,     AreaUnits.SqmToDka(d.RemainderAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColRemainder)));
+                        SetCell(row, P_ColDocArea,       AreaUnits.SqmToDka(d.DocumentAreaSqm),  GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColDocArea)));
+                        SetCell(row, P_ColServArea,      AreaUnits.SqmToDka(d.ServitudeAreaSqm), GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColServArea)));
+                        SetCell(row, P_ColRemainder,     AreaUnits.SqmToDka(d.RemainderAreaSqm), GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColRemainder)));
                         SetCell(row, P_ColPoleNumbers,   d.PoleNumbers,          GetCellStyle(styleRow, P_ColPoleNumbers));
                         SetCell(row, P_ColOwnershipType, d.OwnershipType,        GetCellStyle(styleRow, P_ColOwnershipType));
                         SetCell(row, P_ColOwnerId,       d.OwnerId,              GetCellStyle(styleRow, P_ColOwnerId));
@@ -169,7 +169,7 @@ namespace PUP_AUTO.DataBridge
 
                         // The template leaves the pole-step area blank for parcels without a pole.
                         if (d.PoleCount > 0)
-                            SetCell(row, P_ColPoleArea, AreaUnits.SqmToDka(d.PoleAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColPoleArea)));
+                            SetCell(row, P_ColPoleArea, AreaUnits.SqmToDka(d.PoleAreaSqm), GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColPoleArea)));
                         else
                             SetCell(row, P_ColPoleArea, string.Empty, GetCellStyle(styleRow, P_ColPoleArea));
                     });
@@ -202,7 +202,7 @@ namespace PUP_AUTO.DataBridge
                 {
                     if (p.OverlappingParcels.Count == 0)
                     {
-                        flatPoles.Add((p, string.Empty, p.PoleAreaSqM));
+                        flatPoles.Add((p, string.Empty, p.PoleAreaSqm));
                     }
                     else
                     {
@@ -430,10 +430,10 @@ namespace PUP_AUTO.DataBridge
                     // Sum raw square-meter values, then convert to decares ONCE.
                     SetCell(dataRow, B_ColGroupValue,  group.Key,                                                   null);
                     SetCell(dataRow, B_ColParcelCount, group.Count(),                                               numStyle);
-                    SetCell(dataRow, B_ColTotalArea,   AreaUnits.SqmToDka(group.Sum(r => r.DocumentAreaSqM)),       areaStyle);
-                    SetCell(dataRow, B_ColServArea,    AreaUnits.SqmToDka(group.Sum(r => r.ServitudeAreaSqM)),      areaStyle);
+                    SetCell(dataRow, B_ColTotalArea,   AreaUnits.SqmToDka(group.Sum(r => r.DocumentAreaSqm)),       areaStyle);
+                    SetCell(dataRow, B_ColServArea,    AreaUnits.SqmToDka(group.Sum(r => r.ServitudeAreaSqm)),      areaStyle);
                     SetCell(dataRow, B_ColPoleCount,   group.Sum(r => r.PoleCount),                                 numStyle);
-                    SetCell(dataRow, B_ColPoleArea,    AreaUnits.SqmToDka(group.Sum(r => r.PoleAreaSqM)),           areaStyle);
+                    SetCell(dataRow, B_ColPoleArea,    AreaUnits.SqmToDka(group.Sum(r => r.PoleAreaSqm)),           areaStyle);
 
                     currentRow++;
                 }
