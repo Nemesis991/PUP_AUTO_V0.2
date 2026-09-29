@@ -23,7 +23,7 @@
   - `TransactionManager.cs` — Транзакции, селекция на полилинии, XData/Handle/GeoJSON идентификация
   - `Logger.cs` — Fault-tolerant логване (SUCCESS / WARNING / ERROR)
 - `Semantics/`
-  - `DomainModels.cs` — `ParcelData`, `Servitude`, `Pole`, `ReportRow`, `VertexCoordinate`, `GeoParcel`
+  - `DomainModels.cs` — `ParcelData`, `Pole`, `ReportRow`, `VertexCoordinate`, `GeoParcel`
 - `DataBridge/`
   - `CadLibraryReader.cs` — Парсване на `.cad`/CSV/GeoJSON текстова база с `SafeCol()` защита
   - `ExcelReportGenerator.cs` — NPOI генерация на `.xls` отчет (3 листа)

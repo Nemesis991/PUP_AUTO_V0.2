@@ -46,10 +46,6 @@ namespace PUP_AUTO.DataBridge
             List<Pole> assignedPoles,
             Dictionary<string, ParcelData> parcelDb,
             string outputDir,
-            string settlementName = "",
-            string ekatte = "",
-            string municipality = "",
-            string oblast = "",
             Dictionary<string, List<VertexCoordinate>>? poleVertices = null,
             List<VertexCoordinate>? servitudeVertices = null)
         {
@@ -66,7 +62,7 @@ namespace PUP_AUTO.DataBridge
             GenerateBalancesTerritory(reportRows, outputDir);
 
             // 05 — Общ Баланс за общината
-            GenerateBalancesMunicipality(reportRows, parcelDb, outputDir, settlementName, municipality, oblast);
+            GenerateBalancesMunicipality(reportRows, parcelDb, outputDir);
 
             // 06 — Обща рекапитулация
             GenerateRecapitulation(reportRows, outputDir);
@@ -133,15 +129,12 @@ namespace PUP_AUTO.DataBridge
                         // The template data row is typically the last row in a small template
                         // (rows[0] = title/merged, rows[1] = header, rows[2] = column numbers, rows[3+] = data)
                         TableRow templateRow = rows.Last();
-                        var templateRowParent = templateRow.Parent;
 
                         // Remove the template row — we'll clone it for each data record
                         templateRow.Remove();
 
-                        int rowNum = 0;
                         foreach (var d in data)
                         {
-                            rowNum++;
                             var newRow = (TableRow)templateRow.CloneNode(true);
                             var cells = newRow.Elements<TableCell>().ToList();
 
@@ -603,10 +596,7 @@ namespace PUP_AUTO.DataBridge
         private void GenerateBalancesMunicipality(
             List<ReportRow> data,
             Dictionary<string, ParcelData> parcelDb,
-            string outputDir,
-            string settlementName = "",
-            string municipality = "",
-            string oblast = "")
+            string outputDir)
         {
             string templatePath = Path.Combine(_templateDir, Template05_BalancesMunicip);
             string outputPath = Path.Combine(outputDir, Template05_BalancesMunicip);

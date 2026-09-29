@@ -87,7 +87,7 @@ namespace PUP_AUTO.Core
         /// 
         /// When <paramref name="geoParcels"/> is provided, polylines are matched
         /// to GeoJSON parcels by centroid proximity. Otherwise falls back to
-        /// Map3D OD / XData / Handle.
+        /// XData / Handle.
         /// </summary>
         public List<KeyValuePair<string, Polyline>> SelectMultiplePolylines(
             Transaction transaction,
@@ -169,8 +169,7 @@ namespace PUP_AUTO.Core
                 {
                     // === STRATEGY 2: XData Extractor ===
                     string parcelId = PUP_AUTO.DataBridge.XDataExtractor.GetParcelId(pline);
-                    double areaSqm = pline.Area; // Extract geometry area as requested
-                    
+
                     if (parcelId != "Неизвестен_Имот" && parcelId != "Грешка_XData")
                     {
                         entityId = parcelId;
@@ -329,9 +328,5 @@ namespace PUP_AUTO.Core
 
             return blocks;
         }
-
-        // -----------------------------------------------------------------
-        //  Object Data (Map 3D) Helper removed
-        // -----------------------------------------------------------------
     }
 }

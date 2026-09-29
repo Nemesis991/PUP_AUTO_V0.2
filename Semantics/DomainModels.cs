@@ -1,6 +1,5 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using PUP_AUTO.Core;
 
 namespace PUP_AUTO.Semantics
 {
@@ -30,7 +29,6 @@ namespace PUP_AUTO.Semantics
         public double ServitudeGrossAreaSqm { get; set; }
         public double ServitudeNetAreaSqm { get; set; }
         public double PoleAreaSqm { get; set; }
-        public double MathDifference { get; set; }
 
         /// <summary>
         /// Unaffected remainder = Total - net servitude - pole footprint, in Square Meters.
@@ -39,22 +37,8 @@ namespace PUP_AUTO.Semantics
         /// </summary>
         public double RemainderAreaSqm => Math.Max(0.0, TotalAreaSqm - ServitudeNetAreaSqm - PoleAreaSqm);
 
-        /// <summary>Remainder area in Decares, rounded to 3 decimals. Display only — never use in further arithmetic.</summary>
-        public double RemainderAreaDka => AreaUnits.SqmToDka(RemainderAreaSqm);
-
         public List<string> AssignedPoleNumbers { get; set; } = new List<string>();
         public Dictionary<string, double> IndividualPoleAreas { get; set; } = new Dictionary<string, double>();
-    }
-
-    /// <summary>
-    /// Represents a Right of Way (Servitude) area.
-    /// </summary>
-    public class Servitude
-    {
-        public string ServitudeId { get; set; } = string.Empty;
-        public string AssignedParcelId { get; set; } = string.Empty;
-        public double Area { get; set; }
-        public ObjectId ObjectId { get; set; } = ObjectId.Null;
     }
 
     /// <summary>
@@ -70,9 +54,6 @@ namespace PUP_AUTO.Semantics
 
         /// <summary>Footprint area of the pole in Square Meters.</summary>
         public double PoleAreaSqM { get; set; }
-
-        /// <summary>Pole footprint area in Decares, rounded to 3 decimals. Display only — never use in further arithmetic.</summary>
-        public double PoleAreaDecares => AreaUnits.SqmToDka(PoleAreaSqM);
 
         public Point3d Location { get; set; }
         public ObjectId ObjectId { get; set; } = ObjectId.Null;
@@ -124,19 +105,6 @@ namespace PUP_AUTO.Semantics
         /// contains the pole footprints, so the pole area must NOT be subtracted again here.
         /// </summary>
         public double RemainderAreaSqM => Math.Max(0.0, DocumentAreaSqM - ServitudeAreaSqM);
-
-        // --- Computed Decare Helpers (display only — never use in further arithmetic) ---
-        /// <summary>Total parcel area in Decares, rounded to 3 decimals.</summary>
-        public double DocumentAreaDecares => AreaUnits.SqmToDka(DocumentAreaSqM);
-
-        /// <summary>Servitude area in Decares, rounded to 3 decimals.</summary>
-        public double ServitudeAreaDecares => AreaUnits.SqmToDka(ServitudeAreaSqM);
-
-        /// <summary>Pole area in Decares, rounded to 3 decimals.</summary>
-        public double PoleAreaDecares => AreaUnits.SqmToDka(PoleAreaSqM);
-
-        /// <summary>Remainder area in Decares, rounded to 3 decimals.</summary>
-        public double RemainderAreaDecares => AreaUnits.SqmToDka(RemainderAreaSqM);
 
         /// <summary>
         /// Formatted pole numbers string, e.g. "Стълб №24,Стълб №23".

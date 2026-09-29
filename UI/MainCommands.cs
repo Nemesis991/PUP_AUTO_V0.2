@@ -168,7 +168,7 @@ namespace PUP_AUTO.UI
                         if (blockRef == null) continue;
 
                         processed++;
-                        var result = PoleFootprintExtractor.ExtractFootprint(blockRef, tr, logger);
+                        var result = PoleFootprintExtractor.ExtractFootprint(blockRef, tr);
 
                         if (result.FootprintPolyline != null)
                         {

@@ -27,7 +27,6 @@ namespace PUP_AUTO.UI.Windows
         private CheckBox _chkExcel = null!;
         private CheckBox _chkWord = null!;
         private CheckBox _chkCoordinates = null!;
-        private CheckBox _chkMarkers = null!;
         private CheckBox _chkMvpMathTest = null!;
         private TextBox _txtStartNumLeft = null!;
         private TextBox _txtStartNumRight = null!;
@@ -432,7 +431,7 @@ namespace PUP_AUTO.UI.Windows
 
                     foreach (var kvp in poleBlocks)
                     {
-                        var result = PoleFootprintExtractor.ExtractFootprint(kvp.Value, _activeTransaction!, _logger!);
+                        var result = PoleFootprintExtractor.ExtractFootprint(kvp.Value, _activeTransaction!);
                         if (result.FootprintPolyline != null)
                         {
                             string poleId = string.IsNullOrEmpty(result.PoleNumber) ? kvp.Key : result.PoleNumber;
@@ -559,7 +558,7 @@ namespace PUP_AUTO.UI.Windows
                 if (_chkMvpMathTest.IsChecked == true)
                 {
                     AppendLog("── СТАРТИРАНЕ НА MVP MATH TEST ──");
-                    var testResults = topo.RunMvpMathTest(_servitudePline, _polePolylines, _parcelPolylines, _activeTransaction!);
+                    var testResults = topo.RunMvpMathTest(_servitudePline, _polePolylines, _parcelPolylines);
                     BasicExcelExporter.ExportMathTest(testResults, _projectDir);
                     AppendLog($"  Записан MVP_Math_Test_Parcels.xlsx в {_projectDir}");
                     return;
@@ -577,11 +576,11 @@ namespace PUP_AUTO.UI.Windows
                 // Step 2 — Topology calculations
                 AppendLog("── Стъпка 2: Топологични изчисления ──");
                 var servitudeAreas = topo.CalculateServitudeIntersections(
-                    _servitudePline, _parcelPolylines, _activeTransaction!);
+                    _servitudePline, _parcelPolylines);
                 AppendLog($"  Сечения сервитут: {servitudeAreas.Count} имота.");
 
                 var assignedPoles = topo.AssignPolesToParcels(
-                    _polePolylines, _parcelPolylines, _activeTransaction!);
+                    _polePolylines, _parcelPolylines);
                     
                 foreach (var p in assignedPoles)
                 {

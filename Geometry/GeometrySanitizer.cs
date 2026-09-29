@@ -112,13 +112,8 @@ namespace PUP_AUTO.Geometry
 
                 if (distanceToNext < minVertexDistance && Math.Abs(currentBulge) < 1e-10)
                 {
-                    // Combine bulges if necessary, but here we just skip the vertex.
-                    // Wait, if we skip vertex (i), we are removing currentPt. 
-                    // But we actually need to connect to nextPt. We just don't add currentPt.
-                    // Actually, the prompt says: "skip adding vertex (i) to eliminate micro-segments."
-                    // Let's refine this: If we don't add currentPt, we essentially skip it. But its bulge is transferred? 
-                    // Since bulge == 0, there is no bulge to transfer.
-                    // So we just skip adding it.
+                    // Micro-segment: skip vertex i so the previous vertex connects straight to nextPt.
+                    // Its bulge is 0, so there is no arc to carry over.
                 }
                 else
                 {

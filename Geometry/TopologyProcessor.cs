@@ -37,12 +37,10 @@ namespace PUP_AUTO.Geometry
         /// <param name="parcelPolylines">
         /// Pairs of (ParcelId, closed Polyline) for every candidate parcel.
         /// </param>
-        /// <param name="transaction">An active AutoCAD transaction.</param>
         /// <returns>ParcelId → intersected area (sq.m.).</returns>
         public Dictionary<string, double> CalculateServitudeIntersections(
             Polyline servitudePline,
-            List<KeyValuePair<string, Polyline>> parcelPolylines,
-            Transaction transaction)
+            List<KeyValuePair<string, Polyline>> parcelPolylines)
         {
             var result = new Dictionary<string, double>();
 
@@ -129,12 +127,10 @@ namespace PUP_AUTO.Geometry
         /// <param name="parcelPolylines">
         /// Pairs of (ParcelId, closed Polyline) for every candidate parcel.
         /// </param>
-        /// <param name="transaction">An active AutoCAD transaction.</param>
         /// <returns>A list of Pole domain objects with AssignedParcelId populated.</returns>
         public List<Pole> AssignPolesToParcels(
             List<KeyValuePair<string, Polyline>> polePolylines,
-            List<KeyValuePair<string, Polyline>> parcelPolylines,
-            Transaction transaction)
+            List<KeyValuePair<string, Polyline>> parcelPolylines)
         {
             var poles = new List<Pole>();
 
@@ -236,8 +232,7 @@ namespace PUP_AUTO.Geometry
         public List<ParcelData> RunMvpMathTest(
             Polyline servitudePline,
             List<KeyValuePair<string, Polyline>> polePolylines,
-            List<KeyValuePair<string, Polyline>> parcelPolylines,
-            Transaction transaction)
+            List<KeyValuePair<string, Polyline>> parcelPolylines)
         {
             var results = new List<ParcelData>();
 
@@ -278,9 +273,7 @@ namespace PUP_AUTO.Geometry
 
                 // 3. Net Servitude Area
                 pData.ServitudeNetAreaSqm = GetPreciseSubtractedArea(parcelPline, servitudePline, intersectingPolesList);
-                
-                pData.MathDifference = pData.ServitudeGrossAreaSqm - (pData.ServitudeNetAreaSqm + pData.PoleAreaSqm);
-                
+
                 results.Add(pData);
             }
 

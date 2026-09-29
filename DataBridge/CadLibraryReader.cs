@@ -212,8 +212,7 @@ namespace PUP_AUTO.DataBridge
 
         /// <summary>
         /// Loads GeoJSON polygon geometries and computes their centroids.
-        /// Used for spatial matching of AutoCAD polylines to parcel IDs
-        /// when Map3D Object Data is not available.
+        /// Used for spatial matching of AutoCAD polylines to parcel IDs.
         /// </summary>
         public List<GeoParcel> LoadGeoJsonGeometries(string fileName)
         {

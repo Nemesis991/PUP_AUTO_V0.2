@@ -118,12 +118,10 @@ graph TD
 
 - **`Semantics.DomainModels`**: Съдържа POCO класове, представляващи бизнес домейна:
   - **`ParcelData`**: Кадастрални данни за имот — `ParcelId`, `Owner`, `Ekatte`, `DocumentArea`, `SubDivision`, `TerritoryType`, `Usage`, `Locality`, `Category`, `OwnershipType`, `OwnerId`, `OwnerName`.
-  - **`Servitude`**: Данни за сервитут — `ServitudeId`, `AssignedParcelId`, `Area`.
-  - **`Pole`**: Данни за стълб — `PoleId`, `AssignedParcelId`, `PoleNumber`, `PoleAreaSqM`, `Location` (Point3d). Включва изчислимо свойство `PoleAreaDecares`.
+  - **`Pole`**: Данни за стълб — `PoleId`, `PoleNumber`, `PoleAreaSqM`, `Location` (Point3d).
   - **`ReportRow`**: Обобщен ред за отчет, съдържащ всички кадастрални полета плюс:
     - `AssignedPoles` (`List<Pole>`) — списък на причислените стълбове.
-    - `DocumentAreaDecares`, `ServitudeAreaDecares`, `PoleAreaDecares` — конвертиране в декари: `Math.Round(SqM / 1000.0, 3)`.
-    - `RemainderAreaDecares` — остатък: `DocumentAreaDecares - ServitudeAreaDecares`, закръглен до 3 знака.
+    - `RemainderAreaSqM` — остатък: `max(0, DocumentAreaSqM - ServitudeAreaSqM)` в m². Преобразуването в декари става само при запис в отчета чрез `AreaUnits.SqmToDka()` (закръгляне до 3 знака).
     - `PoleNumbers` — форматиран низ, напр. `"Стълб №24,Стълб №23"`.
   - **`VertexCoordinate`**: Координати на връх от полилиния — `PointIndex`, `PointLabel`, `X`, `Y`. Използва се за координатните регистри.
 

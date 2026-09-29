@@ -104,13 +104,6 @@ namespace PUP_AUTO.Geometry
             }
         }
 
-        private bool IsSameSegment(LineSegment2d a, LineSegment2d b)
-        {
-            double tol = 0.01;
-            return (a.StartPoint.GetDistanceTo(b.StartPoint) < tol && a.EndPoint.GetDistanceTo(b.EndPoint) < tol) ||
-                   (a.StartPoint.GetDistanceTo(b.EndPoint) < tol && a.EndPoint.GetDistanceTo(b.StartPoint) < tol);
-        }
-
         private List<Point2d> RemoveAdjacentDuplicates(List<Point2d> pts)
         {
             var res = new List<Point2d>();

@@ -1,7 +1,6 @@
 using System.Globalization;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using PUP_AUTO.Core;
 
 namespace PUP_AUTO.Geometry
 {
@@ -11,7 +10,6 @@ namespace PUP_AUTO.Geometry
     public class PoleFootprintResult
     {
         public Polyline? FootprintPolyline { get; set; }
-        public double AreaSqM { get; set; }
         public string PoleNumber { get; set; } = string.Empty;
         public Point3d LabelPosition { get; set; }
         public double LabelRotation { get; set; }
@@ -25,7 +23,7 @@ namespace PUP_AUTO.Geometry
     /// </summary>
     public static class PoleFootprintExtractor
     {
-        public static PoleFootprintResult ExtractFootprint(BlockReference blockRef, Transaction tr, Logger logger)
+        public static PoleFootprintResult ExtractFootprint(BlockReference blockRef, Transaction tr)
         {
             var result = new PoleFootprintResult();
             
@@ -143,7 +141,6 @@ namespace PUP_AUTO.Geometry
                 pline.Closed = true;
 
                 result.FootprintPolyline = pline;
-                result.AreaSqM = pline.Area;
 
                 return result;
             }

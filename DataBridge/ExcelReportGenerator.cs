@@ -153,25 +153,25 @@ namespace PUP_AUTO.DataBridge
                     {
                         var d = data[index];
 
-                        SetCell(row, P_ColParcelId,      d.ParcelId,             GetCellStyle(workbook, styleRow, P_ColParcelId));
-                        SetCell(row, P_ColSubDivision,   d.SubDivision,          GetCellStyle(workbook, styleRow, P_ColSubDivision));
-                        SetCell(row, P_ColTerritoryType, d.TerritoryType,        GetCellStyle(workbook, styleRow, P_ColTerritoryType));
-                        SetCell(row, P_ColUsage,         d.Usage,                GetCellStyle(workbook, styleRow, P_ColUsage));
-                        SetCell(row, P_ColLocality,      d.Locality,             GetCellStyle(workbook, styleRow, P_ColLocality));
-                        SetCell(row, P_ColCategory,      d.Category,             GetCellStyle(workbook, styleRow, P_ColCategory));
-                        SetCell(row, P_ColDocArea,       AreaUnits.SqmToDka(d.DocumentAreaSqM),  GetAreaCellStyle(workbook, GetCellStyle(workbook, styleRow, P_ColDocArea)));
-                        SetCell(row, P_ColServArea,      AreaUnits.SqmToDka(d.ServitudeAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(workbook, styleRow, P_ColServArea)));
-                        SetCell(row, P_ColRemainder,     AreaUnits.SqmToDka(d.RemainderAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(workbook, styleRow, P_ColRemainder)));
-                        SetCell(row, P_ColPoleNumbers,   d.PoleNumbers,          GetCellStyle(workbook, styleRow, P_ColPoleNumbers));
-                        SetCell(row, P_ColOwnershipType, d.OwnershipType,        GetCellStyle(workbook, styleRow, P_ColOwnershipType));
-                        SetCell(row, P_ColOwnerId,       d.OwnerId,              GetCellStyle(workbook, styleRow, P_ColOwnerId));
-                        SetCell(row, P_ColOwnerName,     d.OwnerName,            GetCellStyle(workbook, styleRow, P_ColOwnerName));
+                        SetCell(row, P_ColParcelId,      d.ParcelId,             GetCellStyle(styleRow, P_ColParcelId));
+                        SetCell(row, P_ColSubDivision,   d.SubDivision,          GetCellStyle(styleRow, P_ColSubDivision));
+                        SetCell(row, P_ColTerritoryType, d.TerritoryType,        GetCellStyle(styleRow, P_ColTerritoryType));
+                        SetCell(row, P_ColUsage,         d.Usage,                GetCellStyle(styleRow, P_ColUsage));
+                        SetCell(row, P_ColLocality,      d.Locality,             GetCellStyle(styleRow, P_ColLocality));
+                        SetCell(row, P_ColCategory,      d.Category,             GetCellStyle(styleRow, P_ColCategory));
+                        SetCell(row, P_ColDocArea,       AreaUnits.SqmToDka(d.DocumentAreaSqM),  GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColDocArea)));
+                        SetCell(row, P_ColServArea,      AreaUnits.SqmToDka(d.ServitudeAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColServArea)));
+                        SetCell(row, P_ColRemainder,     AreaUnits.SqmToDka(d.RemainderAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColRemainder)));
+                        SetCell(row, P_ColPoleNumbers,   d.PoleNumbers,          GetCellStyle(styleRow, P_ColPoleNumbers));
+                        SetCell(row, P_ColOwnershipType, d.OwnershipType,        GetCellStyle(styleRow, P_ColOwnershipType));
+                        SetCell(row, P_ColOwnerId,       d.OwnerId,              GetCellStyle(styleRow, P_ColOwnerId));
+                        SetCell(row, P_ColOwnerName,     d.OwnerName,            GetCellStyle(styleRow, P_ColOwnerName));
 
                         // The template leaves the pole-step area blank for parcels without a pole.
                         if (d.PoleCount > 0)
-                            SetCell(row, P_ColPoleArea, AreaUnits.SqmToDka(d.PoleAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(workbook, styleRow, P_ColPoleArea)));
+                            SetCell(row, P_ColPoleArea, AreaUnits.SqmToDka(d.PoleAreaSqM), GetAreaCellStyle(workbook, GetCellStyle(styleRow, P_ColPoleArea)));
                         else
-                            SetCell(row, P_ColPoleArea, string.Empty, GetCellStyle(workbook, styleRow, P_ColPoleArea));
+                            SetCell(row, P_ColPoleArea, string.Empty, GetCellStyle(styleRow, P_ColPoleArea));
                     });
 
                 _logger.LogSuccess(
@@ -231,11 +231,11 @@ namespace PUP_AUTO.DataBridge
                                 ownerName = pd.OwnerName;
                             }
 
-                            SetCell(row, T_ColRowNum,    rowNum,               GetCellStyle(workbook, styleRow, T_ColRowNum));
-                            SetCell(row, T_ColPoleNum,   pole.PoleNumber,      GetCellStyle(workbook, styleRow, T_ColPoleNum));
-                            SetCell(row, T_ColPoleArea,  AreaUnits.SqmToDka(flat.area), GetAreaCellStyle(workbook, GetCellStyle(workbook, styleRow, T_ColPoleArea)));
-                            SetCell(row, T_ColParcelId,  flat.parcelId,        GetCellStyle(workbook, styleRow, T_ColParcelId));
-                            SetCell(row, T_ColOwnerName, ownerName,            GetCellStyle(workbook, styleRow, T_ColOwnerName));
+                            SetCell(row, T_ColRowNum,    rowNum,               GetCellStyle(styleRow, T_ColRowNum));
+                            SetCell(row, T_ColPoleNum,   pole.PoleNumber,      GetCellStyle(styleRow, T_ColPoleNum));
+                            SetCell(row, T_ColPoleArea,  AreaUnits.SqmToDka(flat.area), GetAreaCellStyle(workbook, GetCellStyle(styleRow, T_ColPoleArea)));
+                            SetCell(row, T_ColParcelId,  flat.parcelId,        GetCellStyle(styleRow, T_ColParcelId));
+                            SetCell(row, T_ColOwnerName, ownerName,            GetCellStyle(styleRow, T_ColOwnerName));
                         });
 
                     _logger.LogSuccess(
@@ -423,7 +423,7 @@ namespace PUP_AUTO.DataBridge
                 {
                     IRow dataRow = sheet.GetRow(currentRow) ?? sheet.CreateRow(currentRow);
                     ICellStyle? numStyle = templateRow != null
-                        ? GetCellStyle(workbook, templateRow, B_ColParcelCount)
+                        ? GetCellStyle(templateRow, B_ColParcelCount)
                         : null;
                     ICellStyle areaStyle = GetAreaCellStyle(workbook, numStyle);
 
@@ -494,7 +494,7 @@ namespace PUP_AUTO.DataBridge
         }
 
         /// <summary>Returns the cell style for a given column in the template row.</summary>
-        private ICellStyle? GetCellStyle(IWorkbook workbook, IRow styleSourceRow, int colIndex)
+        private ICellStyle? GetCellStyle(IRow styleSourceRow, int colIndex)
         {
             ICell? templateCell = styleSourceRow.GetCell(colIndex);
             return templateCell?.CellStyle;

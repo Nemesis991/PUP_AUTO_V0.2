@@ -16,7 +16,7 @@
    - Гарантира термична памет и безупречно управление на CAD ресурсите.
 
 2. **`Semantics` (Домейнов слой):**
-   - Съдържа чисто домейнови бизнес модели (`ParcelData`, `Servitude`, `Pole`, `ReportRow`, `VertexCoordinate`).
+   - Съдържа чисто домейнови бизнес модели (`ParcelData`, `Pole`, `ReportRow`, `VertexCoordinate`).
    - Независим от AutoCAD API интерфейсите, капсулира математиката за преобразуване на мерни единици (от квадратни метри $m^2$ в декари $\text{дка}$).
 
 3. **`DataBridge` (Интеграционен слой за данни):**
@@ -198,31 +198,22 @@ WPF модален прозорец, изграден изцяло в C# код 
 - **Правило (валидно за целия проект):** всяко изчисление — сборуване, изваждане, сумиране в LINQ групиране, проверка на толеранс — работи с необработени стойности в $m^2$ (`double`). Преобразуването в декари и закръгляването до 3 знака става **само веднъж**, в момента на записване в Excel/Word клетка.
 
 #### 📄 `Semantics/DomainModels.cs`
-Дефинира структурата на данните. Всички `*SqM`/`*Sqm` полета са необработени (unrounded) стойности в $m^2$ и участват свободно в по-нататъшна аритметика. Всички `*Decares`/`*Dka` свойства са **само за показване** — тънки обвивки върху `AreaUnits.SqmToDka(...)`, които никога не се сумират или изваждат едно от друго.
+Дефинира структурата на данните. Всички `*SqM`/`*Sqm` полета са необработени (unrounded) стойности в $m^2$ и участват свободно в по-нататъшна аритметика. Моделите не съдържат свойства в декари — преобразуването става чрез `AreaUnits.SqmToDka(...)` / `FormatDka(...)` само при запис в изходния файл.
 
 1. **`class ParcelData`**
    - Полета за имот: `ParcelId`, `Owner`, `Ekatte`, `DocumentArea` ($m^2$), `ObjectId`.
    - Регистрови полета: `SubDivision`, `TerritoryType`, `Usage`, `Locality`, `Category`, `OwnershipType`, `OwnerId`, `OwnerName`.
-   - MVP Math Test полета: `TotalAreaSqm`, `ServitudeGrossAreaSqm`, `ServitudeNetAreaSqm`, `PoleAreaSqm`, `MathDifference` ($m^2$).
+   - MVP Math Test полета: `TotalAreaSqm`, `ServitudeGrossAreaSqm`, `ServitudeNetAreaSqm`, `PoleAreaSqm` ($m^2$).
    - **`RemainderAreaSqm`** (изчислимо, $m^2$, необработено): $\max(0,\ \text{TotalAreaSqm} - \text{ServitudeNetAreaSqm} - \text{PoleAreaSqm})$.
-   - **`RemainderAreaDka`** (само за показване): `AreaUnits.SqmToDka(RemainderAreaSqm)`.
-2. **`class Servitude`**
-   - Полета: `ServitudeId`, `AssignedParcelId`, `Area` ($m^2$), `ObjectId`.
-3. **`class Pole`**
-   - Полета: `PoleId`, `AssignedParcelId`, `PoleNumber`, `PoleAreaSqM` ($m^2$), `Location` (`Point3d`), `ObjectId`.
-   - **`PoleAreaDecares`** (само за показване): `AreaUnits.SqmToDka(PoleAreaSqM)`.
-4. **`class ReportRow`**
+2. **`class Pole`**
+   - Полета: `PoleId`, `PoleNumber`, `PoleAreaSqM` ($m^2$), `Location` (`Point3d`), `ObjectId`.
+3. **`class ReportRow`**
    - Съдържа пълния набор от данни за ред в отчетите: `DocumentAreaSqM`, `ServitudeAreaSqM`, `PoleAreaSqM` ($m^2$, необработени).
    - **`RemainderAreaSqM`** (изчислимо, $m^2$, необработено): $\max(0,\ \text{DocumentAreaSqM} - \text{ServitudeAreaSqM})$. `ServitudeAreaSqM` е брутното сечение имот/сервитут (вече съдържа площта на стълбовете), затова тя не се изважда повторно тук.
-   - **Преобразувания в декари (само за показване):**
-     $$\text{DocumentAreaDecares} \implies \text{AreaUnits.SqmToDka}(\text{DocumentAreaSqM})$$
-     $$\text{ServitudeAreaDecares} \implies \text{AreaUnits.SqmToDka}(\text{ServitudeAreaSqM})$$
-     $$\text{PoleAreaDecares} \implies \text{AreaUnits.SqmToDka}(\text{PoleAreaSqM})$$
-     $$\text{RemainderAreaDecares} \implies \text{AreaUnits.SqmToDka}(\text{RemainderAreaSqM})$$
    - **Допълнителни изчислими свойства:**
      - `AssignedPoles` (`List<Pole>`) — списък на причислените стълбове към имота.
      - `PoleNumbers` — форматиран низ от номера: `"Стълб №24,Стълб №23"` (сортиран по `PoleNumber`).
-5. **`class VertexCoordinate`**
+4. **`class VertexCoordinate`**
    - Полета: `PointIndex`, `PointLabel` (string), `X` (double), `Y` (double).
    - Използва се за координатните регистри (Word шаблони 07 и 08).
 
@@ -274,7 +265,7 @@ WPF модален прозорец, изграден изцяло в C# код 
 1. **`public WordReportGenerator(Logger logger, string projectDirectory)`**
    - **Логика:** Инжектира `Logger` и задава пътя до `_Templates` папката.
 2. **`public void GenerateAllReports(...)`**
-   - **Сигнатура:** `(List<ReportRow> reportRows, List<Pole> assignedPoles, Dictionary<string, ParcelData> parcelDb, string outputDir, string settlementName, string ekatte, string municipality, string oblast, Dictionary<string, List<VertexCoordinate>>? poleVertices, List<VertexCoordinate>? servitudeVertices) -> void`
+   - **Сигнатура:** `(List<ReportRow> reportRows, List<Pole> assignedPoles, Dictionary<string, ParcelData> parcelDb, string outputDir, Dictionary<string, List<VertexCoordinate>>? poleVertices, List<VertexCoordinate>? servitudeVertices) -> void`
    - **Логика:** Диспечира генерацията на всички 7 регистъра последователно.
 3. **`private void GenerateParcelRegister(List<ReportRow> data, string outputDir)`**
    - **Шаблон:** `D306-31Y0-02` — Регистър на засегнатите имоти (14 колони).
@@ -285,7 +276,7 @@ WPF модален прозорец, изграден изцяло в C# код 
 5. **`private void GenerateBalancesTerritory(List<ReportRow> data, string outputDir)`**
    - **Шаблон:** `D306-31Y0-04` — Баланси територията (4 групирани подтаблици, 9 колони).
    - **Логика:** Работи с 4 таблици в шаблона. Групира данните по Category, OwnershipType, TerritoryType, Usage. Всяка група включва тотали и процентно разпределение.
-6. **`private void GenerateBalancesMunicipality(List<ReportRow> data, Dictionary<string, ParcelData> parcelDb, string outputDir, ...)`**
+6. **`private void GenerateBalancesMunicipality(List<ReportRow> data, Dictionary<string, ParcelData> parcelDb, string outputDir)`**
    - **Шаблон:** `D306-31Y0-05` — Общ Баланс за общината (9 колони).
    - **Логика:** Групира по землище (Ekatte от `ParcelData`). Единична агрегирана таблица с тотали за всяко населено място.
 7. **`private void GenerateRecapitulation(List<ReportRow> data, string outputDir)`**
@@ -307,7 +298,7 @@ WPF модален прозорец, изграден изцяло в C# код 
 
 1. **`public static void ExportMathTest(List<ParcelData> parcels, string outputDir)`**
    - **Сигнатура:** `(List<ParcelData> parcels, string outputDir) -> void`
-   - **Логика:** Създава `MVP_Math_Test_Parcels.xlsx` с 8 колони (Идентификатор, TotalArea, ServitudeGrossAreaSqm, ServitudeNetAreaSqm, PoleAreaSqm, Остатък, MathDifference, PoleNumbers). За имот с 0 или 1 стълб пише единичен ред; за имот с повече от 1 стълб пише по един ред на стълб и merge-ва (`MergeCells`) общите за имота колони (A, B, C, D, F, G), за да не се повтарят стойностите. `MathDifference` се изчислява като `ServitudeGrossAreaSqm − (ServitudeNetAreaSqm + PoleAreaSqm)` и се маркира текстово "ОК" при `|diff| ≤ 0.001`, иначе "ГРЕШКА".
+   - **Логика:** Създава `MVP_Math_Test_Parcels.xlsx` с 8 колони ("1. Номер на имот", "2. Площ на имота в дка", "3. Брутна площ с ограничение в дка", "4. Нетна площ с ограничение в дка", "5. Площ на стълба в дка", "6. Остатък в дка", "7. Математическа разлика в дка", "8. Номер на стълба"). За имот с 0 или 1 стълб пише единичен ред; за имот с повече от 1 стълб пише по един ред на стълб и merge-ва (`MergeCells`) общите за имота колони (A, B, C, D, F, G), за да не се повтарят стойностите. Математическата разлика се изчислява тук като `ServitudeGrossAreaSqm − (ServitudeNetAreaSqm + PoleAreaSqm)` и се маркира текстово "ОК" при `|diff| ≤ 0.001`, иначе "ГРЕШКА".
    - **Забележка:** Тук се използва отделен, паралелен формат (`.xlsx` вместо основния `.xls`) и различна имплементация от `ExcelReportGenerator` — този файл е чисто диагностичен инструмент, не част от стандартния отчетен pipeline.
 
 ---
@@ -319,13 +310,13 @@ WPF модален прозорец, изграден изцяло в C# код 
 
 1. **`public TopologyProcessor(Logger logger)`**
    - **Сигнатура:** `(Logger logger) -> void`
-2. **`public Dictionary<string, double> CalculateServitudeIntersections(Polyline servitudePline, List<KeyValuePair<string, Polyline>> parcelPolylines, Transaction transaction)`**
+2. **`public Dictionary<string, double> CalculateServitudeIntersections(Polyline servitudePline, List<KeyValuePair<string, Polyline>> parcelPolylines)`**
    - **Логика:** Санитизира сервитута и всеки имот чрез `GeometrySanitizer.Sanitize()`, преобразува ги в `Region`. За всеки имот клонира сервитутния регион и изпълнява `intersectRegion.BooleanOperation(BooleanOperationType.BoolIntersect, parcelRegion)`. Записва площта, ако е по-голяма от `SliverTolerance` ($0.001 m^2$).
-3. **`public List<Pole> AssignPolesToParcels(List<KeyValuePair<string, Polyline>> polePolylines, List<KeyValuePair<string, Polyline>> parcelPolylines, Transaction transaction)`**
+3. **`public List<Pole> AssignPolesToParcels(List<KeyValuePair<string, Polyline>> polePolylines, List<KeyValuePair<string, Polyline>> parcelPolylines)`**
    - **Логика:** ⚠️ Въпреки името "Dominant Area", методът **не** избира само доминиращия имот — за всеки стълб изчислява сечението с **всеки** имот от списъка и записва в `pole.OverlappingParcels` **всички** резултати над `SliverTolerance` (не само максимума). Ако стълб не пресича нито един имот, логва Warning с Handle и X,Y координатите на центроида ("floating geometry"). Виж коригирания раздел §4.1 по-долу за пълния анализ на последствията.
-4. **`public List<ParcelData> RunMvpMathTest(Polyline servitudePline, List<KeyValuePair<string, Polyline>> polePolylines, List<KeyValuePair<string, Polyline>> parcelPolylines, Transaction transaction)`**
+4. **`public List<ParcelData> RunMvpMathTest(Polyline servitudePline, List<KeyValuePair<string, Polyline>> polePolylines, List<KeyValuePair<string, Polyline>> parcelPolylines)`**
    - **Сигнатура:** `(...) -> List<ParcelData>`
-   - **Логика:** Диагностичен път, независим от `CalculateServitudeIntersections`/`AssignPolesToParcels`. За всеки имот изчислява: (1) `ServitudeGrossAreaSqm` — директно сечение имот∩сервитут чрез `GetPreciseIntersectionArea()`; (2) `PoleAreaSqm` и `IndividualPoleAreas` — сумата от сеченията имот∩всеки стълб; (3) `ServitudeNetAreaSqm` чрез `GetPreciseSubtractedArea()` — сечение имот∩сервитут, от което последователно се изважда ("`BoolSubtract`") площта на всеки застъпващ стълб; (4) `MathDifference = ServitudeGrossAreaSqm − (ServitudeNetAreaSqm + PoleAreaSqm)`, очаквано ≈ 0, като проверка за баланс. Резултатът се визуализира чрез `BasicExcelExporter.ExportMathTest()`.
+   - **Логика:** Диагностичен път, независим от `CalculateServitudeIntersections`/`AssignPolesToParcels`. За всеки имот изчислява: (1) `ServitudeGrossAreaSqm` — директно сечение имот∩сервитут чрез `GetPreciseIntersectionArea()`; (2) `PoleAreaSqm` и `IndividualPoleAreas` — сумата от сеченията имот∩всеки стълб; (3) `ServitudeNetAreaSqm` чрез `GetPreciseSubtractedArea()` — сечение имот∩сервитут, от което последователно се изважда ("`BoolSubtract`") площта на всеки застъпващ стълб. Балансът `ServitudeGrossAreaSqm − (ServitudeNetAreaSqm + PoleAreaSqm)` (очаквано ≈ 0) се изчислява и визуализира от `BasicExcelExporter.ExportMathTest()`.
 5. **`private double GetPreciseIntersectionArea(...)` / `private double GetPreciseSubtractedArea(...)`**
    - **Логика:** Помощни методи за `RunMvpMathTest`. Клонират геометриите и ги транслират ("origin shift" чрез `Matrix3d.Displacement`) така, че минималната точка на имота да падне в началото на координатната система, преди да построят `Region`-и и да изпълнят булевите операции — цели се по-висока числена прецизност при координати с голяма абсолютна стойност (напр. в БГС2005).
 6. **`public List<VertexCoordinate> ExtractPolylineVertices(Polyline pline, string labelPrefix = "")`**
@@ -352,12 +343,12 @@ WPF модален прозорец, изграден изцяло в C# код 
 #### 📄 `Geometry/PoleFootprintExtractor.cs`
 Статичен клас за извличане на 4-точковия ("P-tag") контур на стъпката на стълб от динамичен блок.
 
-1. **`public static PoleFootprintResult ExtractFootprint(BlockReference blockRef, Transaction tr, Logger logger)`**
-   - **Сигнатура:** `(BlockReference blockRef, Transaction tr, Logger logger) -> PoleFootprintResult`
+1. **`public static PoleFootprintResult ExtractFootprint(BlockReference blockRef, Transaction tr)`**
+   - **Сигнатура:** `(BlockReference blockRef, Transaction tr) -> PoleFootprintResult`
    - **Логика:** Чете атрибутите на блока. Номерът на стълба се търси в тагове `НОМЕР_НА_СТЪЛБА`/`СТЪЛБ_№`/`NOMER`. Координатните точки се търсят в тагове, започващи с `P` (стриктно изключвайки тагове, започващи с `TP`).
    - **Йерархия на съвпадение:** (1) Ако блокът е динамичен и има активно състояние на видимост (`Visibility`/`Видимост`), първо се търсят тагове от вида `P1-<VISIBILITY>` … `P4-<VISIBILITY>`; (2) при непълен резултат — директно съвпадение по `P1`…`P4` без суфикс за видимост.
    - Всяка точка се парсва от низ `"X, Y"` чрез `double.TryParse(..., NumberStyles.Any, CultureInfo.InvariantCulture)`. Изисква се намирането на точно 4 валидни точки, иначе връща `ErrorMessage` и празен `FootprintPolyline`.
-   - 4-те точки се подреждат обратно на часовниковата стрелка около центроида си (`Math.Atan2`) и се конструира затворена `Polyline`. `AreaSqM` се задава от `pline.Area`.
+   - 4-те точки се подреждат обратно на часовниковата стрелка около центроида си (`Math.Atan2`) и се конструира затворена `Polyline`.
    - **`private static string GetEffectiveName(...)`** / **`private static string GetVisibilityState(...)`** — помощни методи за име на динамичен блок и текущо състояние на видимост.
 
 ---
@@ -468,11 +459,11 @@ WPF модален прозорец, изграден изцяло в C# код 
 |  - ServitudeAreaSqM  =   450.25 m²                                         |
 |  - PoleAreaSqM       =    12.50 m²                                         |
 |  - RemainderAreaSqM  = max(0, 12500.0 - 450.25) = 12049.75 m² (необработено)|
-|  Показвани свойства (AreaUnits.SqmToDka, само в изходния файл):            |
-|  - DocumentAreaDecares  = 12.500 дка                                       |
-|  - ServitudeAreaDecares =  0.450 дка                                       |
-|  - PoleAreaDecares      =  0.013 дка   (12.50 / 1000 = 0.0125 → AwayFromZero)|
-|  - RemainderAreaDecares = AreaUnits.SqmToDka(12049.75) = 12.050 дка         |
+|  Стойности в изходния файл (AreaUnits.SqmToDka при запис):                 |
+|  - SqmToDka(Document)   = 12.500 дка                                       |
+|  - SqmToDka(Servitude)  =  0.450 дка                                       |
+|  - SqmToDka(Pole)       =  0.013 дка   (12.50 / 1000 = 0.0125 → AwayFromZero)|
+|  - SqmToDka(Remainder)  = SqmToDka(12049.75) = 12.050 дка                  |
 |  - AssignedPoles: [Pole{...}]     ──► PoleNumbers = "Стълб №24"            |
 +----------------------------------------------------------------------------+
                                        │
