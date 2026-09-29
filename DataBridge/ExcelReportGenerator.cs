@@ -15,6 +15,7 @@ namespace PUP_AUTO.DataBridge
     ///   1 — "Стълбове"         (poles)
     ///   2 — "Баланси"          (balance summaries)
     /// </summary>
+    /// <remarks>PLACEHOLDER — not production.</remarks>
     public class ExcelReportGenerator
     {
         // ----------------------------------------------------------------

@@ -4,6 +4,7 @@ using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.DataBridge
 {
+    /// <summary>PLACEHOLDER — not production.</summary>
     public class ParcelRegisterReader
     {
         private readonly Logger _logger;

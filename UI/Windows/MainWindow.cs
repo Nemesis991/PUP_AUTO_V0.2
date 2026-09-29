@@ -547,6 +547,7 @@ namespace PUP_AUTO.UI.Windows
         //  GENERATE REPORTS
         // ================================================================
 
+        /// <summary>PLACEHOLDER — not production (Generate-All; only the MVP math-test branch is live).</summary>
         private void BtnGenerate_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -673,6 +674,7 @@ namespace PUP_AUTO.UI.Windows
         // ================================================================
         //  MARKER GENERATION EVENT
         // ================================================================
+        /// <summary>PLACEHOLDER — not production.</summary>
         private void BtnGenMarkers_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -709,6 +711,7 @@ namespace PUP_AUTO.UI.Windows
         // ================================================================
         //  SEGMENTATION EVENT
         // ================================================================
+        /// <summary>PLACEHOLDER — not production.</summary>
         private void BtnSegment_Click(object sender, RoutedEventArgs e)
         {
             try

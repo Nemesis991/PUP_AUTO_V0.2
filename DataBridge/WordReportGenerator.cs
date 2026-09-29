@@ -14,6 +14,7 @@ namespace PUP_AUTO.DataBridge
     /// Each template must contain a table with at least one data row
     /// (the row after the header row) that will be cloned for each record.
     /// </summary>
+    /// <remarks>PLACEHOLDER — not production.</remarks>
     public class WordReportGenerator
     {
         private readonly Logger _logger;

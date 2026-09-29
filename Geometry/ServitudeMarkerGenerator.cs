@@ -4,6 +4,7 @@ using PUP_AUTO.Core;
 
 namespace PUP_AUTO.Geometry
 {
+    /// <summary>PLACEHOLDER — not production.</summary>
     public class ServitudeMarkerGenerator
     {
         private readonly Logger _logger;
