@@ -28,6 +28,7 @@ namespace PUP_AUTO.UI.Windows
         private CheckBox _chkWord = null!;
         private CheckBox _chkCoordinates = null!;
         private CheckBox _chkMvpMathTest = null!;
+        private CheckBox _chkPoleSteps = null!;
         private TextBox _txtStartNumLeft = null!;
         private TextBox _txtStartNumRight = null!;
         private TextBox _txtSegmentDistance = null!;
@@ -172,6 +173,7 @@ namespace PUP_AUTO.UI.Windows
             _chkWord = new CheckBox { Content = "Генерирай Word регистри (.docm)", IsChecked = true, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 4) };
             _chkCoordinates = new CheckBox { Content = "Генерирай координатни регистри", IsChecked = true, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
             _chkMvpMathTest = new CheckBox { Content = "🧪 MVP Математически тест (Excel)", IsChecked = false, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
+            _chkPoleSteps = new CheckBox { Content = "📐 Таблица стъпки на стълбове (Excel)", IsChecked = false, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
             
             var numsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
             numsPanel.Children.Add(new TextBlock { Text = "Старт Ляво:", Foreground = SubtextBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) });
@@ -216,6 +218,7 @@ namespace PUP_AUTO.UI.Windows
             optStack.Children.Add(_chkWord);
             optStack.Children.Add(_chkCoordinates);
             optStack.Children.Add(_chkMvpMathTest);
+            optStack.Children.Add(_chkPoleSteps);
             optStack.Children.Add(numsPanel);
             ((GroupBox)optGroup).Content = optStack;
             mainGrid.Children.Add(optGroup);
@@ -731,6 +734,22 @@ namespace PUP_AUTO.UI.Windows
             try
             {
                 if (!TryUsePicks(out Document doc)) return;
+
+                // Pole-steps table: needs only poles and parcels (no servitude). Independent of
+                // the MVP test and of the placeholder Generate-All.
+                if (_chkPoleSteps.IsChecked == true)
+                {
+                    if (_polePicks.Count == 0 || _parcelPicks.Count == 0)
+                    {
+                        if (_polePicks.Count == 0) AppendLog("ГРЕШКА: Не са избрани стълбове!");
+                        if (_parcelPicks.Count == 0) AppendLog("ГРЕШКА: Не са избрани имоти!");
+                        return;
+                    }
+
+                    RunPoleStepsTable(doc);
+                    if (_chkMvpMathTest.IsChecked != true) return;
+                }
+
                 if (_servitudeId.IsNull)  { AppendLog("ГРЕШКА: Не е избран сервитут!"); return; }
                 if (_polePicks.Count == 0) { AppendLog("ГРЕШКА: Не са избрани стълбове!"); return; }
                 if (_parcelPicks.Count == 0) { AppendLog("ГРЕШКА: Не са избрани имоти!"); return; }
@@ -771,6 +790,53 @@ namespace PUP_AUTO.UI.Windows
                 {
                     doc.Editor.WriteMessage($"\nFatal error in Generate: {ex.Message}\n");
                 }
+            }
+        }
+
+        /// <summary>
+        /// Builds Стъпки_на_стълбове.xlsx from the picked poles and parcels: footprint ∩ parcel
+        /// areas, one row per (parcel, pole) pair. Short transaction under a document lock; the
+        /// in-memory footprints are disposed before the file is written.
+        /// </summary>
+        private void RunPoleStepsTable(Document doc)
+        {
+            try
+            {
+                AppendLog("── СТАРТИРАНЕ НА ТАБЛИЦА СТЪПКИ НА СТЪЛБОВЕ ──");
+                EnsureServices();
+                var topo = new TopologyProcessor(_logger!);
+
+                PoleStepsGeometry? geometry = null;
+                using (doc.LockDocument())
+                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+                {
+                    var parcels = OpenParcels(tr);
+                    var entries = ExtractPoles(tr);
+                    try
+                    {
+                        geometry = topo.ComputePoleStepPieces(PoleFootprints(entries), parcels);
+                        tr.Commit();
+                    }
+                    finally
+                    {
+                        DisposeFootprints(entries);
+                    }
+                }
+
+                foreach (var step in PoleStepsTableBuilder.FindUncoveredSteps(
+                    geometry!.Footprints, geometry.Pieces, GeometryTolerances.SliverAreaSqm))
+                {
+                    AppendLog(PoleStepsTableBuilder.FormatUncoveredWarning(step));
+                }
+
+                var table = PoleStepsTableBuilder.Build(geometry.Pieces);
+                PoleStepsExporter.Export(table, _projectDir);
+                AppendLog($"  Записан {FileNames.PoleStepsFile} в {_projectDir}");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ГРЕШКА при таблицата със стъпки: {ex.Message}");
+                _logger?.LogError($"Pole steps table failed: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
