@@ -1,3 +1,5 @@
+> **Note:** all file:line references in this document refer to commit `f2ad599` (`master` before the refactor). They will not match later commits on `refactor/cleanup`.
+
 # PUP_AUTO — Baseline capture (before refactor)
 
 Branch: `refactor/cleanup` (created from `master` @ `f2ad599`).
