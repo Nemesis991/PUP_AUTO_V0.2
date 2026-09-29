@@ -31,3 +31,4 @@ scratch.ps1
 
 # Before/after refactor outputs (contain owner names and ЕГН/БУЛСТАТ)
 baseline/
+after/
