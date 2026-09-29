@@ -607,8 +607,9 @@ namespace PUP_AUTO.UI.Windows
 
                 // Step 3 — Merge results
                 AppendLog("── Стъпка 3: Обединяване на резултати ──");
-                var reportRows = MainCommands.MergeResultsStatic(
-                    _parcelPolylines, parcelDb, servitudeAreas, assignedPoles, _logger!);
+                var reportRows = ReportBuilder.MergeResultsStatic(
+                    _parcelPolylines.Select(kvp => kvp.Key), parcelDb, servitudeAreas, assignedPoles,
+                    message => _logger!.LogWarning(message));
                 AppendLog($"  Генерирани {reportRows.Count} реда за отчет.");
 
                 // Step 4 — Extract coordinates (if enabled)
@@ -657,7 +658,7 @@ namespace PUP_AUTO.UI.Windows
                 _activeTransaction?.Dispose();
                 _activeTransaction = null;
 
-                int warningCount = reportRows.Count(r => r.Owner == "NO DATA");
+                int warningCount = reportRows.Count(r => r.Owner == ReportBuilder.NoDataOwner);
                 AppendLog(
                     $"\n═══ ГЕНЕРИРАНЕ ЗАВЪРШЕНО ═══\n" +
                     $"  Обработени имоти: {reportRows.Count}\n" +
