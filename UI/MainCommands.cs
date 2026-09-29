@@ -85,18 +85,18 @@ namespace PUP_AUTO.UI
                         {
                             // Ensure layer
                             LayerTable lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
-                            if (!lt.Has("segmented SERV"))
+                            if (!lt.Has(PluginLayers.SegmentedServitude))
                             {
                                 lt.UpgradeOpen();
                                 LayerTableRecord ltr = new LayerTableRecord();
-                                ltr.Name = "segmented SERV";
+                                ltr.Name = PluginLayers.SegmentedServitude;
                                 ltr.Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, 3);
                                 lt.Add(ltr);
                                 tr.AddNewlyCreatedDBObject(ltr, true);
                             }
                             
                             Polyline newPline = (Polyline)cleanServitude.Clone();
-                            newPline.Layer = "segmented SERV";
+                            newPline.Layer = PluginLayers.SegmentedServitude;
                             newPline.ColorIndex = 3; 
                             newPline.ConstantWidth = 0.5;
                             
@@ -158,9 +158,9 @@ namespace PUP_AUTO.UI
                         }
                     };
 
-                    EnsureLayer("POLE_STEPS", 7, LineWeight.LineWeight030);
-                    EnsureLayer("diagonali", 8, LineWeight.LineWeight009);
-                    EnsureLayer("Текст", 7, LineWeight.ByLayer);
+                    EnsureLayer(PluginLayers.PoleSteps, 7, LineWeight.LineWeight030);
+                    EnsureLayer(PluginLayers.Diagonals, 8, LineWeight.LineWeight009);
+                    EnsureLayer(PluginLayers.Text, 7, LineWeight.ByLayer);
 
                     foreach (ObjectId objId in btr)
                     {
@@ -174,7 +174,7 @@ namespace PUP_AUTO.UI
                         {
                             success++;
                             var pline = result.FootprintPolyline;
-                            pline.Layer = "POLE_STEPS";
+                            pline.Layer = PluginLayers.PoleSteps;
                             pline.ColorIndex = 7;
                             pline.LineWeight = LineWeight.LineWeight030;
                             btr.AppendEntity(pline);
@@ -191,14 +191,14 @@ namespace PUP_AUTO.UI
                                 Point3d p3 = pline.GetPoint3dAt(3);
 
                                 Line diag1 = new Line(p0, p2);
-                                diag1.Layer = "diagonali";
+                                diag1.Layer = PluginLayers.Diagonals;
                                 diag1.ColorIndex = 8;
                                 diag1.LineWeight = LineWeight.LineWeight009;
                                 btr.AppendEntity(diag1);
                                 tr.AddNewlyCreatedDBObject(diag1, true);
 
                                 Line diag2 = new Line(p1, p3);
-                                diag2.Layer = "diagonali";
+                                diag2.Layer = PluginLayers.Diagonals;
                                 diag2.ColorIndex = 8;
                                 diag2.LineWeight = LineWeight.LineWeight009;
                                 btr.AppendEntity(diag2);
@@ -209,7 +209,7 @@ namespace PUP_AUTO.UI
                             DBText text = new DBText();
                             text.SetDatabaseDefaults();
                             text.TextString = result.PoleNumber;
-                            text.Layer = "Текст";
+                            text.Layer = PluginLayers.Text;
                             text.ColorIndex = 7;
                             text.Height = 1.0;
                             

@@ -5,6 +5,16 @@ using PUP_AUTO.Semantics;
 
 namespace PUP_AUTO.Core
 {
+    /// <summary>What <see cref="TransactionManager.SelectMultiplePolylines"/> skipped or could not identify.</summary>
+    public class PolylineSelectionStats
+    {
+        public int SkippedPluginLayer { get; set; }
+        public bool ServitudeExcluded { get; set; }
+
+        /// <summary>Handles of kept polylines that fell back to the Handle as their ID (no parcel XData / GeoJSON match).</summary>
+        public List<string> HandleFallbacks { get; } = new List<string>();
+    }
+
     /// <summary>
     /// Wraps AutoCAD document / transaction operations, providing helpers
     /// for opening transactions and prompting users for entity selection.
@@ -92,7 +102,9 @@ namespace PUP_AUTO.Core
         public List<KeyValuePair<string, Polyline>> SelectMultiplePolylines(
             Transaction transaction,
             string promptMessage,
-            List<GeoParcel>? geoParcels = null)
+            List<GeoParcel>? geoParcels = null,
+            ObjectId excludeId = default,
+            PolylineSelectionStats? stats = null)
         {
             var polylines = new List<KeyValuePair<string, Polyline>>();
             Editor ed = GetEditor();
@@ -125,6 +137,18 @@ namespace PUP_AUTO.Core
                 var pline = transaction.GetObject(selObj.ObjectId, OpenMode.ForRead) as Polyline;
                 if (pline == null)
                 {
+                    continue;
+                }
+
+                // Never treat the plugin's own drawing output or the servitude as a parcel
+                if (PluginLayers.IsPluginLayer(pline.Layer))
+                {
+                    if (stats != null) stats.SkippedPluginLayer++;
+                    continue;
+                }
+                if (!excludeId.IsNull && selObj.ObjectId == excludeId)
+                {
+                    if (stats != null) stats.ServitudeExcluded = true;
                     continue;
                 }
 
@@ -161,6 +185,7 @@ namespace PUP_AUTO.Core
                     else
                     {
                         fallbackToHandle++;
+                        stats?.HandleFallbacks.Add(entityId);
                         _logger.LogWarning(
                             $"Could not spatially match polyline (Handle: {pline.Handle}) to any GeoJSON parcel. Using Handle as ID.");
                     }
@@ -178,6 +203,7 @@ namespace PUP_AUTO.Core
                     else
                     {
                         fallbackToHandle++;
+                        stats?.HandleFallbacks.Add(entityId);
                     }
                 }
 

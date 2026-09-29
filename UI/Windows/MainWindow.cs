@@ -504,8 +504,20 @@ namespace PUP_AUTO.UI.Windows
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Не е избран GeoJSON файл. Ще се опита Map3D OD (може да не работи).");
                     }
 
+                    var selStats = new PolylineSelectionStats();
                     _parcelPolylines = _txMgr!.SelectMultiplePolylines(
-                        _activeTransaction!, "\nSelect Parcel polylines: ", geoParcels);
+                        _activeTransaction!, "\nSelect Parcel polylines: ", geoParcels,
+                        _servitudePline?.ObjectId ?? ObjectId.Null, selStats);
+
+                    if (selStats.SkippedPluginLayer > 0)
+                    {
+                        AppendLog($"Пропуснати {selStats.SkippedPluginLayer} полилинии от служебни слоеве.");
+                    }
+                    if (selStats.HandleFallbacks.Count > 0)
+                    {
+                        AppendLog($"Внимание: {selStats.HandleFallbacks.Count} полилинии нямат идентификатор на имот (XData) — проверете: " +
+                                  string.Join(", ", selStats.HandleFallbacks));
+                    }
 
                     if (_parcelPolylines.Count > 0)
                     {
@@ -734,13 +746,13 @@ namespace PUP_AUTO.UI.Windows
                         {
                             var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
                             
-                            EnsureLayerExists(db, tr, "segmented SERV", 3);
+                            EnsureLayerExists(db, tr, PluginLayers.SegmentedServitude, 3);
                             
                             // Clone it because we are inside a using block
                             Polyline newPline = (Polyline)cleanServitude.Clone();
                             
                             // Make it green to distinguish it from the original
-                            newPline.Layer = "segmented SERV";
+                            newPline.Layer = PluginLayers.SegmentedServitude;
                             newPline.ColorIndex = 3; 
                             newPline.ConstantWidth = 0.5; // Make it thicker to see it!
                             
