@@ -280,6 +280,55 @@ namespace PUP_AUTO.Geometry
         }
 
         // -----------------------------------------------------------------
+        //  4. Pole steps: footprint ∩ parcel pieces
+        // -----------------------------------------------------------------
+
+        /// <summary>
+        /// For every pole footprint and every parcel, the area of footprint ∩ parcel, using the same
+        /// overlap computation and sliver tolerance as <see cref="RunMvpMathTest"/>. Pairs at or below
+        /// the sliver tolerance are dropped. Parcel IDs are the ones resolved at pick time; parcel
+        /// area is the drawn polyline area.
+        /// </summary>
+        public PoleStepsGeometry ComputePoleStepPieces(
+            List<KeyValuePair<string, Polyline>> polePolylines,
+            List<KeyValuePair<string, Polyline>> parcelPolylines)
+        {
+            var result = new PoleStepsGeometry();
+
+            foreach (var poleKvp in polePolylines)
+            {
+                result.Footprints.Add(new PoleFootprintArea
+                {
+                    PoleNumber = poleKvp.Key,
+                    AreaSqm = poleKvp.Value.Area
+                });
+            }
+
+            foreach (var parcelKvp in parcelPolylines)
+            {
+                Polyline parcelPline = parcelKvp.Value;
+                double parcelArea = parcelPline.Area;
+
+                foreach (var poleKvp in polePolylines)
+                {
+                    double intersectArea = GetPreciseIntersectionArea(parcelPline, poleKvp.Value);
+                    if (intersectArea > SliverTolerance)
+                    {
+                        result.Pieces.Add(new PoleStepPiece
+                        {
+                            ParcelId = parcelKvp.Key,
+                            ParcelAreaSqm = parcelArea,
+                            PoleNumber = poleKvp.Key,
+                            PieceAreaSqm = intersectArea
+                        });
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        // -----------------------------------------------------------------
         //  Precise Math Helpers (Origin Shift)
         // -----------------------------------------------------------------
 

@@ -9,6 +9,7 @@ namespace PUP_AUTO.Core
         public const string CadLibraryFile = "TemplateC.cad";
         public const string ReportXlsFile = "PUP_Report.xls";
         public const string MvpMathTestFile = "MVP_Math_Test_Parcels.xlsx";
+        public const string PoleStepsFile = "Стъпки_на_стълбове.xlsx";
     }
 
     /// <summary>Parcel XData: registered application name and the ID sentinels returned when it cannot be read.</summary>

@@ -146,7 +146,7 @@ namespace PUP_AUTO.DataBridge
 
         private static Cell CreateCell(string text)
         {
-            return new Cell(new InlineString(new Text(text))) { DataType = CellValues.InlineString };
+            return SheetCells.InlineString(text);
         }
     }
 }
