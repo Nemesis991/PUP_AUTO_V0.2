@@ -230,7 +230,7 @@ namespace PUP_AUTO.Tests
 
             AffectedRegisterRow row = r.Rows[3];
             Assert.Equal("06433.100.7", row.Number);
-            Assert.Equal("45а, 46б", row.Subdivisions);
+            Assert.Equal("", row.Subdivisions);        // Подотдели stay empty even though the .cad has GORIMOTI rows
             Assert.Equal("", row.Category);            // KAT 0
             Assert.Equal(1.500, row.AreaDka);
             Assert.Equal(0.400, row.RestrictedDka);
@@ -361,7 +361,7 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void Subdivisions_AreOtdelDirectlyFollowedByPodotdel()
+        public void SubdivisionsFormatter_IsOtdelSlashPodotdel()
         {
             var parcel = new CadastralParcel();
             Assert.Equal("", AffectedParcelsRegisterBuilder.FormatSubdivisions(parcel));
@@ -369,7 +369,7 @@ namespace PUP_AUTO.Tests
             parcel.Subdivisions.Add(new CadSubdivision { Otdel = "45", Podotdel = "а" });
             parcel.Subdivisions.Add(new CadSubdivision { Otdel = "7", Podotdel = "" });
             parcel.Subdivisions.Add(new CadSubdivision());
-            Assert.Equal("45а, 7", AffectedParcelsRegisterBuilder.FormatSubdivisions(parcel));
+            Assert.Equal("45/а, 7", AffectedParcelsRegisterBuilder.FormatSubdivisions(parcel));
         }
     }
 
@@ -530,7 +530,7 @@ namespace PUP_AUTO.Tests
 
             // row 9: parcel without owners — columns 12-14 empty
             Assert.Equal("06433.100.7", s.Text("A9"));
-            Assert.Equal("45а, 46б", s.Text("B9"));
+            Assert.True(s.IsEmpty("B9"));      // Подотдели stay empty for now
             Assert.Equal(0.008, s.Number("K9"));
             Assert.True(s.IsEmpty("L9"));
             Assert.True(s.IsEmpty("M9"));

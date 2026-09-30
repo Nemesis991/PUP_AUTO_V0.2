@@ -147,7 +147,8 @@ namespace PUP_AUTO.CadRegister
 
                 if (register.Parcels.TryGetValue(id, out CadastralParcel? cad))
                 {
-                    first.Subdivisions = FormatSubdivisions(cad);
+                    // Column 2 (Подотдели) stays empty for now: it will come from separate forest files, not from the .cad.
+                    // FormatSubdivisions is kept for that; GORIMOTI is still read into CadastralParcel.Subdivisions.
                     first.Vidt = nomenclatures.Vidt.TextOf(cad.Vidt);
                     first.Ntp = nomenclatures.Ntp.TextOf(cad.Ntp);
                     first.Mestnost = cad.MestnostName;
@@ -221,13 +222,15 @@ namespace PUP_AUTO.CadRegister
             return code == OwnershipRightCode;
         }
 
-        /// <summary>"45а, 46б": отдел directly followed by подотдел, one entry per GORIMOTI row.</summary>
+        /// <summary>"45/а, 46/б": "&lt;OTDEL&gt;/&lt;PODOTDEL&gt;", one entry per row; a row without подотдел is just the отдел.</summary>
         public static string FormatSubdivisions(CadastralParcel parcel)
         {
             var parts = new List<string>();
             foreach (CadSubdivision s in parcel.Subdivisions)
             {
-                string text = (s.Otdel.Trim() + s.Podotdel.Trim()).Trim();
+                string otdel = s.Otdel.Trim();
+                string podotdel = s.Podotdel.Trim();
+                string text = otdel.Length > 0 && podotdel.Length > 0 ? otdel + "/" + podotdel : otdel + podotdel;
                 if (text.Length > 0) parts.Add(text);
             }
             return string.Join(", ", parts);
