@@ -1,5 +1,12 @@
 namespace PUP_AUTO.CadRegister
 {
+    /// <summary>One отдел/подотдел of a parcel (GORIMOTI row).</summary>
+    public class CadSubdivision
+    {
+        public string Otdel { get; set; } = string.Empty;
+        public string Podotdel { get; set; } = string.Empty;
+    }
+
     /// <summary>A cadastral parcel (POZEMLIMOTI row). Codes are kept raw; nomenclature text is resolved at report time.</summary>
     public class CadastralParcel
     {
@@ -18,6 +25,9 @@ namespace PUP_AUTO.CadRegister
 
         /// <summary>Official area from CONTROL CADASTER / CONTUR_AREA, in square meters; null when absent.</summary>
         public double? AreaSqm { get; set; }
+
+        /// <summary>Отдели/подотдели from GORIMOTI (empty for parcels that are not forest).</summary>
+        public List<CadSubdivision> Subdivisions { get; } = new List<CadSubdivision>();
     }
 
     /// <summary>One right (PRAVA row) of a parcel. ЕГН/БУЛСТАТ is text: leading zeros and odd values are kept as they are.</summary>
@@ -29,6 +39,9 @@ namespace PUP_AUTO.CadRegister
         public string PravoVid { get; set; } = string.Empty;
         public string PersonId { get; set; } = string.Empty;
         public string PersonName { get; set; } = string.Empty;
+
+        /// <summary>PERSONS.FLAG = T: the entry stands for the heirs of the person ("н-ци на ...").</summary>
+        public bool PersonIsHeirs { get; set; }
 
         /// <summary>DOCID1 as read from the file (share numerator, unverified).</summary>
         public string DocId1 { get; set; } = string.Empty;

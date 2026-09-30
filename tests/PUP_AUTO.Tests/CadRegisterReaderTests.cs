@@ -235,7 +235,7 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void BackslashesInANameBecomeQuotes()
+        public void BackslashesInANameBecomeStraightQuotes()
         {
             CadRegisterData data = SyntheticCad.Read(out _);
 
@@ -243,13 +243,49 @@ namespace PUP_AUTO.Tests
         }
 
         [Theory]
-        [InlineData("\\АГРО\\", "„АГРО“")]
-        [InlineData("\\А\\ и \\Б\\ ООД", "„А“ и „Б“ ООД")]
-        [InlineData("\\НЕЗАТВОРЕНО", "„НЕЗАТВОРЕНО")]
+        [InlineData("\\АГРО\\", "\"АГРО\"")]
+        [InlineData("\\А\\ и \\Б\\ ООД", "\"А\" и \"Б\" ООД")]
+        [InlineData("\\НЕЗАТВОРЕНО", "\"НЕЗАТВОРЕНО")]
+        [InlineData("ВЕЧЕ \"ПРАВИ\" КАВИЧКИ", "ВЕЧЕ \"ПРАВИ\" КАВИЧКИ")]
         [InlineData("БЕЗ КАВИЧКИ", "БЕЗ КАВИЧКИ")]
         public void UnescapeQuotes_AlternatesOpeningAndClosing(string raw, string expected)
         {
             Assert.Equal(expected, CadRegisterReader.UnescapeQuotes(raw));
+        }
+
+        [Fact]
+        public void PersonsFlagT_MarksTheHeirs()
+        {
+            CadRegisterData data = SyntheticCad.Read(out _);
+
+            Assert.True(data.RightsOf("06433.501.2")[1].PersonIsHeirs);   // 7497_0006082776, FLAG = T
+            Assert.False(data.RightsOf("06433.501.2")[0].PersonIsHeirs);  // 8690П, FLAG = F
+            Assert.False(data.RightsOf("06433.501.1")[0].PersonIsHeirs);
+        }
+
+        [Fact]
+        public void Gorimoti_GivesTheSubdivisionsOfAParcel_InFileOrder()
+        {
+            CadRegisterData data = SyntheticCad.Read(out List<string> warnings);
+
+            CadastralParcel forest = data.Parcels["06433.501.4"];
+            Assert.Equal(2, forest.Subdivisions.Count);
+            Assert.Equal("45", forest.Subdivisions[0].Otdel);
+            Assert.Equal("а", forest.Subdivisions[0].Podotdel);
+            Assert.Equal("46", forest.Subdivisions[1].Otdel);
+            Assert.Equal("б", forest.Subdivisions[1].Podotdel);
+
+            Assert.Single(data.Parcels["06433.501.2"].Subdivisions);
+            Assert.Empty(data.Parcels["06433.501.1"].Subdivisions);   // no GORIMOTI row: not forest
+            Assert.DoesNotContain(warnings, w => w.Contains("GORIMOTI")); // a row for an unknown parcel is ignored quietly
+        }
+
+        [Fact]
+        public void MissingGorimotiTable_IsNotAProblem()
+        {
+            CadRegisterData data = SyntheticCad.Read(out _, SyntheticCad.RealRows);
+
+            Assert.All(data.Parcels.Values, p => Assert.Empty(p.Subdivisions));
         }
 
         [Fact]

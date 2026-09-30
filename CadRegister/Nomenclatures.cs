@@ -120,6 +120,14 @@ namespace PUP_AUTO.CadRegister
             return _entries.TryGetValue(NormalizeCode(trimmed), out text!);
         }
 
+        /// <summary>Just the text: the entry of a known code, "код N" for an unknown one (warns once per code), empty for an empty code.</summary>
+        public string TextOf(string code)
+        {
+            string trimmed = code.Trim();
+            if (trimmed.Length == 0) return string.Empty;
+            return TryGet(trimmed, out string text) ? text : FallbackText(trimmed);
+        }
+
         /// <summary>
         /// "code – text" for a known code, "код N" for an unknown one (warns once per code), empty for an empty code.
         /// </summary>

@@ -11,6 +11,7 @@ namespace PUP_AUTO.Core
         public const string MvpMathTestFile = "MVP_Math_Test_Parcels.xlsx";
         public const string PoleStepsFile = "Стъпки_на_стълбове.xlsx";
         public const string CadControlReportFile = "Контролна_справка_cad.xlsx";
+        public const string AffectedParcelsRegisterFile = "Регистър_на_засегнатите_имоти.xlsx";
         public const string NomenclaturesFolder = "Номенклатури";
         public const string EkatteRegisterFile = "EKATTE.csv";
     }

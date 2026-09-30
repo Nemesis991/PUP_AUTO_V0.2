@@ -23,6 +23,7 @@ namespace PUP_AUTO.CadRegister
         private const string TableMestnosti = "MESTNOSTI";
         private const string TablePrava = "PRAVA";
         private const string TablePersons = "PERSONS";
+        private const string TableGorimoti = "GORIMOTI";
         private const string ControlCadaster = "CADASTER";
 
         private enum Section { None, Header, Layer, Control, Table }
@@ -66,7 +67,8 @@ namespace PUP_AUTO.CadRegister
                 [TablePozemlimoti] = new RawTable(),
                 [TableMestnosti] = new RawTable(),
                 [TablePrava] = new RawTable(),
-                [TablePersons] = new RawTable()
+                [TablePersons] = new RawTable(),
+                [TableGorimoti] = new RawTable()
             };
             var contourAreas = new List<KeyValuePair<string, double>>();
 
@@ -233,7 +235,7 @@ namespace PUP_AUTO.CadRegister
             }
 
             // PERSONS: same ID appears once per address -> de-duplicate by ID (first wins)
-            var persons = new Dictionary<string, string>();
+            var persons = new Dictionary<string, (string Name, bool IsHeirs)>();
             int duplicatePersons = 0;
             int conflictingNames = 0;
             RawTable personTable = tables[TablePersons];
@@ -245,14 +247,14 @@ namespace PUP_AUTO.CadRegister
                     if (id.Length == 0) { WarnMalformed(row, TablePersons, "PERSON"); continue; }
 
                     string name = UnescapeQuotes(row.Get("NAME"));
-                    if (persons.TryGetValue(id, out string? known))
+                    if (persons.TryGetValue(id, out var known))
                     {
                         duplicatePersons++;
-                        if (known != name) conflictingNames++;
+                        if (known.Name != name) conflictingNames++;
                     }
                     else
                     {
-                        persons[id] = name;
+                        persons[id] = (name, row.Get("FLAG").Equals("T", StringComparison.OrdinalIgnoreCase));
                     }
                 }
             }
@@ -300,6 +302,26 @@ namespace PUP_AUTO.CadRegister
                 }
             }
 
+            // GORIMOTI: отдели/подотдели of a parcel (the table may be absent)
+            RawTable subdivisionTable = tables[TableGorimoti];
+            if (HasKey(subdivisionTable, TableGorimoti, "IDENT"))
+            {
+                foreach (RawRow row in subdivisionTable.Rows)
+                {
+                    string ident = row.Get("IDENT");
+                    if (ident.Length == 0) { WarnMalformed(row, TableGorimoti, "IDENT"); continue; }
+
+                    if (result.Parcels.TryGetValue(FullId(ekatte, ident), out CadastralParcel? forestParcel))
+                    {
+                        forestParcel.Subdivisions.Add(new CadSubdivision
+                        {
+                            Otdel = row.Get("OTDEL"),
+                            Podotdel = row.Get("PODOTDEL")
+                        });
+                    }
+                }
+            }
+
             // PRAVA
             int rightsWithoutPerson = 0;
             RawTable rightsTable = tables[TablePrava];
@@ -312,9 +334,10 @@ namespace PUP_AUTO.CadRegister
 
                     string personId = row.Get("PERSON");
                     string personName = string.Empty;
+                    bool isHeirs = false;
                     if (personId.Length > 0)
                     {
-                        if (persons.TryGetValue(personId, out string? found)) personName = found;
+                        if (persons.TryGetValue(personId, out var found)) { personName = found.Name; isHeirs = found.IsHeirs; }
                         else rightsWithoutPerson++;
                     }
 
@@ -330,6 +353,7 @@ namespace PUP_AUTO.CadRegister
                         PravoVid = row.Get("PRAVOVID"),
                         PersonId = personId,
                         PersonName = personName,
+                        PersonIsHeirs = isHeirs,
                         DocId1 = row.Get("DOCID1"),
                         DocId2 = row.Get("DOCID2")
                     });
@@ -364,27 +388,8 @@ namespace PUP_AUTO.CadRegister
             return ekatte + "." + ident;
         }
 
-        /// <summary>\АГРО\ inside a name means quotes: „АГРО“. Backslashes alternate between opening and closing quote.</summary>
-        public static string UnescapeQuotes(string name)
-        {
-            if (name.IndexOf('\\') < 0) return name;
-
-            var sb = new StringBuilder(name.Length);
-            bool opening = true;
-            foreach (char c in name)
-            {
-                if (c == '\\')
-                {
-                    sb.Append(opening ? '„' : '“');
-                    opening = !opening;
-                }
-                else
-                {
-                    sb.Append(c);
-                }
-            }
-            return sb.ToString();
-        }
+        /// <summary>\АГРО\ inside a name means quotes: "АГРО". Straight quotes, like the ones already written in the .cad.</summary>
+        public static string UnescapeQuotes(string name) => name.Replace('\\', '"');
 
         /// <summary>
         /// Comma-separated values. A string is wrapped in double quotes and may contain unescaped quotes

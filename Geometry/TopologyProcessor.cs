@@ -329,6 +329,65 @@ namespace PUP_AUTO.Geometry
         }
 
         // -----------------------------------------------------------------
+        //  5. Register of affected parcels
+        // -----------------------------------------------------------------
+
+        /// <summary>
+        /// Per parcel: drawn area and the net servitude area (servitude ∩ parcel minus the footprints of the poles
+        /// that touch the parcel), computed by the same helpers as <see cref="RunMvpMathTest"/>; plus the pole
+        /// footprint areas and the footprint ∩ parcel pieces (as in <see cref="ComputePoleStepPieces"/>).
+        /// Parcel IDs are the ones resolved at pick time.
+        /// </summary>
+        public RegisterGeometry ComputeRegisterGeometry(
+            Polyline servitudePline,
+            List<KeyValuePair<string, Polyline>> polePolylines,
+            List<KeyValuePair<string, Polyline>> parcelPolylines)
+        {
+            var result = new RegisterGeometry();
+
+            foreach (var poleKvp in polePolylines)
+            {
+                result.Footprints.Add(new PoleFootprintArea
+                {
+                    PoleNumber = poleKvp.Key,
+                    AreaSqm = poleKvp.Value.Area
+                });
+            }
+
+            foreach (var parcelKvp in parcelPolylines)
+            {
+                Polyline parcelPline = parcelKvp.Value;
+                double parcelArea = parcelPline.Area;
+                var touchingPoles = new List<Polyline>();
+
+                foreach (var poleKvp in polePolylines)
+                {
+                    double intersectArea = GetPreciseIntersectionArea(parcelPline, poleKvp.Value);
+                    if (intersectArea > SliverTolerance)
+                    {
+                        result.Pieces.Add(new PoleStepPiece
+                        {
+                            ParcelId = parcelKvp.Key,
+                            ParcelAreaSqm = parcelArea,
+                            PoleNumber = poleKvp.Key,
+                            PieceAreaSqm = intersectArea
+                        });
+                        touchingPoles.Add(poleKvp.Value);
+                    }
+                }
+
+                result.Parcels.Add(new RegisterParcelAreas
+                {
+                    ParcelId = parcelKvp.Key,
+                    DrawnAreaSqm = parcelArea,
+                    ServitudeNetAreaSqm = GetPreciseSubtractedArea(parcelPline, servitudePline, touchingPoles)
+                });
+            }
+
+            return result;
+        }
+
+        // -----------------------------------------------------------------
         //  Precise Math Helpers (Origin Shift)
         // -----------------------------------------------------------------
 

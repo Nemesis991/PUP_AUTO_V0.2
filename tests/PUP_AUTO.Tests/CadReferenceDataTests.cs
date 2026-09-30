@@ -173,11 +173,51 @@ namespace PUP_AUTO.Tests
             Assert.Equal("2800 – Пасище", all.Ntp.Describe("2800"));
             Assert.Equal("2230 – За селскостопански, горски, ведомствен път", all.Ntp.Describe("2230"));
             Assert.Equal("3 – Общинска публична", all.Vids.Describe("3"));
+            Assert.Equal("1 – Собственост", all.PravoVid.Describe("1"));
 
-            // PRAVOVID is still header-only; nothing else is worth a warning, and a missing folder is not one
+            Assert.Empty(warnings); // a missing folder is not a warning
+        }
+
+        [Fact]
+        public void EmbeddedDefaults_HoldTheVerifiedOfficialRegisterValues()
+        {
+            Nomenclatures all = Nomenclatures.Load(Path.Combine(_dir, "no-such-folder"));
+
+            string[,] vidt = { { "2", "Територия за транспорт" }, { "3", "Земеделска територия" }, { "4", "Горска територия" }, { "5", "Води и водни площи" } };
+            for (int i = 0; i < vidt.GetLength(0); i++) Assert.Equal(vidt[i, 1], all.Vidt.TextOf(vidt[i, 0]));
+
+            string[,] ntp =
+            {
+                { "2220", "За местен път" }, { "2230", "За селскостопански, горски, ведомствен път" }, { "2500", "Нива" },
+                { "2700", "Ливада" }, { "2800", "Пасище" }, { "2900", "Иглолистна гора" }, { "2910", "Широколистна гора" },
+                { "3040", "Друг вид недървопроизводителна горска площ" }, { "3100", "Водно течение, река" },
+                { "3200", "Отводнителен канал" }, { "3240", "За водностопанско, хидромелиоративно съоръжение" },
+                { "3250", "За друг вид водно течение, водна площ, съоръжение" }
+            };
+            for (int i = 0; i < ntp.GetLength(0); i++) Assert.Equal(ntp[i, 1], all.Ntp.TextOf(ntp[i, 0]));
+
+            string[,] vids =
+            {
+                { "1", "Държавна публична" }, { "2", "Държавна частна" }, { "3", "Общинска публична" },
+                { "4", "Общинска частна" }, { "5", "Частна" }, { "7", "Обществени организации" }, { "11", "Съсобственост" }
+            };
+            for (int i = 0; i < vids.GetLength(0); i++) Assert.Equal(vids[i, 1], all.Vids.TextOf(vids[i, 0]));
+
+            Assert.Equal("Собственост", all.PravoVid.TextOf("1"));
+        }
+
+        [Fact]
+        public void TextOf_IsTheTextAlone_KodNForUnknown_EmptyForEmpty()
+        {
+            var warnings = new List<string>();
+            var n = new Nomenclature("VIDS", warnings.Add);
+            n.Add("5", "Частна");
+
+            Assert.Equal("Частна", n.TextOf("5"));
+            Assert.Equal("код 6", n.TextOf("6"));
+            Assert.Equal("код 6", n.TextOf("6"));
+            Assert.Equal("", n.TextOf(""));
             Assert.Single(warnings);
-            Assert.Contains("PRAVOVID", warnings[0]);
-            Assert.Contains("празна", warnings[0]);
         }
 
         [Fact]
