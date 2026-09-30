@@ -29,6 +29,11 @@ scratch.ps1
 *.geojson
 *.dwg
 
+# AGKK .cad registers contain real owner names and ЕГН/БУЛСТАТ. Never commit them.
+# (_TestFiles/TemplateC.cad is an empty schema template with no personal data.)
+*.cad
+!_TestFiles/TemplateC.cad
+
 # Before/after refactor outputs (contain owner names and ЕГН/БУЛСТАТ)
 baseline/
 after/
