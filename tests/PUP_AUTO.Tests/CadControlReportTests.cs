@@ -62,18 +62,21 @@ namespace PUP_AUTO.Tests
             var warnings = new List<string>();
             CadControlReport report = Build(new[] { Drawn("06433.501.2", 800.0) }, warnings);
 
-            CadControlRow row = Assert.Single(report.Rows);
+            Assert.Equal(2, report.Rows.Count);             // two rights: 8690П and 7497_0006082776
+            CadControlRow row = report.Rows[0];
             Assert.Equal("", row.Category);                 // KAT 0
             Assert.Equal("код 2500", row.Ntp);              // not in the nomenclature
             Assert.Equal("код 11", row.Vids);
             Assert.Equal("код 3", row.PravoVid);
             Assert.Equal("8690П", row.PersonId);
             Assert.Equal("1/1", row.Share);
+            Assert.Equal("7497_0006082776", report.Rows[1].PersonId);
+            Assert.Equal("1/2", report.Rows[1].Share);
             Assert.Equal(0.0, row.DifferenceSqm);
 
             Assert.Equal(1, warnings.Count(w => w.Contains("код 2500")));
-            Assert.Equal(1, warnings.Count(w => w.Contains("код 11")));
-            Assert.Equal(1, warnings.Count(w => w.Contains("код 3")));
+            Assert.Equal(1, warnings.Count(w => w.Contains("код 11")));   // repeated on the second row, still one warning
+            Assert.Equal(1, warnings.Count(w => w.Contains("PRAVOVID") && w.Contains("код 3")));
         }
 
         [Fact]
@@ -114,7 +117,8 @@ namespace PUP_AUTO.Tests
         {
             CadControlReport report = Build(new[] { Drawn("06433.501.2", 300.0), Drawn("06433.501.2", 500.0) });
 
-            Assert.Equal(800.0, Assert.Single(report.Rows).DrawnAreaSqm);
+            Assert.Equal(2, report.Rows.Count); // its two rights
+            Assert.All(report.Rows, r => Assert.Equal(800.0, r.DrawnAreaSqm));
         }
 
         [Fact]

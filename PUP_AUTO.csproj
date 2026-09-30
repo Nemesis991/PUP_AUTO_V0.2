@@ -27,6 +27,13 @@
     <PackageReference Include="DocumentFormat.OpenXml" Version="2.20.0" />
   </ItemGroup>
 
+  <!-- Default reference data (EKATTE register, nomenclatures) compiled into the plugin; a file in the drawing's
+       _Templates overrides matching entries. The CSVs in _Templates are the single source. -->
+  <ItemGroup>
+    <EmbeddedResource Include="_Templates\EKATTE.csv" LogicalName="PUP_AUTO.Defaults.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="_Templates\Номенклатури\*.csv" LogicalName="PUP_AUTO.Defaults.%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <!-- WPF assemblies for the GUI (required on .NET Framework 4.8) -->
   <ItemGroup>
     <Reference Include="PresentationCore" />

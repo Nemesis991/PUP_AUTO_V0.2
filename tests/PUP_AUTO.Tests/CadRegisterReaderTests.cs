@@ -28,6 +28,18 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
+        public void Byte0xD5_IsTheNumeroSign()
+        {
+            // "Стълб №98" as seen in an MKAD export
+            byte[] bytes = { 0x91, 0xB2, 0xBA, 0xAB, 0xA1, 0x20, 0xD5, 0x39, 0x38 };
+
+            string text = MikEncoding.Decode(bytes, out int undecodable);
+
+            Assert.Equal("Стълб №98", text);
+            Assert.Equal(0, undecodable);
+        }
+
+        [Fact]
         public void Ascii_PassesThroughUnchanged()
         {
             byte[] ascii = System.Text.Encoding.ASCII.GetBytes("EKATTE 06433\r\nD 1,2\\3\"4;");
@@ -35,18 +47,18 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void BytesAbove0xBF_AreCountedAndReplaced()
+        public void OtherBytesAbove0xBF_AreCountedAndReplaced()
         {
-            string text = MikEncoding.Decode(new byte[] { 0x41, 0xC0, 0xFF, 0x42 }, out int undecodable);
+            string text = MikEncoding.Decode(new byte[] { 0x41, 0xC0, 0xD4, 0xD6, 0xFF, 0x42 }, out int undecodable);
 
-            Assert.Equal("A��B", text);
-            Assert.Equal(2, undecodable);
+            Assert.Equal("A����B", text);
+            Assert.Equal(4, undecodable);
         }
 
         [Fact]
         public void RoundTrip_ThroughTheTestEncoder()
         {
-            const string text = "Червен бряг, ул. Юрий Гагарин 5Я";
+            const string text = "Червен бряг, ул. Юрий Гагарин 5Я, Стълб №98";
             Assert.Equal(text, MikEncoding.Decode(MikTestEncoder.Encode(text)));
         }
     }
@@ -56,13 +68,76 @@ namespace PUP_AUTO.Tests
         private static string F(string snippet, int occurrence = 1) => SyntheticCad.LineOf(snippet, occurrence).ToString();
 
         [Fact]
-        public void Header_GivesEkatteAndSettlementName_WithLeadingZeroKept()
+        public void Header_SingleSpaced_GivesEkatteAndSettlementName_WithLeadingZeroKept()
         {
             CadRegisterData data = SyntheticCad.Read(out _);
 
             Assert.Equal("06433", data.Ekatte);
-            Assert.Equal("с.ТЕСТОВО", data.SettlementName);
+            Assert.Equal("с. Тестово", data.SettlementName);
             Assert.Equal("4.02", data.Version);
+        }
+
+        [Fact]
+        public void Header_PaddedSpaces_AreSplitOnWhitespaceToo()
+        {
+            string text = "HEADER\r\nVERSION    4.02\r\nEKATTE     06433\r\nNAME       с.БРЕСТЕ\r\nEND_HEADER\r\n";
+
+            CadRegisterData data = new CadRegisterReader().Read(MikTestEncoder.Encode(text));
+
+            Assert.Equal("06433", data.Ekatte);
+            Assert.Equal("с.БРЕСТЕ", data.SettlementName);
+            Assert.Equal("4.02", data.Version);
+        }
+
+        [Fact]
+        public void RealRows_ReadAsInARealExport()
+        {
+            CadRegisterData data = SyntheticCad.Read(out List<string> warnings, SyntheticCad.RealRows);
+
+            Assert.Empty(warnings);
+            Assert.Equal("с. Бресте", data.SettlementName);
+            Assert.Equal(2, data.Parcels.Count);
+
+            CadastralParcel p = data.Parcels["06433.54.1"];
+            Assert.Equal("3", p.Vidt);
+            Assert.Equal("3", p.Vids);
+            Assert.Equal("2800", p.Ntp);
+            Assert.Equal("8", p.Kat);
+            Assert.Equal("7", p.MestnostCode);
+            Assert.Equal("СТРАНАТА", p.MestnostName);
+            Assert.Equal(90657.681, p.AreaSqm);
+
+            CadastralParcel q = data.Parcels["06433.61.363"];
+            Assert.Equal("2230", q.Ntp);
+            Assert.Equal("0", q.Kat);
+            Assert.Equal("", q.MestnostCode);
+            Assert.Equal("", q.MestnostName);
+            Assert.Null(q.AreaSqm);
+
+            OwnershipRight right = Assert.Single(data.RightsOf("06433.54.1"));
+            Assert.Equal("000414154", right.PersonId);   // quoted text, leading zeros kept
+            Assert.Equal("ОБЩИНА ЧЕРВЕН БРЯГ", right.PersonName);
+            Assert.Equal("1", right.PravoVid);
+            Assert.Equal("1", right.DocId1);
+            Assert.Equal("1", right.DocId2);
+            Assert.Equal(1, data.PersonCount); // the same id twice with different addresses/dates
+        }
+
+        [Fact]
+        public void Columns_AreReadByFieldName_NotByPosition()
+        {
+            string text =
+                "HEADER\r\nEKATTE 11111\r\nEND_HEADER\r\n" +
+                "TABLE POZEMLIMOTI\r\nF KAT S 2 0\r\nF NTP S 4 0\r\nF UNKNOWNFIELD S 4 0\r\nF IDENT C 20 0 1\r\nF VIDT S 1 0\r\n" +
+                "D 5,2230,\"x\",\"7.1\",3\r\n" +
+                "END_TABLE\r\n";
+
+            CadRegisterData data = new CadRegisterReader().Read(MikTestEncoder.Encode(text));
+
+            CadastralParcel p = data.Parcels["11111.7.1"];
+            Assert.Equal("5", p.Kat);
+            Assert.Equal("2230", p.Ntp);
+            Assert.Equal("3", p.Vidt);
         }
 
         [Fact]
@@ -73,7 +148,6 @@ namespace PUP_AUTO.Tests
             Assert.Equal(new[] { "06433.501.1", "06433.501.2", "06433.501.3", "06433.501.4" },
                 data.Parcels.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray());
 
-            // Fields are declared in the order IDENT, KAT, VIDT, BRANDNEW, NTP, MESTNOST, VIDS — not the usual order
             CadastralParcel p = data.Parcels["06433.501.1"];
             Assert.Equal("06433.501.1", p.Id);
             Assert.Equal("8", p.Kat);
@@ -105,7 +179,7 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void RowWithFewerValues_KeepsMissingFieldsEmpty()
+        public void EmptyValues_StayEmpty()
         {
             CadRegisterData data = SyntheticCad.Read(out _);
 
@@ -113,6 +187,7 @@ namespace PUP_AUTO.Tests
             Assert.Equal("1", p.Vidt);
             Assert.Equal("", p.Ntp);
             Assert.Equal("", p.Kat);
+            Assert.Equal("", p.MestnostCode);
             Assert.Equal("", p.MestnostName);
         }
 
@@ -147,7 +222,7 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void PersonIds_AreText_LeadingZerosAndOddValuesKept()
+        public void PersonIds_AreText_LeadingZerosOddAndCompoundValuesKept()
         {
             CadRegisterData data = SyntheticCad.Read(out _);
 
@@ -155,6 +230,8 @@ namespace PUP_AUTO.Tests
             Assert.Equal("000123456", data.RightsOf("06433.501.1")[1].PersonId);
             Assert.Equal("8690П", data.RightsOf("06433.501.2")[0].PersonId);
             Assert.Equal(SyntheticCad.OddPersonName, data.RightsOf("06433.501.2")[0].PersonName);
+            Assert.Equal("7497_0006082776", data.RightsOf("06433.501.2")[1].PersonId);
+            Assert.Equal(SyntheticCad.CompoundPersonName, data.RightsOf("06433.501.2")[1].PersonName);
         }
 
         [Fact]
@@ -180,7 +257,7 @@ namespace PUP_AUTO.Tests
         {
             CadRegisterData data = SyntheticCad.Read(out List<string> warnings);
 
-            Assert.Equal(3, data.PersonCount); // 4 PERSONS rows, one ID appears twice (two addresses)
+            Assert.Equal(4, data.PersonCount); // 5 PERSONS rows, one ID appears twice (two addresses)
             Assert.DoesNotContain(warnings, w => w.Contains("различно име"));
         }
 
@@ -199,7 +276,7 @@ namespace PUP_AUTO.Tests
             SyntheticCad.Read(out List<string> warnings);
 
             Assert.DoesNotContain(warnings, w => w.Contains("SOMEUNKNOWNTABLE"));
-            Assert.DoesNotContain(warnings, w => w.Contains("BRANDNEW"));
+            Assert.DoesNotContain(warnings, w => w.Contains("IZDATELI"));
             Assert.DoesNotContain(warnings, w => w.Contains("UNKNOWNKEY"));
             Assert.DoesNotContain(warnings, w => w.Contains("CONTUR_SURROUND"));
         }
@@ -209,17 +286,20 @@ namespace PUP_AUTO.Tests
         {
             CadRegisterData data = SyntheticCad.Read(out List<string> warnings);
 
-            // too many values for the declared fields
+            // fewer values than declared fields (6 for 21)
             Assert.Contains(warnings, w =>
-                w.Contains($"ред {F("D 501.5,5,3,x,2230,17,5,extra")}:") && w.Contains("POZEMLIMOTI") && w.Contains("8 стойности за 7 полета"));
+                w.Contains($"ред {F("D \"501.5\"")}:") && w.Contains("POZEMLIMOTI") && w.Contains("6 стойности за 21 полета"));
+            // more values than declared fields (22 for 21)
+            Assert.Contains(warnings, w =>
+                w.Contains($"ред {F("D \"501.6\"")}:") && w.Contains("POZEMLIMOTI") && w.Contains("22 стойности за 21 полета"));
             // empty key field
             Assert.Contains(warnings, w =>
-                w.Contains($"ред {F("D ,5,3,x,2230,17,5")}:") && w.Contains("POZEMLIMOTI") && w.Contains("IDENT"));
+                w.Contains($"ред {F("D \"\",3,1,5")}:") && w.Contains("POZEMLIMOTI") && w.Contains("IDENT"));
             Assert.Contains(warnings, w =>
-                w.Contains($"ред {F("D ,5,0000000001,1,1,1")}:") && w.Contains("PRAVA") && w.Contains("IDENT"));
+                w.Contains($"ред {F("D \"\",5,")}:") && w.Contains("PRAVA") && w.Contains("IDENT"));
             // a repeated parcel
             Assert.Contains(warnings, w =>
-                w.Contains($"ред {F("D 501.1,9,9,x,9999,17,5")}:") && w.Contains("501.1"));
+                w.Contains($"ред {F("D \"501.1\",3,1,5,9999")}:") && w.Contains("501.1"));
             // an invalid CONTUR_AREA
             Assert.Contains(warnings, w =>
                 w.Contains($"ред {F("CONTUR_AREA 501.9")}:") && w.Contains("CONTUR_AREA"));
@@ -249,8 +329,9 @@ namespace PUP_AUTO.Tests
             string all = string.Join("\n", warnings);
             foreach (string secret in new[]
             {
-                SyntheticCad.FakeEgn1, SyntheticCad.FakeBulstat, SyntheticCad.FakeOddId, SyntheticCad.FakeUnknownPerson,
-                SyntheticCad.Person1Name, SyntheticCad.OddPersonName, "АГРО", "ТЕСТОВ", "УЛ. "
+                SyntheticCad.FakeEgn1, SyntheticCad.FakeBulstat, SyntheticCad.FakeOddId, SyntheticCad.FakeCompoundId,
+                SyntheticCad.FakeUnknownPerson, SyntheticCad.Person1Name, SyntheticCad.OddPersonName,
+                SyntheticCad.CompoundPersonName, "АГРО", "ТЕСТОВ ", "BG"
             })
             {
                 Assert.DoesNotContain(secret, all);
@@ -262,14 +343,15 @@ namespace PUP_AUTO.Tests
         {
             SyntheticCad.Read(out List<string> warnings);
 
-            // 2 while reading (bad CONTUR_AREA, extra values) + 2 POZEMLIMOTI + 1 PRAVA + 1 unknown-person summary
-            Assert.Equal(6, warnings.Count);
+            // 3 while reading (bad CONTUR_AREA, too few values, too many values) + 2 POZEMLIMOTI (empty IDENT, repeated
+            // parcel) + 1 PRAVA (empty IDENT) + 1 unknown-person summary
+            Assert.Equal(7, warnings.Count);
         }
 
         [Fact]
         public void TableWithoutItsKeyField_IsSkippedWithOneWarning()
         {
-            string text = "HEADER\r\nEKATTE 11111\r\nEND_HEADER\r\nTABLE POZEMLIMOTI\r\nF VIDT S 1 0\r\nD 3\r\nD 4\r\nEND_TABLE\r\n";
+            string text = "HEADER\r\nEKATTE 11111\r\nEND_HEADER\r\nTABLE POZEMLIMOTI\r\nF VIDT S 1 0\r\nF NTP S 4 0\r\nD 3,2230\r\nD 4,2230\r\nEND_TABLE\r\n";
             var warnings = new List<string>();
 
             CadRegisterData data = new CadRegisterReader(warnings.Add).Read(MikTestEncoder.Encode(text));
@@ -290,6 +372,26 @@ namespace PUP_AUTO.Tests
             Assert.Single(warnings);
             Assert.Contains("ред 5", warnings[0]);
             Assert.Equal(new[] { "11111.3" }, data.Parcels.Keys.ToArray());
+        }
+
+        [Fact]
+        public void ContentsPart_IsNotUsedToDecideAboutData()
+        {
+            // "CONTENTS PART" also appears in extracts WITH data; only the rows count
+            CadRegisterData data = SyntheticCad.Read(out _);
+
+            Assert.NotEmpty(data.Parcels);
+        }
+
+        [Fact]
+        public void NoParcelRows_GiveAnEmptyRegister()
+        {
+            string text = "HEADER\r\nVERSION 4.02\r\nEKATTE 06433\r\nCONTENTS PART\r\nEND_HEADER\r\nTABLE POZEMLIMOTI\r\nF IDENT C 20 0 1\r\nEND_TABLE\r\n";
+
+            CadRegisterData data = new CadRegisterReader().Read(MikTestEncoder.Encode(text));
+
+            Assert.Empty(data.Parcels);
+            Assert.Equal("06433", data.Ekatte);
         }
 
         [Fact]
@@ -328,7 +430,7 @@ namespace PUP_AUTO.Tests
         public void BytesOutsideMik_AreWarnedOnce_WithACount()
         {
             byte[] bytes = MikTestEncoder.Encode("HEADER\r\nEKATTE 06433\r\nEND_HEADER\r\nNAME x\r\n");
-            bytes[bytes.Length - 3] = 0xE5; // one byte in 0xC0..0xFF
+            bytes[bytes.Length - 3] = 0xE5; // one byte in 0xC0..0xFF (not the numero sign)
             var warnings = new List<string>();
 
             new CadRegisterReader(warnings.Add).Read(bytes);
@@ -341,9 +443,13 @@ namespace PUP_AUTO.Tests
         [InlineData(" a , b ,c ", new[] { "a", "b", "c" })]
         [InlineData("a,,c,", new[] { "a", "", "c", "" })]
         [InlineData("\"a,b\",c", new[] { "a,b", "c" })]
-        [InlineData("\"x \"\"y\"\" z\",1", new[] { "x \"y\" z", "1" })]
-        [InlineData("'q',w", new[] { "q", "w" })]
-        [InlineData("000414154,8690П", new[] { "000414154", "8690П" })]
+        [InlineData("\"\",x", new[] { "", "x" })]
+        [InlineData("x,\"\"", new[] { "x", "" })]
+        [InlineData("\"x \"y\" z\",1", new[] { "x \"y\" z", "1" })]
+        [InlineData("6,\"ОБЩИНСКА СЛУЖБА \"ЗГ\"ГР.Ч.БРЯГ\",08.05.2016,", new[] { "6", "ОБЩИНСКА СЛУЖБА \"ЗГ\"ГР.Ч.БРЯГ", "08.05.2016", "" })]
+        [InlineData("\"000414154\",4,F,06.06.2023,,", new[] { "000414154", "4", "F", "06.06.2023", "", "" })]
+        [InlineData("'q',w", new[] { "'q'", "w" })]
+        [InlineData("\"7497_0006082776\",\"8690П\"", new[] { "7497_0006082776", "8690П" })]
         public void SplitCsv_HandlesQuotesAndKeepsText(string line, string[] expected)
         {
             Assert.Equal(expected, CadRegisterReader.SplitCsv(line).ToArray());

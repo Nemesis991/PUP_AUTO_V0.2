@@ -23,17 +23,49 @@ namespace PUP_AUTO.CadRegister
             _warn = warn ?? (_ => { });
         }
 
-        /// <summary>Loads the file; a missing file is one warning and an empty nomenclature.</summary>
+        /// <summary>Loads only the file; a missing file is one warning and an empty nomenclature.</summary>
         public static Nomenclature Load(string name, string path, Action<string>? warn = null)
         {
             var nomenclature = new Nomenclature(name, warn);
-            if (!File.Exists(path))
+            if (File.Exists(path))
+            {
+                nomenclature.Merge(File.ReadAllLines(path, Encoding.UTF8), path);
+            }
+            else
             {
                 nomenclature._warn($"Номенклатура {name}: липсва файлът {path}.");
                 return nomenclature;
             }
+            nomenclature.WarnIfEmpty();
+            return nomenclature;
+        }
 
-            string[] lines = File.ReadAllLines(path, Encoding.UTF8);
+        /// <summary>
+        /// The embedded default first, then the file (when it exists) on top: a code in the file replaces the
+        /// embedded text of that code, other embedded codes stay. A missing file is normal (no warning).
+        /// </summary>
+        public static Nomenclature LoadWithDefaults(string name, string? path, string? embeddedCsv, Action<string>? warn = null)
+        {
+            var nomenclature = new Nomenclature(name, warn);
+            if (embeddedCsv != null)
+            {
+                nomenclature.Merge(EmbeddedDefaults.SplitLines(embeddedCsv), "вградена номенклатура");
+            }
+            if (path != null && File.Exists(path))
+            {
+                nomenclature.Merge(File.ReadAllLines(path, Encoding.UTF8), path);
+            }
+            nomenclature.WarnIfEmpty();
+            return nomenclature;
+        }
+
+        /// <summary>
+        /// Adds the lines of one source. A repeated code inside the same source keeps the first entry;
+        /// a code already known from an earlier source is replaced.
+        /// </summary>
+        private void Merge(string[] lines, string source)
+        {
+            var seenInSource = new HashSet<string>();
             bool firstLine = true;
             for (int i = 0; i < lines.Length; i++)
             {
@@ -43,7 +75,7 @@ namespace PUP_AUTO.CadRegister
                 int separator = line.IndexOf(';');
                 if (separator < 0)
                 {
-                    nomenclature._warn($"Номенклатура {name}, ред {i + 1}: няма разделител ';', редът е пропуснат.");
+                    _warn($"Номенклатура {Name}, ред {i + 1} ({source}): няма разделител ';', редът е пропуснат.");
                     continue;
                 }
 
@@ -55,24 +87,26 @@ namespace PUP_AUTO.CadRegister
                 if (wasFirst && IsHeader(code)) continue;
                 if (code.Length == 0)
                 {
-                    nomenclature._warn($"Номенклатура {name}, ред {i + 1}: празен код, редът е пропуснат.");
+                    _warn($"Номенклатура {Name}, ред {i + 1} ({source}): празен код, редът е пропуснат.");
                     continue;
                 }
 
                 string key = NormalizeCode(code);
-                if (nomenclature._entries.ContainsKey(key))
+                if (!seenInSource.Add(key))
                 {
-                    nomenclature._warn($"Номенклатура {name}, ред {i + 1}: повторен код {code}, взет е първият.");
+                    _warn($"Номенклатура {Name}, ред {i + 1} ({source}): повторен код {code}, взет е първият.");
                     continue;
                 }
-                nomenclature._entries[key] = text;
+                _entries[key] = text;
             }
+        }
 
-            if (nomenclature._entries.Count == 0)
+        private void WarnIfEmpty()
+        {
+            if (_entries.Count == 0)
             {
-                nomenclature._warn($"Номенклатура {name} е празна — кодовете ще се показват като \"код N\".");
+                _warn($"Номенклатура {Name} е празна — кодовете ще се показват като \"код N\".");
             }
-            return nomenclature;
         }
 
         public void Add(string code, string text) => _entries[NormalizeCode(code)] = text;
@@ -166,13 +200,19 @@ namespace PUP_AUTO.CadRegister
             PravoVid = pravoVid;
         }
 
-        /// <summary>Loads the four CSV files from <paramref name="folder"/>.</summary>
+        /// <summary>
+        /// The embedded defaults with the four CSV files of <paramref name="folder"/> on top (both optional).
+        /// A code in a file replaces the embedded text of that code.
+        /// </summary>
         public static Nomenclatures Load(string folder, Action<string>? warn = null) =>
             new Nomenclatures(
-                Nomenclature.Load("VIDT", Path.Combine(folder, VidtFile), warn),
-                Nomenclature.Load("NTP", Path.Combine(folder, NtpFile), warn),
-                Nomenclature.Load("VIDS", Path.Combine(folder, VidsFile), warn),
-                Nomenclature.Load("PRAVOVID", Path.Combine(folder, PravoVidFile), warn));
+                LoadOne("VIDT", folder, VidtFile, warn),
+                LoadOne("NTP", folder, NtpFile, warn),
+                LoadOne("VIDS", folder, VidsFile, warn),
+                LoadOne("PRAVOVID", folder, PravoVidFile, warn));
+
+        private static Nomenclature LoadOne(string name, string folder, string fileName, Action<string>? warn) =>
+            Nomenclature.LoadWithDefaults(name, Path.Combine(folder, fileName), EmbeddedDefaults.ReadText(fileName), warn);
 
         /// <summary>Four empty nomenclatures (every code shows as "код N").</summary>
         public static Nomenclatures Empty(Action<string>? warn = null) =>

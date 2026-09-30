@@ -163,15 +163,73 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void ShippedNomenclatureFiles_Exist_AndLoadWithoutFormatProblems()
+        public void EmbeddedDefaults_AreUsedWithoutAnyFile_AndSeededWithTheVerifiedValues()
         {
-            string folder = Path.Combine(AppContext.BaseDirectory, "TestData", FileNames.NomenclaturesFolder);
             var warnings = new List<string>();
 
-            Nomenclatures.Load(folder, warnings.Add);
+            Nomenclatures all = Nomenclatures.Load(Path.Combine(_dir, "no-such-folder"), warnings.Add);
 
-            // They are shipped header-only (the owner fills them in), so "empty" is the only acceptable warning
-            Assert.All(warnings, w => Assert.Contains("празна", w));
+            Assert.Equal("3 – Земеделска територия", all.Vidt.Describe("3"));
+            Assert.Equal("2800 – Пасище", all.Ntp.Describe("2800"));
+            Assert.Equal("2230 – За селскостопански, горски, ведомствен път", all.Ntp.Describe("2230"));
+            Assert.Equal("3 – Общинска публична", all.Vids.Describe("3"));
+
+            // PRAVOVID is still header-only; nothing else is worth a warning, and a missing folder is not one
+            Assert.Single(warnings);
+            Assert.Contains("PRAVOVID", warnings[0]);
+            Assert.Contains("празна", warnings[0]);
+        }
+
+        [Fact]
+        public void FileInTemplates_OverridesMatchingCodes_AndKeepsTheOtherDefaults()
+        {
+            Write("VIDT.csv", "код;текст\r\n3;Земеделска (моя)\r\n9;Девет\r\n");
+            Write("NTP.csv", "код;текст\r\n2800;Пасище, мера\r\n");
+
+            Nomenclatures all = Nomenclatures.Load(_dir);
+
+            Assert.Equal("3 – Земеделска (моя)", all.Vidt.Describe("3"));
+            Assert.Equal("9 – Девет", all.Vidt.Describe("9"));
+            Assert.Equal("2800 – Пасище, мера", all.Ntp.Describe("2800"));
+            Assert.Equal("2230 – За селскостопански, горски, ведомствен път", all.Ntp.Describe("2230")); // default stays
+        }
+
+        [Fact]
+        public void HeaderOnlyFile_DoesNotBlankTheEmbeddedDefaults()
+        {
+            Write("VIDT.csv", "код;текст\r\n");
+            Write("NTP.csv", "код;текст\r\n");
+            Write("VIDS.csv", "код;текст\r\n");
+            var warnings = new List<string>();
+
+            Nomenclatures all = Nomenclatures.Load(_dir, warnings.Add);
+
+            Assert.Equal("3 – Земеделска територия", all.Vidt.Describe("3"));
+            Assert.Equal("2800 – Пасище", all.Ntp.Describe("2800"));
+            Assert.Equal("3 – Общинска публична", all.Vids.Describe("3"));
+            Assert.DoesNotContain(warnings, w => w.Contains("VIDT") || w.Contains("NTP") || w.Contains("VIDS"));
+        }
+
+        [Fact]
+        public void BadLineInAnOverrideFile_IsWarnedWithItsLine_AndTheRestStillApplies()
+        {
+            Write("NTP.csv", "код;текст\r\nбез разделител\r\n2800;Мера\r\n");
+            var warnings = new List<string>();
+
+            Nomenclatures all = Nomenclatures.Load(_dir, warnings.Add);
+
+            Assert.Contains(warnings, w => w.Contains("NTP") && w.Contains("ред 2"));
+            Assert.Equal("2800 – Мера", all.Ntp.Describe("2800"));
+        }
+
+        [Fact]
+        public void EmbeddedNomenclatureFiles_ArePresentInTheAssembly()
+        {
+            foreach (string file in new[] { Nomenclatures.VidtFile, Nomenclatures.NtpFile, Nomenclatures.VidsFile, Nomenclatures.PravoVidFile })
+            {
+                Assert.NotNull(EmbeddedDefaults.ReadText(file));
+            }
+            Assert.Null(EmbeddedDefaults.ReadText("NOSUCHFILE.csv"));
         }
 
         [Theory]
@@ -276,17 +334,27 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void ShippedRegister_HasTheSettlementsInUse()
+        public void EmbeddedRegister_HasTheSettlementsInUse_WithoutAnyFile()
         {
-            string path = Path.Combine(AppContext.BaseDirectory, "TestData", FileNames.EkatteRegisterFile);
             var warnings = new List<string>();
 
-            EkatteRegister register = EkatteRegister.Load(path, warnings.Add);
+            EkatteRegister register = EkatteRegister.LoadWithDefaults(Path.Combine(_dir, "nope.csv"), warnings.Add);
 
-            Assert.Empty(warnings);
+            Assert.Empty(warnings); // a missing override file is normal
             Assert.True(register.Count > 5000);
             Assert.Equal("НА ТЕРИТОРИЯТА НА С. БРЕСТЕ, ЕКАТТЕ 06433, ОБЩ. ЧЕРВЕН БРЯГ, ОБЛ. ПЛЕВЕН", register.FormatTitle("06433", ""));
             Assert.Equal("НА ТЕРИТОРИЯТА НА ГР. ЧЕРВЕН БРЯГ, ЕКАТТЕ 80501, ОБЩ. ЧЕРВЕН БРЯГ, ОБЛ. ПЛЕВЕН", register.FormatTitle("80501", ""));
+            Assert.Equal("НА ТЕРИТОРИЯТА НА С. ЦАРЕВЕЦ, ЕКАТТЕ 78135, ОБЩ. МЕЗДРА, ОБЛ. ВРАЦА", register.FormatTitle("78135", ""));
+        }
+
+        [Fact]
+        public void FileInTemplates_OverridesMatchingCodes_AndKeepsTheEmbeddedRest()
+        {
+            EkatteRegister register = EkatteRegister.LoadWithDefaults(Write(
+                "ЕКАТТЕ;вид;име;община;област\r\n06433;с.;Нова Бресте;Друга;Друга област\r\n99999;с.;Ново;Общ;Обл\r\n"));
+
+            Assert.Equal("НА ТЕРИТОРИЯТА НА С. НОВА БРЕСТЕ, ЕКАТТЕ 06433, ОБЩ. ДРУГА, ОБЛ. ДРУГА ОБЛАСТ", register.FormatTitle("06433", ""));
+            Assert.Equal("НА ТЕРИТОРИЯТА НА С. НОВО, ЕКАТТЕ 99999, ОБЩ. ОБЩ, ОБЛ. ОБЛ", register.FormatTitle("99999", ""));
             Assert.Equal("НА ТЕРИТОРИЯТА НА С. ЦАРЕВЕЦ, ЕКАТТЕ 78135, ОБЩ. МЕЗДРА, ОБЛ. ВРАЦА", register.FormatTitle("78135", ""));
         }
     }

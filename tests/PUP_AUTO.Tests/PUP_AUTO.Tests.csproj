@@ -15,12 +15,6 @@
     <PackageReference Include="DocumentFormat.OpenXml" Version="2.20.0" />
   </ItemGroup>
 
-  <!-- The shipped reference data is tested as it is in _Templates -->
-  <ItemGroup>
-    <None Include="..\..\_Templates\EKATTE.csv" Link="TestData\EKATTE.csv" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\_Templates\Номенклатури\*.csv" Link="TestData\Номенклатури\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\..\PUP_AUTO.csproj" />
   </ItemGroup>

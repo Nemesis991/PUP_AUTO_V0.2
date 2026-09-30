@@ -6,9 +6,11 @@ namespace PUP_AUTO.CadRegister
     /// <summary>
     /// Reads ONE AGKK .cad file (format 4.02, MIK encoded) = one землище. Pure C#, no AutoCAD types.
     /// <para>
-    /// Every TABLE declares its fields with "F name ..." lines and then its rows with "D v1,v2,..." lines
-    /// (comma separated). Columns are always read BY FIELD NAME. Unknown sections, tables and fields are
-    /// skipped. A malformed row produces a warning with its line number and parsing continues.
+    /// Every TABLE declares its fields with "F name ..." lines and then its rows with "D v1,v2,..." lines:
+    /// comma separated, one value per field in F order, strings in double quotes, empty numbers/dates
+    /// as nothing between commas. The trailing comma is the (empty) last field, so a row must have
+    /// exactly as many values as declared fields. Columns are always read BY FIELD NAME. Unknown sections,
+    /// tables and fields are skipped. A malformed row produces a warning with its line number and parsing continues.
     /// Warnings never contain row content, so ЕГН/БУЛСТАТ and names cannot leak through them.
     /// </para>
     /// <para>Results are keyed by the full parcel ID "EKATTE.IDENT" so several files can be merged later.</para>
@@ -192,7 +194,7 @@ namespace PUP_AUTO.CadRegister
             }
 
             List<string> values = SplitCsv(rest);
-            if (values.Count > fields.Count)
+            if (values.Count != fields.Count)
             {
                 _warn($"ред {lineNumber}: таблица {tableName} — {values.Count} стойности за {fields.Count} полета, редът е пропуснат.");
                 return;
@@ -384,7 +386,10 @@ namespace PUP_AUTO.CadRegister
             return sb.ToString();
         }
 
-        /// <summary>Comma-separated values; a field may be wrapped in double quotes (with "" for a quote inside).</summary>
+        /// <summary>
+        /// Comma-separated values. A string is wrapped in double quotes and may contain unescaped quotes
+        /// ("ОБЩИНСКА СЛУЖБА "ЗГ"ГР.Ч.БРЯГ"), so a quote only ends the field when a comma or the end of the line follows.
+        /// </summary>
         public static List<string> SplitCsv(string line)
         {
             var values = new List<string>();
@@ -396,9 +401,8 @@ namespace PUP_AUTO.CadRegister
                 char c = line[i];
                 if (inQuotes)
                 {
-                    if (c != '"') sb.Append(c);
-                    else if (i + 1 < line.Length && line[i + 1] == '"') { sb.Append('"'); i++; }
-                    else inQuotes = false;
+                    if (c == '"' && EndsField(line, i)) inQuotes = false;
+                    else sb.Append(c);
                 }
                 else if (c == '"' && sb.ToString().Trim().Length == 0)
                 {
@@ -407,7 +411,7 @@ namespace PUP_AUTO.CadRegister
                 }
                 else if (c == ',')
                 {
-                    values.Add(CleanValue(sb.ToString()));
+                    values.Add(sb.ToString().Trim());
                     sb.Clear();
                 }
                 else
@@ -415,19 +419,16 @@ namespace PUP_AUTO.CadRegister
                     sb.Append(c);
                 }
             }
-            values.Add(CleanValue(sb.ToString()));
+            values.Add(sb.ToString().Trim());
             return values;
         }
 
-        /// <summary>Trims the value and strips one matching pair of single quotes. Nothing else is touched (ЕГН keeps leading zeros).</summary>
-        private static string CleanValue(string raw)
+        /// <summary>True when only spaces separate the quote at <paramref name="quote"/> from a comma or the end of the line.</summary>
+        private static bool EndsField(string line, int quote)
         {
-            string value = raw.Trim();
-            if (value.Length >= 2 && value[0] == '\'' && value[value.Length - 1] == '\'')
-            {
-                value = value.Substring(1, value.Length - 2).Trim();
-            }
-            return value;
+            int j = quote + 1;
+            while (j < line.Length && line[j] == ' ') j++;
+            return j >= line.Length || line[j] == ',';
         }
 
         private static int IndexOfWhitespace(string text)

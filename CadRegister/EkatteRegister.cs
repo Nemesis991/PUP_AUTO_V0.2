@@ -1,4 +1,5 @@
 using System.Text;
+using PUP_AUTO.Core;
 
 namespace PUP_AUTO.CadRegister
 {
@@ -25,6 +26,7 @@ namespace PUP_AUTO.CadRegister
 
         public int Count => _entries.Count;
 
+        /// <summary>Loads only the file; a missing file is a warning.</summary>
         public static EkatteRegister Load(string path, Action<string>? warn = null)
         {
             var register = new EkatteRegister();
@@ -33,8 +35,31 @@ namespace PUP_AUTO.CadRegister
                 warn?.Invoke($"Липсва регистърът на ЕКАТТЕ: {path}.");
                 return register;
             }
+            register.Merge(File.ReadAllLines(path, Encoding.UTF8), warn);
+            return register;
+        }
 
-            string[] lines = File.ReadAllLines(path, Encoding.UTF8);
+        /// <summary>
+        /// The embedded register, then the file (when it exists) on top: a code in the file replaces the embedded
+        /// entry of that code. A missing file is normal (no warning).
+        /// </summary>
+        public static EkatteRegister LoadWithDefaults(string? path, Action<string>? warn = null)
+        {
+            var register = new EkatteRegister();
+            string? embedded = EmbeddedDefaults.ReadText(FileNames.EkatteRegisterFile);
+            if (embedded != null)
+            {
+                register.Merge(EmbeddedDefaults.SplitLines(embedded), warn);
+            }
+            if (path != null && File.Exists(path))
+            {
+                register.Merge(File.ReadAllLines(path, Encoding.UTF8), warn);
+            }
+            return register;
+        }
+
+        private void Merge(string[] lines, Action<string>? warn)
+        {
             for (int i = 0; i < lines.Length; i++)
             {
                 string line = lines[i].Trim();
@@ -54,7 +79,7 @@ namespace PUP_AUTO.CadRegister
                     continue; // the header line
                 }
 
-                register._entries[code] = new EkatteEntry
+                _entries[code] = new EkatteEntry
                 {
                     Code = code,
                     Kind = cells[1].Trim(),
@@ -63,7 +88,6 @@ namespace PUP_AUTO.CadRegister
                     Province = cells[4].Trim()
                 };
             }
-            return register;
         }
 
         public void Add(EkatteEntry entry) => _entries[entry.Code] = entry;

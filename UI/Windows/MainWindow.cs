@@ -956,7 +956,7 @@ namespace PUP_AUTO.UI.Windows
                 var warnings = new List<string>();
                 Nomenclatures nomenclatures = Nomenclatures.Load(
                     Path.Combine(templateDir, FileNames.NomenclaturesFolder), warnings.Add);
-                EkatteRegister ekatte = EkatteRegister.Load(
+                EkatteRegister ekatte = EkatteRegister.LoadWithDefaults(
                     Path.Combine(templateDir, FileNames.EkatteRegisterFile), warnings.Add);
                 if (ekatte.Count > 0 && !ekatte.TryGet(register.Ekatte, out _))
                 {
