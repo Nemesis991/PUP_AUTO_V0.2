@@ -4,6 +4,7 @@ using System.Windows.Media;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
+using PUP_AUTO.CadRegister;
 using PUP_AUTO.Core;
 using PUP_AUTO.DataBridge;
 using PUP_AUTO.Geometry;
@@ -29,6 +30,10 @@ namespace PUP_AUTO.UI.Windows
         private CheckBox _chkCoordinates = null!;
         private CheckBox _chkMvpMathTest = null!;
         private CheckBox _chkPoleSteps = null!;
+        private CheckBox _chkCadControl = null!;
+        private CheckBox _chkAffectedRegister = null!;
+        private TextBox _txtRegisterProject = null!;
+        private TextBlock _lblCadRegister = null!;
         private TextBox _txtStartNumLeft = null!;
         private TextBox _txtStartNumRight = null!;
         private TextBox _txtSegmentDistance = null!;
@@ -38,6 +43,9 @@ namespace PUP_AUTO.UI.Windows
         private string _projectDir = string.Empty;
         private string? _cadFilePath;
         private string? _templateDirPath;
+
+        // The loaded AGKK .cad (one землище). Not bound to a drawing, so it survives switching drawings.
+        private CadRegisterData? _cadRegister;
 
         // Picks are data (ObjectIds) bound to the drawing they were made in; see "PICK STATE".
         private Document? _pickDoc;
@@ -111,6 +119,8 @@ namespace PUP_AUTO.UI.Windows
             fileGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             fileGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(8) });
             fileGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            fileGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(8) });
+            fileGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             fileGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             fileGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
             fileGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -132,6 +142,19 @@ namespace PUP_AUTO.UI.Windows
             btnTpl.Click += BtnBrowseTemplate_Click;
             Grid.SetRow(btnTpl, 2); Grid.SetColumn(btnTpl, 2);
             fileGrid.Children.Add(btnTpl);
+
+            _lblCadRegister = new TextBlock
+            {
+                Text = "(не е зареден .cad регистър)", FontSize = 12, Foreground = YellowBrush,
+                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            Grid.SetRow(_lblCadRegister, 4); Grid.SetColumn(_lblCadRegister, 0);
+            fileGrid.Children.Add(_lblCadRegister);
+
+            var btnLoadCad = MakeButton("📂 Зареди .cad");
+            btnLoadCad.Click += BtnLoadCadRegister_Click;
+            Grid.SetRow(btnLoadCad, 4); Grid.SetColumn(btnLoadCad, 2);
+            fileGrid.Children.Add(btnLoadCad);
 
             ((GroupBox)fileGroup).Content = fileGrid;
             mainGrid.Children.Add(fileGroup);
@@ -174,6 +197,26 @@ namespace PUP_AUTO.UI.Windows
             _chkCoordinates = new CheckBox { Content = "Генерирай координатни регистри", IsChecked = true, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
             _chkMvpMathTest = new CheckBox { Content = "🧪 MVP Математически тест (Excel)", IsChecked = false, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
             _chkPoleSteps = new CheckBox { Content = "📐 Таблица стъпки на стълбове (Excel)", IsChecked = false, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
+            _chkCadControl = new CheckBox { Content = "🔎 Контролна справка от .cad (Excel)", IsChecked = false, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
+            _chkAffectedRegister = new CheckBox
+            {
+                Content = "📋 Регистър на засегнатите имоти (Excel)", IsChecked = false, Foreground = TextBrush,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            _txtRegisterProject = new TextBox
+            {
+                Text = DefaultRegisterProject, Width = 220, Margin = new Thickness(12, 0, 0, 0),
+                Background = SurfaceBrush, Foreground = TextBrush, BorderBrush = Surface2Brush,
+                VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = "Текстът след \"РЕГИСТЪР НА ЗАСЕГНАТИТЕ ИМОТИ ОТ\""
+            };
+            var registerPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+            registerPanel.Children.Add(_chkAffectedRegister);
+            registerPanel.Children.Add(new TextBlock
+            {
+                Text = "обект:", Foreground = SubtextBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0)
+            });
+            registerPanel.Children.Add(_txtRegisterProject);
             
             var numsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
             numsPanel.Children.Add(new TextBlock { Text = "Старт Ляво:", Foreground = SubtextBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) });
@@ -219,6 +262,8 @@ namespace PUP_AUTO.UI.Windows
             optStack.Children.Add(_chkCoordinates);
             optStack.Children.Add(_chkMvpMathTest);
             optStack.Children.Add(_chkPoleSteps);
+            optStack.Children.Add(_chkCadControl);
+            optStack.Children.Add(registerPanel);
             optStack.Children.Add(numsPanel);
             ((GroupBox)optGroup).Content = optStack;
             mainGrid.Children.Add(optGroup);
@@ -374,6 +419,54 @@ namespace PUP_AUTO.UI.Windows
                     _templateDirPath = dlg.SelectedPath;
                     _txtTemplatePath.Text = dlg.SelectedPath;
                 }
+            }
+        }
+
+        private const int MaxWindowWarnings = 20;
+
+        /// <summary>Loads ONE AGKK .cad (one землище). Warnings go to the log file in full and to the window in part.</summary>
+        private void BtnLoadCadRegister_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Изберете .cad файл на землището (АГКК)",
+                Filter = "AGKK .cad (*.cad)|*.cad|All Files (*.*)|*.*",
+                InitialDirectory = _projectDir
+            };
+            if (dlg.ShowDialog() != true) return;
+
+            try
+            {
+                EnsureServices();
+
+                var warnings = new List<string>();
+                CadRegisterData register = new CadRegisterReader(warnings.Add).ReadFile(dlg.FileName);
+                _cadRegister = register;
+
+                _lblCadRegister.Text = $"✅ ЕКАТТЕ {register.Ekatte} — {register.SettlementName} · {register.Parcels.Count} имота";
+                _lblCadRegister.Foreground = GreenBrush;
+                _lblCadRegister.ToolTip = dlg.FileName;
+
+                // Counts only: no names and no ЕГН/БУЛСТАТ in the log
+                AppendLog($".cad заредено: ЕКАТТЕ {register.Ekatte}, {register.SettlementName} — " +
+                          $"{register.Parcels.Count} имота, {register.Rights.Values.Sum(r => r.Count)} права, {register.PersonCount} лица.");
+
+                foreach (string warning in warnings) _logger!.LogWarning(warning);
+                foreach (string warning in warnings.Take(MaxWindowWarnings)) AppendLog($"ПРЕДУПРЕЖДЕНИЕ: {warning}");
+                if (warnings.Count > MaxWindowWarnings)
+                {
+                    AppendLog($"… още {warnings.Count - MaxWindowWarnings} предупреждения — виж {FileNames.LogFile}.");
+                }
+
+                if (register.Parcels.Count == 0)
+                {
+                    AppendLog("ПРЕДУПРЕЖДЕНИЕ: В .cad няма имоти (таблица POZEMLIMOTI) — проверете файла.");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ГРЕШКА при зареждане на .cad: {ex.Message}");
+                _logger?.LogError($"Loading .cad failed: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
@@ -735,8 +828,10 @@ namespace PUP_AUTO.UI.Windows
             {
                 if (!TryUsePicks(out Document doc)) return;
 
-                // Pole-steps table: needs only poles and parcels (no servitude). Independent of
-                // the MVP test and of the placeholder Generate-All.
+                // Standalone tables: independent of the MVP test and of the placeholder Generate-All.
+                bool ranStandalone = false;
+
+                // Pole-steps table: needs only poles and parcels (no servitude).
                 if (_chkPoleSteps.IsChecked == true)
                 {
                     if (_polePicks.Count == 0 || _parcelPicks.Count == 0)
@@ -747,8 +842,40 @@ namespace PUP_AUTO.UI.Windows
                     }
 
                     RunPoleStepsTable(doc);
-                    if (_chkMvpMathTest.IsChecked != true) return;
+                    ranStandalone = true;
                 }
+
+                // Control report from the loaded .cad: needs the .cad and the parcels only.
+                if (_chkCadControl.IsChecked == true)
+                {
+                    if (_cadRegister == null || _parcelPicks.Count == 0)
+                    {
+                        if (_cadRegister == null) AppendLog("ГРЕШКА: Не е зареден .cad регистър (бутон \"Зареди .cad\")!");
+                        if (_parcelPicks.Count == 0) AppendLog("ГРЕШКА: Не са избрани имоти!");
+                        return;
+                    }
+
+                    RunCadControlReport(doc, _cadRegister);
+                    ranStandalone = true;
+                }
+
+                // Register of affected parcels: needs the .cad, the servitude, the poles and the parcels.
+                if (_chkAffectedRegister.IsChecked == true)
+                {
+                    if (_cadRegister == null || _servitudeId.IsNull || _polePicks.Count == 0 || _parcelPicks.Count == 0)
+                    {
+                        if (_cadRegister == null) AppendLog("ГРЕШКА: Не е зареден .cad регистър (бутон \"Зареди .cad\")!");
+                        if (_servitudeId.IsNull) AppendLog("ГРЕШКА: Не е избран сервитут!");
+                        if (_polePicks.Count == 0) AppendLog("ГРЕШКА: Не са избрани стълбове!");
+                        if (_parcelPicks.Count == 0) AppendLog("ГРЕШКА: Не са избрани имоти!");
+                        return;
+                    }
+
+                    RunAffectedParcelsRegister(doc, _cadRegister);
+                    ranStandalone = true;
+                }
+
+                if (ranStandalone && _chkMvpMathTest.IsChecked != true) return;
 
                 if (_servitudeId.IsNull)  { AppendLog("ГРЕШКА: Не е избран сервитут!"); return; }
                 if (_polePicks.Count == 0) { AppendLog("ГРЕШКА: Не са избрани стълбове!"); return; }
@@ -838,6 +965,194 @@ namespace PUP_AUTO.UI.Windows
                 AppendLog($"ГРЕШКА при таблицата със стъпки: {ex.Message}");
                 _logger?.LogError($"Pole steps table failed: {ex.Message}\n{ex.StackTrace}");
             }
+        }
+
+        /// <summary>
+        /// Builds Контролна_справка_cad.xlsx: the picked parcels against the loaded .cad, one row per right.
+        /// Only the drawn areas are read from the drawing, in a short transaction under a document lock;
+        /// everything else works on plain data. Personal data (ЕГН/БУЛСТАТ, names) never goes to the log.
+        /// </summary>
+        private void RunCadControlReport(Document doc, CadRegisterData register)
+        {
+            try
+            {
+                AppendLog("── СТАРТИРАНЕ НА КОНТРОЛНА СПРАВКА ОТ .CAD ──");
+                EnsureServices();
+
+                var drawn = new List<KeyValuePair<string, double>>();
+                using (doc.LockDocument())
+                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+                {
+                    foreach (var parcel in OpenParcels(tr))
+                    {
+                        drawn.Add(new KeyValuePair<string, double>(parcel.Key, parcel.Value.Area));
+                    }
+                    tr.Commit();
+                }
+
+                string templateDir = _templateDirPath ?? Path.Combine(_projectDir, FileNames.TemplatesFolder);
+                var warnings = new List<string>();
+                Nomenclatures nomenclatures = Nomenclatures.Load(
+                    Path.Combine(templateDir, FileNames.NomenclaturesFolder), warnings.Add);
+                EkatteRegister ekatte = EkatteRegister.LoadWithDefaults(
+                    Path.Combine(templateDir, FileNames.EkatteRegisterFile), warnings.Add);
+                if (ekatte.Count > 0 && !ekatte.TryGet(register.Ekatte, out _))
+                {
+                    warnings.Add($"ЕКАТТЕ {register.Ekatte} не е в регистъра на ЕКАТТЕ — заглавието е непълно.");
+                }
+
+                string title = ekatte.FormatTitle(register.Ekatte, register.SettlementName);
+                CadControlReport report = CadControlReportBuilder.Build(drawn, register, nomenclatures, title);
+
+                // The nomenclature warnings ("no text for code N") are raised while the report is built
+                foreach (string warning in warnings) LogWarning(warning);
+
+                if (report.ForeignEkatte.Count > 0)
+                {
+                    LogWarning($"{report.ForeignEkatte.Count} избрани имота са с ЕКАТТЕ, различно от заредения .cad ({register.Ekatte}): " +
+                               JoinLimited(report.ForeignEkatte.Select(f => $"{f.Key} (ЕКАТТЕ {f.Value})"), 10));
+                }
+                if (report.NotFound.Count > 0)
+                {
+                    LogWarning($"{report.NotFound.Count} избрани имота не са намерени в .cad: " +
+                               JoinLimited(report.NotFound, 30));
+                }
+                if (report.WithoutRights.Count > 0)
+                {
+                    LogWarning($"{report.WithoutRights.Count} имота нямат права в .cad (един ред без собственик): " +
+                               JoinLimited(report.WithoutRights, 30));
+                }
+
+                if (report.Rows.Count == 0)
+                {
+                    AppendLog("ГРЕШКА: Нито един избран имот не е намерен в .cad — файлът не е записан.");
+                    return;
+                }
+
+                string path = CadControlReportExporter.Export(report, _projectDir);
+                int parcelCount = report.Rows.Select(r => r.ParcelId).Distinct().Count();
+                AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}: {report.Rows.Count} реда, {parcelCount} имота.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ГРЕШКА при контролната справка: {ex.Message}");
+                _logger?.LogError($"Cad control report failed: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// Builds Регистър_на_засегнатите_имоти.xlsx from the picked servitude, poles and parcels and the loaded .cad.
+        /// Short transaction under a document lock; the in-memory footprints are disposed before anything is written.
+        /// Personal data (ЕГН/БУЛСТАТ, names) never goes to the log.
+        /// </summary>
+        private void RunAffectedParcelsRegister(Document doc, CadRegisterData register)
+        {
+            try
+            {
+                AppendLog("── СТАРТИРАНЕ НА РЕГИСТЪР НА ЗАСЕГНАТИТЕ ИМОТИ ──");
+                EnsureServices();
+                var topo = new TopologyProcessor(_logger!);
+
+                RegisterGeometry? geometry = null;
+                using (doc.LockDocument())
+                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+                {
+                    Polyline? servitude = OpenPolyline(tr, _servitudeId);
+                    if (servitude == null)
+                    {
+                        AppendLog("ГРЕШКА: Сервитутът вече не съществува в чертежа — изберете отново.");
+                        return;
+                    }
+
+                    var parcels = OpenParcels(tr);
+                    var entries = ExtractPoles(tr);
+                    try
+                    {
+                        geometry = topo.ComputeRegisterGeometry(servitude, PoleFootprints(entries), parcels);
+                        tr.Commit();
+                    }
+                    finally
+                    {
+                        DisposeFootprints(entries);
+                    }
+                }
+
+                foreach (var step in PoleStepsTableBuilder.FindUncoveredSteps(
+                    geometry!.Footprints, geometry.Pieces, GeometryTolerances.SliverAreaSqm))
+                {
+                    LogWarning(PoleStepsTableBuilder.FormatUncoveredWarning(step));
+                }
+
+                string templateDir = _templateDirPath ?? Path.Combine(_projectDir, FileNames.TemplatesFolder);
+                var warnings = new List<string>();
+                Nomenclatures nomenclatures = Nomenclatures.Load(
+                    Path.Combine(templateDir, FileNames.NomenclaturesFolder), warnings.Add);
+                EkatteRegister ekatte = EkatteRegister.LoadWithDefaults(
+                    Path.Combine(templateDir, FileNames.EkatteRegisterFile), warnings.Add);
+                if (ekatte.Count > 0 && !ekatte.TryGet(register.Ekatte, out _))
+                {
+                    warnings.Add($"ЕКАТТЕ {register.Ekatte} не е в регистъра на ЕКАТТЕ — заглавието е непълно.");
+                }
+
+                string project = string.IsNullOrWhiteSpace(_txtRegisterProject.Text) ? DefaultRegisterProject : _txtRegisterProject.Text;
+                AffectedRegister report = AffectedParcelsRegisterBuilder.Build(
+                    geometry.Parcels, geometry.Pieces, register, nomenclatures, project,
+                    ekatte.FormatTitle(register.Ekatte, register.SettlementName));
+
+                // The nomenclature warnings ("no text for code N") are raised while the register is built
+                foreach (string warning in warnings) LogWarning(warning);
+
+                var foreign = report.NotFound.Where(id =>
+                {
+                    string e = CadRegisterData.EkatteOf(id);
+                    return e.Length > 0 && e != register.Ekatte;
+                }).ToList();
+                if (foreign.Count > 0)
+                {
+                    LogWarning($"{foreign.Count} избрани имота са с ЕКАТТЕ, различно от заредения .cad ({register.Ekatte}): " +
+                               JoinLimited(foreign, 10));
+                }
+                if (report.NotFound.Count > 0)
+                {
+                    LogWarning($"{report.NotFound.Count} избрани имота не са намерени в .cad (ред само с площите от чертежа): " +
+                               JoinLimited(report.NotFound, 30));
+                }
+                if (report.WithoutOwners.Count > 0)
+                {
+                    LogWarning($"{report.WithoutOwners.Count} имота нямат собственик (право 1) в .cad — ред без собственик: " +
+                               JoinLimited(report.WithoutOwners, 30));
+                }
+                if (report.NegativeRemainder.Count > 0)
+                {
+                    LogWarning($"Отрицателен остатък при {report.NegativeRemainder.Count} имота: " +
+                               JoinLimited(report.NegativeRemainder, 30));
+                }
+
+                string path = AffectedParcelsRegisterExporter.Export(report, _projectDir);
+                int parcelCount = report.Rows.Count(r => r.IsFirstOfParcel);
+                AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}: {parcelCount} имота, {report.Rows.Count} реда.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ГРЕШКА при регистъра на засегнатите имоти: {ex.Message}");
+                _logger?.LogError($"Affected parcels register failed: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        private const string DefaultRegisterProject = "НОВА ВЛ 110kV";
+
+        /// <summary>Writes a warning to the window log and to the log file.</summary>
+        private void LogWarning(string message)
+        {
+            AppendLog($"ПРЕДУПРЕЖДЕНИЕ: {message}");
+            _logger?.LogWarning(message);
+        }
+
+        private static string JoinLimited(IEnumerable<string> items, int limit)
+        {
+            List<string> all = items.ToList();
+            string shown = string.Join(", ", all.Take(limit));
+            return all.Count > limit ? $"{shown} … и още {all.Count - limit}" : shown;
         }
 
         private void RunGenerate(

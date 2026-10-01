@@ -10,6 +10,10 @@ namespace PUP_AUTO.Core
         public const string ReportXlsFile = "PUP_Report.xls";
         public const string MvpMathTestFile = "MVP_Math_Test_Parcels.xlsx";
         public const string PoleStepsFile = "Стъпки_на_стълбове.xlsx";
+        public const string CadControlReportFile = "Контролна_справка_cad.xlsx";
+        public const string AffectedParcelsRegisterFile = "Регистър_на_засегнатите_имоти.xlsx";
+        public const string NomenclaturesFolder = "Номенклатури";
+        public const string EkatteRegisterFile = "EKATTE.csv";
     }
 
     /// <summary>Parcel XData: registered application name and the ID sentinels returned when it cannot be read.</summary>

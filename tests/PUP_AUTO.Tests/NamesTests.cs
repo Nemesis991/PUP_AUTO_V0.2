@@ -16,6 +16,9 @@ namespace PUP_AUTO.Tests
             Assert.Equal("TemplateC.cad", FileNames.CadLibraryFile);
             Assert.Equal("PUP_Report.xls", FileNames.ReportXlsFile);
             Assert.Equal("MVP_Math_Test_Parcels.xlsx", FileNames.MvpMathTestFile);
+            Assert.Equal("Контролна_справка_cad.xlsx", FileNames.CadControlReportFile);
+            Assert.Equal("Номенклатури", FileNames.NomenclaturesFolder);
+            Assert.Equal("EKATTE.csv", FileNames.EkatteRegisterFile);
         }
 
         [Fact]
