@@ -10,9 +10,9 @@
 - [x] `ExtractPolylineVertices()` — Координатен регистър за стълбове и сервитут
 - [x] Генератори за Templates 05 и 06 — имплементирани (`GenerateBalancesMunicipality`, `GenerateRecapitulation`)
 - [x] TECHNICAL_DOCUMENTATION.md — пълно преписване с всички компоненти
-- [x] `GeometrySanitizer.cs` — Densify/clean на полилинии (използва се от `PUP_SERV`, "✂ Сегментиране" и `CalculateServitudeIntersections`)
+- [x] `GeometrySanitizer.cs` — Densify/clean на полилинии (използва се от `PUP_SERV` и `CalculateServitudeIntersections`)
 - [x] `PoleFootprintExtractor.cs` — P-tag извличане на 4-точков контур от динамичен блок, вкл. поддръжка на visibility state
-- [x] `ServitudeMarkerGenerator.cs` — 20м номерирани маркери по двете страни на сервитута ("📍 Само Точки")
+- [x] `ServitudeMarkerGenerator.cs` — 20м номерирани маркери по двете страни на сервитута (бутонът "Само Точки" е премахнат от прозореца; кодът е запазен)
 - [x] `PUP_SERV` / `PUP_DRAW_FOOTPRINTS` команди — диагностични/чертожни, извън основния отчетен pipeline
 - [x] `RunMvpMathTest()` + `MvpMathTestExporter.ExportMathTest()` — диагностичен path за проверка на площния баланс (Gross/Net/Pole), извикван от "🧪 MVP Математически тест"
 - [x] Документация актуализирана (2026-09-28) с всички гореизброени компоненти + коригирано описание на причисляването на стълбове (виж т.4)
@@ -38,7 +38,7 @@
   - `App.cs` — `IExtensionApplication` входна точка, Ribbon Tab създаване
   - `MainCommands.cs` — `PUP_WINDOW`, `PUP_SERV`, `PUP_DRAW_FOOTPRINTS` команди, `BuildReportRows()`
   - `Windows/`
-    - `MainWindow.cs` — WPF модален прозорец (Catppuccin Mocha тема), вкл. MVP Math Test checkbox и бутони за маркери/сегментиране **(ново документирано)**
+    - `MainWindow.cs` — WPF немодален прозорец в три стъпки (.cad → геометрии → справки) с етикети за готовност по справка; тема в `Theme.cs`
 - `_TestFiles/`
   - `TemplateC.cad` — Кадастрален текстов регистър (входни данни)
 - `_Templates/`

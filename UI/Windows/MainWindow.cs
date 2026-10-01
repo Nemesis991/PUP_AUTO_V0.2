@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -9,40 +11,62 @@ using PUP_AUTO.Core;
 using PUP_AUTO.DataBridge;
 using PUP_AUTO.Geometry;
 using PUP_AUTO.Semantics;
+using static PUP_AUTO.UI.Windows.Theme;
 using Application = Autodesk.AutoCAD.ApplicationServices.Application;
 
 namespace PUP_AUTO.UI.Windows
 {
     /// <summary>
     /// PUP_AUTO main WPF window built entirely in code (no XAML required).
-    /// Handles file browsing, geometry picking from AutoCAD, and report generation.
+    /// Three steps: load the .cad register, pick the geometries from the drawing, tick the reports and generate.
+    /// Each report shows which inputs it needs and turns them green as they are loaded or picked.
     /// </summary>
     public class MainWindow : Window
     {
+        /// <summary>An input a report needs.</summary>
+        private enum Requirement { Cad, Servitude, Poles, Parcels }
+
+        private static readonly Requirement[] AllRequirements =
+            { Requirement.Cad, Requirement.Servitude, Requirement.Poles, Requirement.Parcels };
+
+        /// <summary>One report row: its checkbox, its card and one chip per required input.</summary>
+        private sealed class ReportOption
+        {
+            public string Title = string.Empty;
+            public Requirement[] Needs = Array.Empty<Requirement>();
+            public CheckBox Check = null!;
+            public Border Card = null!;
+            public readonly Dictionary<Requirement, (Border Chip, TextBlock Label)> Chips =
+                new Dictionary<Requirement, (Border, TextBlock)>();
+            public bool IsChecked => Check.IsChecked == true;
+        }
+
+        /// <summary>A pick tile: the button, its icon and its status line.</summary>
+        private sealed class PickTile
+        {
+            public Button Button = null!;
+            public TextBlock Icon = null!;
+            public TextBlock Status = null!;
+        }
+
         // ---- UI Controls ----
-        private TextBox _txtCadPath = null!;
-        private TextBox _txtTemplatePath = null!;
-        private TextBlock _lblServitude = null!;
-        private TextBlock _lblPoles = null!;
-        private TextBlock _lblParcels = null!;
-        private CheckBox _chkExcel = null!;
-        private CheckBox _chkWord = null!;
-        private CheckBox _chkCoordinates = null!;
-        private CheckBox _chkMvpMathTest = null!;
-        private CheckBox _chkPoleSteps = null!;
-        private CheckBox _chkCadControl = null!;
-        private CheckBox _chkAffectedRegister = null!;
-        private TextBox _txtRegisterProject = null!;
         private TextBlock _lblCadRegister = null!;
-        private TextBox _txtStartNumLeft = null!;
-        private TextBox _txtStartNumRight = null!;
-        private TextBox _txtSegmentDistance = null!;
+        private TextBlock _lblCadDetails = null!;
+        private PickTile _tileServitude = null!;
+        private PickTile _tilePoles = null!;
+        private PickTile _tileParcels = null!;
+        private ReportOption _optMvpMathTest = null!;
+        private ReportOption _optPoleSteps = null!;
+        private ReportOption _optCadControl = null!;
+        private ReportOption _optAffectedRegister = null!;
+        private readonly List<ReportOption> _reports = new List<ReportOption>();
+        private TextBox _txtRegisterProject = null!;
         private TextBox _txtLog = null!;
+        private Button _btnGenerate = null!;
+        private Button _btnOpenFolder = null!;
 
         // ---- State ----
         private string _projectDir = string.Empty;
-        private string? _cadFilePath;
-        private string? _templateDirPath;
 
         // The loaded AGKK .cad (one землище). Not bound to a drawing, so it survives switching drawings.
         private CadRegisterData? _cadRegister;
@@ -56,25 +80,25 @@ namespace PUP_AUTO.UI.Windows
         private SelectionService? _selection;
         private Logger? _logger;
 
-        // ---- Colors (Catppuccin Mocha dark theme) ----
-        private static readonly SolidColorBrush BgBrush       = B("#1E1E2E");
-        private static readonly SolidColorBrush SurfaceBrush   = B("#313244");
-        private static readonly SolidColorBrush Surface2Brush  = B("#45475A");
-        private static readonly SolidColorBrush AccentBrush    = B("#89B4FA");
-        private static readonly SolidColorBrush TextBrush      = B("#CDD6F4");
-        private static readonly SolidColorBrush SubtextBrush   = B("#A6ADC8");
-        private static readonly SolidColorBrush GreenBrush     = B("#A6E3A1");
-        private static readonly SolidColorBrush RedBrush       = B("#F38BA8");
-        private static readonly SolidColorBrush YellowBrush    = B("#F9E2AF");
-
-        private static SolidColorBrush B(string hex) =>
-            new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-
         public MainWindow()
         {
+            string? themeError = null;
+            try
+            {
+                Resources = LoadStyles();
+            }
+            catch (Exception ex)
+            {
+                // The window still works with the default WPF look
+                themeError = ex.Message;
+            }
+
             BuildUI();
             ResolveDefaults();
+            UpdateReadiness();
             Application.DocumentManager.DocumentToBeDestroyed += OnDocumentToBeDestroyed;
+
+            if (themeError != null) AppendLog($"ПРЕДУПРЕЖДЕНИЕ: Темата на прозореца не се зареди ({themeError}).");
         }
 
         // ================================================================
@@ -83,275 +107,411 @@ namespace PUP_AUTO.UI.Windows
 
         private void BuildUI()
         {
-            Title = "ПУП АВТОМАТИЗАЦИЯ — PUP_AUTO v0.1";
-            Width = 720;
-            Height = 620;
+            Title = "ПУП Автоматизация — PUP_AUTO";
+            Width = 760;
+            Height = 860;
+            MinWidth = 600;
+            MinHeight = 520;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             ResizeMode = ResizeMode.CanResizeWithGrip;
             Background = BgBrush;
+            Foreground = TextBrush;
+            FontFamily = UiFont;
+            FontSize = 13;
+            UseLayoutRounding = true;
+            TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
 
-            var mainGrid = new Grid { Margin = new Thickness(20) };
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });  // 0: Header
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });  // 1: Files
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });  // 2: Geometry
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });  // 3: Options
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 4: Log
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });  // 5: Generate
+            var root = new Grid();
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                       // 0: Header
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });  // 1: Steps + log (scrolls)
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                       // 2: Footer
 
-            // ── Row 0: Header ──
-            var header = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
+            // ── Header ──
+            var header = new StackPanel { Margin = new Thickness(24, 20, 24, 12) };
+            header.Children.Add(new TextBlock { Text = "ПУП Автоматизация", FontSize = 22, FontWeight = FontWeights.SemiBold });
             header.Children.Add(new TextBlock
             {
-                Text = "⚡ ПУП АВТОМАТИЗАЦИЯ",
-                FontSize = 22, FontWeight = FontWeights.Bold, Foreground = AccentBrush
-            });
-            header.Children.Add(new TextBlock
-            {
-                Text = "Автоматично генериране на баланси и регистри за засегнати имоти",
-                FontSize = 12, Foreground = SubtextBrush, Margin = new Thickness(0, 4, 0, 0)
+                Text = "Справки и регистри за имотите, засегнати от сервитута и стълбовете",
+                Foreground = SubtextBrush, Margin = new Thickness(0, 4, 0, 0), TextWrapping = TextWrapping.Wrap
             });
             Grid.SetRow(header, 0);
-            mainGrid.Children.Add(header);
+            root.Children.Add(header);
 
-            // ── Row 1: File Selection ──
-            var fileGroup = MakeGroupBox("📂 Входни файлове", 1);
-            var fileGrid = new Grid();
-            fileGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            fileGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(8) });
-            fileGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            fileGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(8) });
-            fileGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            fileGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            fileGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
-            fileGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            // ── Steps ──
+            var steps = new StackPanel { Margin = new Thickness(24, 0, 24, 0) };
+            steps.Children.Add(BuildCadCard());
+            steps.Children.Add(BuildPickCard());
+            steps.Children.Add(BuildReportsCard());
+            steps.Children.Add(BuildLogCard());
 
-            _txtCadPath = MakeTextBox("(Автоматично от папка на чертежа)", true);
-            Grid.SetRow(_txtCadPath, 0); Grid.SetColumn(_txtCadPath, 0);
-            fileGrid.Children.Add(_txtCadPath);
+            var scroll = new ScrollViewer
+            {
+                Content = steps,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
+            Grid.SetRow(scroll, 1);
+            root.Children.Add(scroll);
 
-            var btnCad = MakeButton("📁 CSV Регистър");
-            btnCad.Click += BtnBrowseCad_Click;
-            Grid.SetRow(btnCad, 0); Grid.SetColumn(btnCad, 2);
-            fileGrid.Children.Add(btnCad);
+            // ── Footer ──
+            var footer = new Border
+            {
+                Background = CardBrush, BorderBrush = CardBorderBrush, BorderThickness = new Thickness(0, 1, 0, 0),
+                Padding = new Thickness(24, 14, 24, 14)
+            };
+            var footerGrid = new Grid();
+            footerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            footerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            _txtTemplatePath = MakeTextBox("(Автоматично от _Templates)", true);
-            Grid.SetRow(_txtTemplatePath, 2); Grid.SetColumn(_txtTemplatePath, 0);
-            fileGrid.Children.Add(_txtTemplatePath);
+            _btnOpenFolder = new Button
+            {
+                Content = IconText(GlyphFolder, "Отвори папката"),
+                Margin = new Thickness(0, 0, 12, 0), Visibility = System.Windows.Visibility.Collapsed,
+                ToolTip = "Отваря папката на чертежа, където се записват справките"
+            };
+            _btnOpenFolder.Click += BtnOpenFolder_Click;
+            Grid.SetColumn(_btnOpenFolder, 0);
+            footerGrid.Children.Add(_btnOpenFolder);
 
-            var btnTpl = MakeButton("📁 Шаблони");
-            btnTpl.Click += BtnBrowseTemplate_Click;
-            Grid.SetRow(btnTpl, 2); Grid.SetColumn(btnTpl, 2);
-            fileGrid.Children.Add(btnTpl);
+            _btnGenerate = new Button { Style = KeyedStyle(PrimaryButton) };
+            _btnGenerate.Click += BtnGenerate_Click;
+            Grid.SetColumn(_btnGenerate, 1);
+            footerGrid.Children.Add(_btnGenerate);
 
+            footer.Child = footerGrid;
+            Grid.SetRow(footer, 2);
+            root.Children.Add(footer);
+
+            Content = root;
+        }
+
+        /// <summary>Step 1: the AGKK .cad register of the землище.</summary>
+        private UIElement BuildCadCard()
+        {
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var status = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             _lblCadRegister = new TextBlock
             {
-                Text = "(не е зареден .cad регистър)", FontSize = 12, Foreground = YellowBrush,
-                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis
+                Text = "Не е зареден .cad файл", FontWeight = FontWeights.SemiBold, Foreground = WarningBrush,
+                TextTrimming = TextTrimming.CharacterEllipsis
             };
-            Grid.SetRow(_lblCadRegister, 4); Grid.SetColumn(_lblCadRegister, 0);
-            fileGrid.Children.Add(_lblCadRegister);
-
-            var btnLoadCad = MakeButton("📂 Зареди .cad");
-            btnLoadCad.Click += BtnLoadCadRegister_Click;
-            Grid.SetRow(btnLoadCad, 4); Grid.SetColumn(btnLoadCad, 2);
-            fileGrid.Children.Add(btnLoadCad);
-
-            ((GroupBox)fileGroup).Content = fileGrid;
-            mainGrid.Children.Add(fileGroup);
-
-            // ── Row 2: Geometry Pick ──
-            var geoGroup = MakeGroupBox("🎯 Избор на геометрии от чертежа", 2);
-            var geoGrid = new Grid();
-            geoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            geoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
-            geoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            geoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
-            geoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            // Servitude pick button
-            _lblServitude = new TextBlock { Text = "(не е избран)", FontSize = 10, Foreground = YellowBrush, HorizontalAlignment = HorizontalAlignment.Center };
-            var btnServ = MakePickButton("🔲 Сервитут", _lblServitude);
-            btnServ.Click += BtnPickServitude_Click;
-            Grid.SetColumn(btnServ, 0); geoGrid.Children.Add(btnServ);
-
-            // Poles pick button
-            _lblPoles = new TextBlock { Text = "(не са избрани)", FontSize = 10, Foreground = YellowBrush, HorizontalAlignment = HorizontalAlignment.Center };
-            var btnPole = MakePickButton("📍 Стълбове", _lblPoles);
-            btnPole.Click += BtnPickPoles_Click;
-            Grid.SetColumn(btnPole, 2); geoGrid.Children.Add(btnPole);
-
-            // Parcels pick button
-            _lblParcels = new TextBlock { Text = "(не са избрани)", FontSize = 10, Foreground = YellowBrush, HorizontalAlignment = HorizontalAlignment.Center };
-            var btnParc = MakePickButton("🗺️ Имоти", _lblParcels);
-            btnParc.Click += BtnPickParcels_Click;
-            Grid.SetColumn(btnParc, 4); geoGrid.Children.Add(btnParc);
-
-            ((GroupBox)geoGroup).Content = geoGrid;
-            mainGrid.Children.Add(geoGroup);
-
-            // ── Row 3: Output Options ──
-            var optGroup = MakeGroupBox("📤 Генериране", 3);
-            var optStack = new StackPanel();
-            _chkExcel = new CheckBox { Content = "Генерирай Excel отчет (.xls)", IsChecked = true, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 4) };
-            _chkWord = new CheckBox { Content = "Генерирай Word регистри (.docm)", IsChecked = true, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 4) };
-            _chkCoordinates = new CheckBox { Content = "Генерирай координатни регистри", IsChecked = true, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
-            _chkMvpMathTest = new CheckBox { Content = "🧪 MVP Математически тест (Excel)", IsChecked = false, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
-            _chkPoleSteps = new CheckBox { Content = "📐 Таблица стъпки на стълбове (Excel)", IsChecked = false, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
-            _chkCadControl = new CheckBox { Content = "🔎 Контролна справка от .cad (Excel)", IsChecked = false, Foreground = TextBrush, Margin = new Thickness(0, 0, 0, 8) };
-            _chkAffectedRegister = new CheckBox
+            _lblCadDetails = new TextBlock
             {
-                Content = "📋 Регистър на засегнатите имоти (Excel)", IsChecked = false, Foreground = TextBrush,
-                VerticalAlignment = VerticalAlignment.Center
+                Text = "Файлът на землището от АГКК. Нужен е за контролната справка и регистъра.",
+                FontSize = 12, Foreground = SubtextBrush, Margin = new Thickness(0, 3, 0, 0),
+                TextWrapping = TextWrapping.Wrap
             };
+            status.Children.Add(_lblCadRegister);
+            status.Children.Add(_lblCadDetails);
+            grid.Children.Add(status);
+
+            var btnLoadCad = new Button
+            {
+                Content = IconText(GlyphOpenFile, "Зареди .cad"),
+                Margin = new Thickness(16, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center
+            };
+            btnLoadCad.Click += BtnLoadCadRegister_Click;
+            Grid.SetColumn(btnLoadCad, 1);
+            grid.Children.Add(btnLoadCad);
+
+            return MakeCard(1, "Кадастрален регистър", null, grid);
+        }
+
+        /// <summary>Step 2: the servitude, pole and parcel picks.</summary>
+        private UIElement BuildPickCard()
+        {
+            var tiles = new UniformGrid { Columns = 3, Margin = new Thickness(-5, 0, -5, 0) };
+
+            _tileServitude = MakePickTile(GlyphLayers, "Сервитут", "Не е избран");
+            _tileServitude.Button.Click += BtnPickServitude_Click;
+            tiles.Children.Add(_tileServitude.Button);
+
+            _tilePoles = MakePickTile(GlyphPin, "Стълбове", "Не са избрани");
+            _tilePoles.Button.Click += BtnPickPoles_Click;
+            tiles.Children.Add(_tilePoles.Button);
+
+            _tileParcels = MakePickTile(GlyphParcels, "Имоти", "Не са избрани");
+            _tileParcels.Button.Click += BtnPickParcels_Click;
+            tiles.Children.Add(_tileParcels.Button);
+
+            return MakeCard(2, "Геометрии от чертежа",
+                "Натиснете и изберете обектите в чертежа. Изборът важи за текущия чертеж.", tiles);
+        }
+
+        /// <summary>Step 3: the reports, each with the inputs it needs.</summary>
+        private UIElement BuildReportsCard()
+        {
+            var list = new StackPanel();
+
+            _optMvpMathTest = AddReport(list, "MVP математически тест",
+                "Площи в сервитута и под стълбовете по имоти, с проверка на баланса.",
+                Requirement.Servitude, Requirement.Poles, Requirement.Parcels);
+
+            _optPoleSteps = AddReport(list, "Таблица стъпки на стълбове",
+                "Площта на всяка стъпка, разделена по имоти.",
+                Requirement.Poles, Requirement.Parcels);
+
+            _optCadControl = AddReport(list, "Контролна справка от .cad",
+                "Избраните имоти срещу данните в .cad, по един ред на право.",
+                Requirement.Cad, Requirement.Parcels);
+
+            _optAffectedRegister = AddReport(list, "Регистър на засегнатите имоти",
+                "Собственици и засегнати площи по имоти.",
+                AllRequirements);
+
+            // The register's object name sits under its row, outside the checkbox
+            var projectRow = new Grid { Margin = new Thickness(32, 10, 0, 0) };
+            projectRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            projectRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            projectRow.Children.Add(new TextBlock
+            {
+                Text = "Обект", Foreground = SubtextBrush, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 10, 0)
+            });
             _txtRegisterProject = new TextBox
             {
-                Text = DefaultRegisterProject, Width = 220, Margin = new Thickness(12, 0, 0, 0),
-                Background = SurfaceBrush, Foreground = TextBrush, BorderBrush = Surface2Brush,
-                VerticalAlignment = VerticalAlignment.Center,
-                ToolTip = "Текстът след \"РЕГИСТЪР НА ЗАСЕГНАТИТЕ ИМОТИ ОТ\""
+                Text = DefaultRegisterProject, MaxWidth = 360, HorizontalAlignment = HorizontalAlignment.Left,
+                MinWidth = 220, ToolTip = "Текстът след \"РЕГИСТЪР НА ЗАСЕГНАТИТЕ ИМОТИ ОТ\""
             };
-            var registerPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
-            registerPanel.Children.Add(_chkAffectedRegister);
-            registerPanel.Children.Add(new TextBlock
-            {
-                Text = "обект:", Foreground = SubtextBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0)
-            });
-            registerPanel.Children.Add(_txtRegisterProject);
-            
-            var numsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
-            numsPanel.Children.Add(new TextBlock { Text = "Старт Ляво:", Foreground = SubtextBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) });
-            _txtStartNumLeft = new TextBox { Text = "5001", Width = 50, Background = SurfaceBrush, Foreground = TextBrush, BorderBrush = Surface2Brush };
-            numsPanel.Children.Add(_txtStartNumLeft);
-            
-            numsPanel.Children.Add(new TextBlock { Text = "Старт Дясно:", Foreground = SubtextBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 4, 0) });
-            _txtStartNumRight = new TextBox { Text = "1", Width = 50, Background = SurfaceBrush, Foreground = TextBrush, BorderBrush = Surface2Brush };
-            numsPanel.Children.Add(_txtStartNumRight);
+            Grid.SetColumn(_txtRegisterProject, 1);
+            projectRow.Children.Add(_txtRegisterProject);
+            ((StackPanel)_optAffectedRegister.Card.Child).Children.Add(projectRow);
 
-            var btnGenMarkers = new Button
-            {
-                Content = "📍 Само Точки (20м)",
-                Width = 140, Height = 26, Margin = new Thickness(16, 0, 0, 0),
-                Foreground = BgBrush, Background = AccentBrush,
-                BorderBrush = AccentBrush, BorderThickness = new Thickness(0),
-                Cursor = System.Windows.Input.Cursors.Hand,
-                FontWeight = FontWeights.SemiBold
-            };
-            btnGenMarkers.Click += BtnGenMarkers_Click;
-            numsPanel.Children.Add(btnGenMarkers);
+            return MakeCard(3, "Справки", "Отметнете кои справки да се генерират. Файловете се записват в папката на чертежа.", list);
+        }
 
-            var lblDist = new TextBlock { Text = "Разстояние:", Foreground = SubtextBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(16, 0, 4, 0) };
-            numsPanel.Children.Add(lblDist);
-            
-            _txtSegmentDistance = new TextBox { Text = "50", Width = 40, Background = SurfaceBrush, Foreground = TextBrush, BorderBrush = Surface2Brush };
-            numsPanel.Children.Add(_txtSegmentDistance);
+        private UIElement BuildLogCard()
+        {
+            var clear = new Button { Content = "Изчисти", Style = KeyedStyle(GhostButton) };
+            clear.Click += (s, e) => _txtLog.Clear();
 
-            var btnSegment = new Button
-            {
-                Content = "✂ Сегментиране",
-                Width = 120, Height = 26, Margin = new Thickness(8, 0, 0, 0),
-                Foreground = BgBrush, Background = AccentBrush,
-                BorderBrush = AccentBrush, BorderThickness = new Thickness(0),
-                Cursor = System.Windows.Input.Cursors.Hand,
-                FontWeight = FontWeights.SemiBold
-            };
-            btnSegment.Click += BtnSegment_Click;
-            numsPanel.Children.Add(btnSegment);
-
-            optStack.Children.Add(_chkExcel);
-            optStack.Children.Add(_chkWord);
-            optStack.Children.Add(_chkCoordinates);
-            optStack.Children.Add(_chkMvpMathTest);
-            optStack.Children.Add(_chkPoleSteps);
-            optStack.Children.Add(_chkCadControl);
-            optStack.Children.Add(registerPanel);
-            optStack.Children.Add(numsPanel);
-            ((GroupBox)optGroup).Content = optStack;
-            mainGrid.Children.Add(optGroup);
-
-            // ── Row 4: Log ──
             _txtLog = new TextBox
             {
-                Background = SurfaceBrush, Foreground = SubtextBrush,
-                BorderBrush = Surface2Brush, BorderThickness = new Thickness(1),
+                Height = 190,
+                Foreground = SubtextBrush,
                 IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                FontFamily = new FontFamily("Consolas"), FontSize = 11,
-                Padding = new Thickness(8),
-                Text = "Готов за работа. Изберете геометрии и натиснете 'Генерирай'."
+                FontFamily = MonoFont, FontSize = 12,
+                Text = "Готов за работа. Заредете .cad, изберете геометриите и отметнете справките."
             };
-            Grid.SetRow(_txtLog, 4);
-            mainGrid.Children.Add(_txtLog);
 
-            // ── Row 5: Generate Button ──
-            var btnGen = new Button
-            {
-                Content = "🚀  ГЕНЕРИРАЙ ОТЧЕТИ",
-                Height = 48,
-                FontSize = 15, FontWeight = FontWeights.Bold,
-                Foreground = GreenBrush,
-                Background = B("#2A4A2A"),
-                BorderBrush = GreenBrush, BorderThickness = new Thickness(1),
-                Margin = new Thickness(0, 12, 0, 0),
-                Cursor = System.Windows.Input.Cursors.Hand
-            };
-            btnGen.Click += BtnGenerate_Click;
-            Grid.SetRow(btnGen, 5);
-            mainGrid.Children.Add(btnGen);
-
-            Content = mainGrid;
+            return MakeCard(null, "Дневник", null, _txtLog, clear);
         }
 
         // ---- UI Factory Helpers ----
 
-        private FrameworkElement MakeGroupBox(string header, int row)
+        private Style? KeyedStyle(string key) => TryFindResource(key) as Style;
+
+        /// <summary>A rounded card with an optional step number, a title, an optional hint and an optional header action.</summary>
+        private static Border MakeCard(int? step, string title, string? hint, UIElement content, UIElement? headerAction = null)
         {
-            var gb = new GroupBox
+            var body = new StackPanel();
+
+            var head = new Grid { Margin = new Thickness(0, 0, 0, hint == null ? 12 : 4) };
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            if (step != null)
             {
-                BorderBrush = Surface2Brush, Padding = new Thickness(12),
-                Margin = new Thickness(0, 0, 0, 12), Foreground = TextBrush,
-                Header = new TextBlock { Text = header, Foreground = AccentBrush, FontWeight = FontWeights.SemiBold }
+                var badge = new Border
+                {
+                    Width = 24, Height = 24, CornerRadius = new CornerRadius(12), Background = AccentSoftBrush,
+                    Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center,
+                    Child = new TextBlock
+                    {
+                        Text = step.Value.ToString(), Foreground = AccentBrush, FontWeight = FontWeights.SemiBold, FontSize = 12,
+                        HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
+                    }
+                };
+                head.Children.Add(badge);
+            }
+
+            var titleText = new TextBlock
+            {
+                Text = title, FontSize = 15, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center
             };
-            Grid.SetRow(gb, row);
-            return gb;
+            Grid.SetColumn(titleText, 1);
+            head.Children.Add(titleText);
+
+            if (headerAction != null)
+            {
+                Grid.SetColumn(headerAction, 2);
+                head.Children.Add(headerAction);
+            }
+            body.Children.Add(head);
+
+            if (hint != null)
+            {
+                body.Children.Add(new TextBlock
+                {
+                    Text = hint, FontSize = 12, Foreground = SubtextBrush, TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(step != null ? 34 : 0, 0, 0, 12)
+                });
+            }
+
+            body.Children.Add(content);
+
+            return new Border
+            {
+                Background = CardBrush, BorderBrush = CardBorderBrush, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12), Padding = new Thickness(18, 16, 18, 18),
+                Margin = new Thickness(0, 0, 0, 14), Child = body
+            };
         }
 
-        private TextBox MakeTextBox(string placeholder, bool readOnly)
+        /// <summary>An icon glyph followed by a label, for button content.</summary>
+        private static StackPanel IconText(string glyph, string text)
         {
-            return new TextBox
+            var panel = new StackPanel { Orientation = Orientation.Horizontal };
+            panel.Children.Add(new TextBlock
             {
-                Background = SurfaceBrush, Foreground = TextBrush,
-                BorderBrush = Surface2Brush, BorderThickness = new Thickness(1),
-                Padding = new Thickness(8, 6, 8, 6), FontSize = 12,
-                IsReadOnly = readOnly, Text = placeholder
-            };
+                Text = glyph, FontFamily = IconFont, FontSize = 14, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            });
+            panel.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
+            return panel;
         }
 
-        private Button MakeButton(string text)
+        private PickTile MakePickTile(string glyph, string title, string status)
         {
-            return new Button
+            var tile = new PickTile
             {
-                Content = text, Padding = new Thickness(16, 8, 16, 8),
-                FontSize = 13, Foreground = TextBrush,
-                Background = SurfaceBrush, BorderBrush = Surface2Brush,
-                BorderThickness = new Thickness(1),
-                Cursor = System.Windows.Input.Cursors.Hand
+                Icon = new TextBlock
+                {
+                    Text = glyph, FontFamily = IconFont, FontSize = 20, Foreground = AccentBrush,
+                    VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0)
+                },
+                Status = new TextBlock
+                {
+                    Text = status, FontSize = 12, Foreground = SubtextBrush, Margin = new Thickness(0, 2, 0, 0),
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                }
             };
+
+            var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            text.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold });
+            text.Children.Add(tile.Status);
+
+            var content = new DockPanel();
+            DockPanel.SetDock(tile.Icon, Dock.Left);
+            content.Children.Add(tile.Icon);
+            content.Children.Add(text);
+
+            tile.Button = new Button
+            {
+                Content = content, Style = KeyedStyle(TileButton), Margin = new Thickness(5, 0, 5, 0),
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                ToolTip = $"Изберете {title.ToLowerInvariant()} в чертежа"
+            };
+            return tile;
         }
 
-        private Button MakePickButton(string title, TextBlock statusLabel)
+        private static void SetTile(PickTile tile, string status, SolidColorBrush statusBrush, bool done)
         {
-            var sp = new StackPanel();
-            sp.Children.Add(new TextBlock { Text = title, HorizontalAlignment = HorizontalAlignment.Center, FontWeight = FontWeights.SemiBold });
-            sp.Children.Add(statusLabel);
+            tile.Status.Text = status;
+            tile.Status.Foreground = statusBrush;
+            tile.Icon.Foreground = done ? SuccessBrush : AccentBrush;
+            tile.Button.BorderBrush = done ? SuccessBrush : SurfaceBorderBrush;
+        }
 
-            return new Button
+        private ReportOption AddReport(Panel list, string title, string description, params Requirement[] needs)
+        {
+            var option = new ReportOption { Title = title, Needs = needs };
+
+            var text = new StackPanel();
+            text.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold });
+            text.Children.Add(new TextBlock
             {
-                Content = sp, Padding = new Thickness(16, 8, 16, 8),
-                FontSize = 13, Foreground = TextBrush,
-                Background = B("#2A3A5E"), BorderBrush = AccentBrush,
-                BorderThickness = new Thickness(1),
-                Cursor = System.Windows.Input.Cursors.Hand
+                Text = description, FontSize = 12, Foreground = SubtextBrush, TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 2, 0, 8)
+            });
+
+            var chips = new WrapPanel();
+            foreach (Requirement need in needs)
+            {
+                var label = new TextBlock { FontSize = 11, Text = RequirementName(need) };
+                var chip = new Border
+                {
+                    CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 2, 8, 3),
+                    Margin = new Thickness(0, 0, 6, 0), Child = label
+                };
+                option.Chips[need] = (chip, label);
+                chips.Children.Add(chip);
+            }
+            text.Children.Add(chips);
+
+            option.Check = new CheckBox { Content = text, HorizontalAlignment = HorizontalAlignment.Stretch };
+            option.Check.Checked += (s, e) => UpdateReadiness();
+            option.Check.Unchecked += (s, e) => UpdateReadiness();
+
+            var cardBody = new StackPanel();
+            cardBody.Children.Add(option.Check);
+            option.Card = new Border
+            {
+                Background = SurfaceBrush, BorderBrush = SurfaceBorderBrush, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10), Padding = new Thickness(14, 12, 14, 12),
+                Margin = new Thickness(0, 0, 0, 8), Child = cardBody
             };
+
+            list.Children.Add(option.Card);
+            _reports.Add(option);
+            return option;
+        }
+
+        private static string RequirementName(Requirement need)
+        {
+            switch (need)
+            {
+                case Requirement.Cad:       return ".cad";
+                case Requirement.Servitude: return "Сервитут";
+                case Requirement.Poles:     return "Стълбове";
+                default:                    return "Имоти";
+            }
+        }
+
+        // ================================================================
+        //  READINESS
+        //  Each report's chips turn green when their input is loaded or picked;
+        //  the generate button counts the ticked reports.
+        // ================================================================
+
+        private bool Has(Requirement need)
+        {
+            switch (need)
+            {
+                case Requirement.Cad:       return _cadRegister != null;
+                case Requirement.Servitude: return !_servitudeId.IsNull;
+                case Requirement.Poles:     return _polePicks.Count > 0;
+                default:                    return _parcelPicks.Count > 0;
+            }
+        }
+
+        private List<Requirement> Missing(ReportOption option) => option.Needs.Where(n => !Has(n)).ToList();
+
+        private void UpdateReadiness()
+        {
+            if (_btnGenerate == null) return;
+
+            foreach (ReportOption option in _reports)
+            {
+                foreach (var pair in option.Chips)
+                {
+                    bool ready = Has(pair.Key);
+                    pair.Value.Chip.Background = ready ? SuccessSoftBrush : CardBrush;
+                    pair.Value.Label.Foreground = ready ? SuccessBrush : SubtextBrush;
+                    pair.Value.Label.Text = (ready ? "✓ " : "") + RequirementName(pair.Key);
+                }
+                option.Card.BorderBrush = option.IsChecked ? AccentBrush : SurfaceBorderBrush;
+            }
+
+            int count = _reports.Count(r => r.IsChecked);
+            _btnGenerate.IsEnabled = count > 0;
+            _btnGenerate.Content = IconText(GlyphPlay,
+                count == 0 ? "Отметнете справка" : count == 1 ? "Генерирай 1 справка" : $"Генерирай {count} справки");
         }
 
         // ================================================================
@@ -368,59 +528,21 @@ namespace PUP_AUTO.UI.Windows
                     string? dir = Path.GetDirectoryName(doc.Name);
                     if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
                     {
-                        _projectDir = dir;
-
-                        string cadPath = Path.Combine(dir, FileNames.TestFilesFolder, FileNames.CadLibraryFile);
-                        if (File.Exists(cadPath))
-                        {
-                            _cadFilePath = cadPath;
-                            _txtCadPath.Text = cadPath;
-                        }
-
-                        string tplDir = Path.Combine(dir, FileNames.TemplatesFolder);
-                        if (Directory.Exists(tplDir))
-                        {
-                            _templateDirPath = tplDir;
-                            _txtTemplatePath.Text = tplDir;
-                        }
+                        _projectDir = dir!;
                     }
                 }
             }
             catch { }
         }
 
-        // ================================================================
-        //  FILE BROWSING
-        // ================================================================
+        /// <summary>
+        /// Optional overrides of the built-in nomenclatures and EKATTE register: a _Templates folder next to the drawing.
+        /// </summary>
+        private string TemplateDir => Path.Combine(_projectDir, FileNames.TemplatesFolder);
 
-        private void BtnBrowseCad_Click(object sender, RoutedEventArgs e)
-        {
-            var dlg = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "Изберете .cad база данни",
-                Filter = "GeoJSON/CSV Registri (*.geojson;*.csv;*.cad)|*.geojson;*.csv;*.cad|All Files (*.*)|*.*",
-                InitialDirectory = _projectDir
-            };
-            if (dlg.ShowDialog() == true)
-            {
-                _cadFilePath = dlg.FileName;
-                _txtCadPath.Text = dlg.FileName;
-            }
-        }
-
-        private void BtnBrowseTemplate_Click(object sender, RoutedEventArgs e)
-        {
-            using (var dlg = new System.Windows.Forms.FolderBrowserDialog())
-            {
-                dlg.Description = "Изберете папката с шаблоните (_Templates)";
-                dlg.SelectedPath = _templateDirPath ?? _projectDir;
-                if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-                {
-                    _templateDirPath = dlg.SelectedPath;
-                    _txtTemplatePath.Text = dlg.SelectedPath;
-                }
-            }
-        }
+        // ================================================================
+        //  .CAD REGISTER
+        // ================================================================
 
         private const int MaxWindowWarnings = 20;
 
@@ -443,9 +565,10 @@ namespace PUP_AUTO.UI.Windows
                 CadRegisterData register = new CadRegisterReader(warnings.Add).ReadFile(dlg.FileName);
                 _cadRegister = register;
 
-                _lblCadRegister.Text = $"✅ ЕКАТТЕ {register.Ekatte} — {register.SettlementName} · {register.Parcels.Count} имота";
-                _lblCadRegister.Foreground = GreenBrush;
-                _lblCadRegister.ToolTip = dlg.FileName;
+                _lblCadRegister.Text = $"ЕКАТТЕ {register.Ekatte} · {register.SettlementName}";
+                _lblCadRegister.Foreground = SuccessBrush;
+                _lblCadDetails.Text = $"{register.Parcels.Count} имота · {Path.GetFileName(dlg.FileName)}";
+                _lblCadDetails.ToolTip = dlg.FileName;
 
                 // Counts only: no names and no ЕГН/БУЛСТАТ in the log
                 AppendLog($".cad заредено: ЕКАТТЕ {register.Ekatte}, {register.SettlementName} — " +
@@ -468,6 +591,7 @@ namespace PUP_AUTO.UI.Windows
                 AppendLog($"ГРЕШКА при зареждане на .cad: {ex.Message}");
                 _logger?.LogError($"Loading .cad failed: {ex.Message}\n{ex.StackTrace}");
             }
+            UpdateReadiness();
         }
 
         // ================================================================
@@ -498,12 +622,10 @@ namespace PUP_AUTO.UI.Windows
             _parcelPicks = new List<ParcelPick>();
             _polePicks = new List<PolePick>();
 
-            _lblServitude.Text = "(не е избран)";
-            _lblServitude.Foreground = YellowBrush;
-            _lblPoles.Text = "(не са избрани)";
-            _lblPoles.Foreground = YellowBrush;
-            _lblParcels.Text = "(не са избрани)";
-            _lblParcels.Foreground = YellowBrush;
+            SetTile(_tileServitude, "Не е избран", SubtextBrush, false);
+            SetTile(_tilePoles, "Не са избрани", SubtextBrush, false);
+            SetTile(_tileParcels, "Не са избрани", SubtextBrush, false);
+            UpdateReadiness();
         }
 
         /// <summary>Binds the picks to the active drawing; picks made in another drawing are cleared.</summary>
@@ -652,14 +774,12 @@ namespace PUP_AUTO.UI.Windows
 
                     if (!_servitudeId.IsNull)
                     {
-                        _lblServitude.Text = "✅ Избран";
-                        _lblServitude.Foreground = GreenBrush;
+                        SetTile(_tileServitude, "✓ Избран", SuccessBrush, true);
                         AppendLog("Сервитут избран успешно.");
                     }
                     else
                     {
-                        _lblServitude.Text = "❌ Не е избран";
-                        _lblServitude.Foreground = RedBrush;
+                        SetTile(_tileServitude, "Не е избран", ErrorBrush, false);
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Сервитутът не беше избран.");
                     }
                 }
@@ -668,6 +788,7 @@ namespace PUP_AUTO.UI.Windows
                     AppendLog($"ГРЕШКА: {ex.Message}");
                 }
             }
+            UpdateReadiness();
         }
 
         private void BtnPickPoles_Click(object sender, RoutedEventArgs e)
@@ -722,14 +843,12 @@ namespace PUP_AUTO.UI.Windows
 
                     if (_polePicks.Count > 0)
                     {
-                        _lblPoles.Text = $"✅ {_polePicks.Count} стълба";
-                        _lblPoles.Foreground = GreenBrush;
+                        SetTile(_tilePoles, $"✓ {_polePicks.Count} стълба", SuccessBrush, true);
                         AppendLog($"Избрани и екстрактнати {_polePicks.Count} стълба.");
                     }
                     else
                     {
-                        _lblPoles.Text = "❌ Не са избрани";
-                        _lblPoles.Foreground = RedBrush;
+                        SetTile(_tilePoles, "Не са избрани", ErrorBrush, false);
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Не бяха извлечени валидни стълбове.");
                     }
                 }
@@ -738,6 +857,7 @@ namespace PUP_AUTO.UI.Windows
                     AppendLog($"ГРЕШКА: {ex.Message}");
                 }
             }
+            UpdateReadiness();
         }
 
         private void BtnPickParcels_Click(object sender, RoutedEventArgs e)
@@ -751,36 +871,15 @@ namespace PUP_AUTO.UI.Windows
                 {
                     EnsureServices();
 
-                    // Load GeoJSON geometries for spatial matching (if GeoJSON file is selected)
-                    List<GeoParcel>? geoParcels = null;
-                    string cadPath = _cadFilePath ?? "";
-                    if (cadPath.EndsWith(".geojson", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var reader = new ParcelRegisterReader(_logger!);
-                        geoParcels = reader.LoadGeoJsonGeometries(cadPath);
-                        if (geoParcels.Count > 0)
-                        {
-                            AppendLog($"Заредени {geoParcels.Count} геометрии от GeoJSON за пространствено съвпадение.");
-                        }
-                        else
-                        {
-                            AppendLog("ПРЕДУПРЕЖДЕНИЕ: Няма геометрии в GeoJSON за пространствено съвпадение. Ще се използва Handle.");
-                        }
-                    }
-                    else
-                    {
-                        AppendLog("ПРЕДУПРЕЖДЕНИЕ: Не е избран GeoJSON файл. Ще се опита Map3D OD (може да не работи).");
-                    }
-
                     var selStats = new PolylineSelectionStats();
                     using (doc.LockDocument())
                     using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                     {
                         var selected = _selection!.SelectMultiplePolylines(
-                            tr, "\nSelect Parcel polylines: ", geoParcels,
+                            tr, "\nSelect Parcel polylines: ", null,
                             _servitudeId, selStats);
 
-                        // Keep the ID resolved now (XData / GeoJSON / handle); it is never re-read
+                        // Keep the ID resolved now (XData / handle); it is never re-read
                         _parcelPicks = selected
                             .Select(kvp => new ParcelPick { Id = kvp.Value.ObjectId, ParcelId = kvp.Key })
                             .ToList();
@@ -799,14 +898,12 @@ namespace PUP_AUTO.UI.Windows
 
                     if (_parcelPicks.Count > 0)
                     {
-                        _lblParcels.Text = $"✅ {_parcelPicks.Count} имота";
-                        _lblParcels.Foreground = GreenBrush;
+                        SetTile(_tileParcels, $"✓ {_parcelPicks.Count} имота", SuccessBrush, true);
                         AppendLog($"Избрани {_parcelPicks.Count} имота.");
                     }
                     else
                     {
-                        _lblParcels.Text = "❌ Не са избрани";
-                        _lblParcels.Foreground = RedBrush;
+                        SetTile(_tileParcels, "Не са избрани", ErrorBrush, false);
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Имотите не бяха избрани.");
                     }
                 }
@@ -815,75 +912,95 @@ namespace PUP_AUTO.UI.Windows
                     AppendLog($"ГРЕШКА: {ex.Message}");
                 }
             }
+            UpdateReadiness();
         }
 
         // ================================================================
         //  GENERATE REPORTS
         // ================================================================
 
-        /// <summary>PLACEHOLDER — not production (Generate-All; only the MVP math-test branch is live).</summary>
+        /// <summary>
+        /// Runs every ticked report. A report whose inputs are missing is skipped with an error in the log;
+        /// the others still run.
+        /// </summary>
         private void BtnGenerate_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 if (!TryUsePicks(out Document doc)) return;
 
-                // Standalone tables: independent of the MVP test and of the placeholder Generate-All.
-                bool ranStandalone = false;
-
-                // Pole-steps table: needs only poles and parcels (no servitude).
-                if (_chkPoleSteps.IsChecked == true)
+                List<ReportOption> ticked = _reports.Where(r => r.IsChecked).ToList();
+                if (ticked.Count == 0)
                 {
-                    if (_polePicks.Count == 0 || _parcelPicks.Count == 0)
-                    {
-                        if (_polePicks.Count == 0) AppendLog("ГРЕШКА: Не са избрани стълбове!");
-                        if (_parcelPicks.Count == 0) AppendLog("ГРЕШКА: Не са избрани имоти!");
-                        return;
-                    }
-
-                    RunPoleStepsTable(doc);
-                    ranStandalone = true;
+                    AppendLog("Отметнете поне една справка.");
+                    return;
                 }
 
-                // Control report from the loaded .cad: needs the .cad and the parcels only.
-                if (_chkCadControl.IsChecked == true)
+                bool ranAny = false;
+                foreach (ReportOption option in ticked)
                 {
-                    if (_cadRegister == null || _parcelPicks.Count == 0)
+                    List<Requirement> missing = Missing(option);
+                    if (missing.Count > 0)
                     {
-                        if (_cadRegister == null) AppendLog("ГРЕШКА: Не е зареден .cad регистър (бутон \"Зареди .cad\")!");
-                        if (_parcelPicks.Count == 0) AppendLog("ГРЕШКА: Не са избрани имоти!");
-                        return;
+                        AppendLog($"ГРЕШКА: {option.Title} — липсва: {string.Join(", ", missing.Select(RequirementName))}. Справката е пропусната.");
+                        continue;
                     }
 
-                    RunCadControlReport(doc, _cadRegister);
-                    ranStandalone = true;
+                    if (option == _optMvpMathTest) RunMvpMathTest(doc);
+                    else if (option == _optPoleSteps) RunPoleStepsTable(doc);
+                    else if (option == _optCadControl) RunCadControlReport(doc, _cadRegister!);
+                    else if (option == _optAffectedRegister) RunAffectedParcelsRegister(doc, _cadRegister!);
+                    ranAny = true;
                 }
 
-                // Register of affected parcels: needs the .cad, the servitude, the poles and the parcels.
-                if (_chkAffectedRegister.IsChecked == true)
+                if (ranAny && Directory.Exists(_projectDir))
                 {
-                    if (_cadRegister == null || _servitudeId.IsNull || _polePicks.Count == 0 || _parcelPicks.Count == 0)
-                    {
-                        if (_cadRegister == null) AppendLog("ГРЕШКА: Не е зареден .cad регистър (бутон \"Зареди .cad\")!");
-                        if (_servitudeId.IsNull) AppendLog("ГРЕШКА: Не е избран сервитут!");
-                        if (_polePicks.Count == 0) AppendLog("ГРЕШКА: Не са избрани стълбове!");
-                        if (_parcelPicks.Count == 0) AppendLog("ГРЕШКА: Не са избрани имоти!");
-                        return;
-                    }
-
-                    RunAffectedParcelsRegister(doc, _cadRegister);
-                    ranStandalone = true;
+                    _btnOpenFolder.Visibility = System.Windows.Visibility.Visible;
                 }
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"\nГРЕШКА: {ex.Message}\n{ex.StackTrace}");
+                _logger?.LogError($"Generate (GUI) failed: {ex.Message}\n{ex.StackTrace}");
 
-                if (ranStandalone && _chkMvpMathTest.IsChecked != true) return;
+                Document doc = Application.DocumentManager.MdiActiveDocument;
+                if (doc != null)
+                {
+                    doc.Editor.WriteMessage($"\nFatal error in Generate: {ex.Message}\n");
+                }
+            }
+        }
 
-                if (_servitudeId.IsNull)  { AppendLog("ГРЕШКА: Не е избран сервитут!"); return; }
-                if (_polePicks.Count == 0) { AppendLog("ГРЕШКА: Не са избрани стълбове!"); return; }
-                if (_parcelPicks.Count == 0) { AppendLog("ГРЕШКА: Не са избрани имоти!"); return; }
+        private void BtnOpenFolder_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (!Directory.Exists(_projectDir))
+                {
+                    AppendLog("ГРЕШКА: Папката на чертежа не е намерена.");
+                    return;
+                }
+                Process.Start("explorer.exe", $"\"{_projectDir}\"");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ГРЕШКА при отваряне на папката: {ex.Message}");
+            }
+        }
 
+        /// <summary>
+        /// Builds MVP_Math_Test_Parcels.xlsx from the picked servitude, poles and parcels.
+        /// Short transaction under a document lock; the in-memory footprints are disposed before the file is written.
+        /// </summary>
+        private void RunMvpMathTest(Document doc)
+        {
+            try
+            {
+                AppendLog("── СТАРТИРАНЕ НА MVP MATH TEST ──");
                 EnsureServices();
                 var topo = new TopologyProcessor(_logger!);
 
+                List<ParcelData>? results = null;
                 using (doc.LockDocument())
                 using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                 {
@@ -898,7 +1015,7 @@ namespace PUP_AUTO.UI.Windows
                     var entries = ExtractPoles(tr);
                     try
                     {
-                        RunGenerate(topo, servitude, PoleFootprints(entries), parcels, entries);
+                        results = topo.RunMvpMathTest(servitude, PoleFootprints(entries), parcels);
                         tr.Commit();
                     }
                     finally
@@ -906,17 +1023,14 @@ namespace PUP_AUTO.UI.Windows
                         DisposeFootprints(entries);
                     }
                 }
+
+                MvpMathTestExporter.ExportMathTest(results!, _projectDir);
+                AppendLog($"  Записан {FileNames.MvpMathTestFile} в {_projectDir}");
             }
             catch (Exception ex)
             {
-                AppendLog($"\nГРЕШКА: {ex.Message}\n{ex.StackTrace}");
-                _logger?.LogError($"PUP_GENERATE (GUI) failed: {ex.Message}\n{ex.StackTrace}");
-
-                Document doc = Application.DocumentManager.MdiActiveDocument;
-                if (doc != null)
-                {
-                    doc.Editor.WriteMessage($"\nFatal error in Generate: {ex.Message}\n");
-                }
+                AppendLog($"ГРЕШКА при MVP математическия тест: {ex.Message}");
+                _logger?.LogError($"MVP math test failed: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
@@ -990,7 +1104,7 @@ namespace PUP_AUTO.UI.Windows
                     tr.Commit();
                 }
 
-                string templateDir = _templateDirPath ?? Path.Combine(_projectDir, FileNames.TemplatesFolder);
+                string templateDir = TemplateDir;
                 var warnings = new List<string>();
                 Nomenclatures nomenclatures = Nomenclatures.Load(
                     Path.Combine(templateDir, FileNames.NomenclaturesFolder), warnings.Add);
@@ -1083,7 +1197,7 @@ namespace PUP_AUTO.UI.Windows
                     LogWarning(PoleStepsTableBuilder.FormatUncoveredWarning(step));
                 }
 
-                string templateDir = _templateDirPath ?? Path.Combine(_projectDir, FileNames.TemplatesFolder);
+                string templateDir = TemplateDir;
                 var warnings = new List<string>();
                 Nomenclatures nomenclatures = Nomenclatures.Load(
                     Path.Combine(templateDir, FileNames.NomenclaturesFolder), warnings.Add);
@@ -1155,228 +1269,6 @@ namespace PUP_AUTO.UI.Windows
             return all.Count > limit ? $"{shown} … и още {all.Count - limit}" : shown;
         }
 
-        private void RunGenerate(
-            TopologyProcessor topo,
-            Polyline servitude,
-            List<KeyValuePair<string, Polyline>> poles,
-            List<KeyValuePair<string, Polyline>> parcels,
-            List<PoleFootprintEntry> entries)
-        {
-            if (_chkMvpMathTest.IsChecked == true)
-            {
-                AppendLog("── СТАРТИРАНЕ НА MVP MATH TEST ──");
-                var testResults = topo.RunMvpMathTest(servitude, poles, parcels);
-                MvpMathTestExporter.ExportMathTest(testResults, _projectDir);
-                AppendLog($"  Записан {FileNames.MvpMathTestFile} в {_projectDir}");
-                return;
-            }
-
-            AppendLog("═══ ГЕНЕРИРАНЕ СТАРТИРАНО ═══");
-
-            // Footprint vertices by pole ID (a later duplicate ID wins, as before)
-            var footprintVertices = new Dictionary<string, List<VertexCoordinate>>();
-            foreach (var entry in entries)
-            {
-                if (entry.Result.FootprintPolyline != null)
-                    footprintVertices[entry.PoleId] = entry.Vertices!;
-            }
-
-            // Step 1 — Load CAD database
-            AppendLog("── Стъпка 1: Зареждане на CAD база ──");
-            string cadPath = _cadFilePath ?? Path.Combine(_projectDir, FileNames.TestFilesFolder, FileNames.CadLibraryFile);
-            var reader = new ParcelRegisterReader(_logger!);
-            var parcelDb = reader.LoadLibrary(cadPath);
-            AppendLog($"  Заредени {parcelDb.Count} записа от базата.");
-
-            // Step 2 — Topology calculations
-            AppendLog("── Стъпка 2: Топологични изчисления ──");
-            var servitudeAreas = topo.CalculateServitudeIntersections(
-                servitude, parcels);
-            AppendLog($"  Сечения сервитут: {servitudeAreas.Count} имота.");
-
-            var assignedPoles = topo.AssignPolesToParcels(
-                poles, parcels);
-
-            foreach (var p in assignedPoles)
-            {
-                if (footprintVertices.TryGetValue(p.PoleId, out var fv))
-                {
-                    p.FootprintVertices = fv;
-                }
-            }
-
-            int assignedCount = assignedPoles.Count(p => p.OverlappingParcels.Count > 0);
-            AppendLog($"  Стълбове: {assignedPoles.Count} обработени ({assignedCount} причислени).");
-
-            // Step 3 — Merge results
-            AppendLog("── Стъпка 3: Обединяване на резултати ──");
-            var reportRows = ReportBuilder.BuildReportRows(
-                parcels.Select(kvp => kvp.Key), parcelDb, servitudeAreas, assignedPoles,
-                message => _logger!.LogWarning(message));
-            AppendLog($"  Генерирани {reportRows.Count} реда за отчет.");
-
-            // Step 4 — Extract coordinates (if enabled)
-            Dictionary<string, List<VertexCoordinate>>? poleVertices = null;
-            List<VertexCoordinate>? servitudeVertices = null;
-
-            if (_chkCoordinates.IsChecked == true)
-            {
-                AppendLog("── Стъпка 3b: Извличане на координати ──");
-                poleVertices = new Dictionary<string, List<VertexCoordinate>>();
-                foreach (var p in assignedPoles)
-                {
-                    if (p.FootprintVertices != null && p.FootprintVertices.Count > 0)
-                    {
-                        poleVertices[p.PoleId] = p.FootprintVertices;
-                    }
-                }
-                servitudeVertices = TopologyProcessor.ExtractPolylineVertices(servitude);
-                AppendLog($"  Координати: {poleVertices.Count} стълба, {servitudeVertices.Count} точки сервитут.");
-            }
-
-            // Step 5 — Generate Excel
-            if (_chkExcel.IsChecked == true)
-            {
-                AppendLog("── Стъпка 4: Генериране на Excel ──");
-                string excelPath = Path.Combine(_projectDir, FileNames.ReportXlsFile);
-                var excelGen = new ExcelReportGenerator(_logger!, _projectDir);
-                excelGen.GenerateReport(reportRows, assignedPoles, parcelDb, excelPath);
-                AppendLog($"  Excel запазен: {excelPath}");
-            }
-
-            // Step 6 — Generate Word documents
-            if (_chkWord.IsChecked == true)
-            {
-                AppendLog("── Стъпка 5: Генериране на Word регистри ──");
-                var wordGen = new WordReportGenerator(_logger!, _projectDir);
-                wordGen.GenerateAllReports(
-                    reportRows, assignedPoles, parcelDb, _projectDir,
-                    poleVertices: poleVertices,
-                    servitudeVertices: servitudeVertices);
-                AppendLog("  Word регистри генерирани успешно.");
-            }
-
-            int warningCount = reportRows.Count(r => r.Owner == ReportBuilder.NoDataOwner);
-            AppendLog(
-                $"\n═══ ГЕНЕРИРАНЕ ЗАВЪРШЕНО ═══\n" +
-                $"  Обработени имоти: {reportRows.Count}\n" +
-                $"  Стълбове причислени: {assignedCount}/{assignedPoles.Count}\n" +
-                $"  Липсващи данни: {warningCount} имота\n" +
-                $"  Проверете лога за подробности.");
-        }
-
-        // ================================================================
-        //  MARKER GENERATION EVENT
-        // ================================================================
-        /// <summary>PLACEHOLDER — not production.</summary>
-        private void BtnGenMarkers_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (!TryUsePicks(out Document doc)) return;
-                if (_servitudeId.IsNull)
-                {
-                    AppendLog("Моля, първо изберете сервитут (🔲 Сервитут) от бутоните горе!");
-                    return;
-                }
-
-                if (!int.TryParse(_txtStartNumLeft.Text, out int startL) || !int.TryParse(_txtStartNumRight.Text, out int startR))
-                {
-                    AppendLog("ГРЕШКА: Въведете валидни числа за начален номер.");
-                    return;
-                }
-
-                AppendLog("── Генериране на 20m точки по сервитута ──");
-                EnsureServices();
-
-                using (doc.LockDocument())
-                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
-                {
-                    Polyline? servitude = OpenPolyline(tr, _servitudeId);
-                    if (servitude == null)
-                    {
-                        AppendLog("ГРЕШКА: Сервитутът вече не съществува в чертежа — изберете отново.");
-                        return;
-                    }
-
-                    var markerGen = new Geometry.ServitudeMarkerGenerator(_logger!);
-                    markerGen.GenerateMarkers(servitude, tr, startL, startR);
-                    tr.Commit();
-                }
-                FlushGraphics(doc);
-
-                AppendLog("  Точките са генерирани в чертежа успешно.");
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"\nГРЕШКА при генериране на точки: {ex.Message}\n{ex.StackTrace}");
-            }
-        }
-
-        // ================================================================
-        //  SEGMENTATION EVENT
-        // ================================================================
-        /// <summary>PLACEHOLDER — not production.</summary>
-        private void BtnSegment_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (!TryUsePicks(out Document doc)) return;
-                if (_servitudeId.IsNull)
-                {
-                    AppendLog("Моля, първо изберете сервитут (🔲 Сервитут) от бутоните горе!");
-                    return;
-                }
-
-                if (!double.TryParse(_txtSegmentDistance.Text, out double dist))
-                {
-                    dist = SegmentDefaults.WindowFallbackDistanceM;
-                }
-
-                AppendLog($"── Сегментиране на избрания сервитут (на {dist}м) ──");
-
-                var db = doc.Database;
-                using (doc.LockDocument())
-                using (Transaction tr = db.TransactionManager.StartTransaction())
-                {
-                    Polyline? servitude = OpenPolyline(tr, _servitudeId);
-                    if (servitude == null)
-                    {
-                        AppendLog("ГРЕШКА: Сервитутът вече не съществува в чертежа — изберете отново.");
-                        return;
-                    }
-
-                    // Sanitize the servitude polyline
-                    using (Polyline? cleanServitude = Geometry.GeometrySanitizer.Sanitize(servitude, dist, GeometryTolerances.SanitizeMinVertexDistanceM))
-                    {
-                        if (cleanServitude != null)
-                        {
-                            var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
-
-                            DrawingWriter.EnsureLayer(db, tr, PluginLayers.SegmentedServitude, 3);
-
-                            // Clone it because we are inside a using block
-                            Polyline newPline = (Polyline)cleanServitude.Clone();
-
-                            newPline.ConstantWidth = GeometryTolerances.SegmentedServitudeWidth; // Make it thicker to see it!
-
-                            // Green (color 3) to distinguish it from the original
-                            DrawingWriter.Append(btr, tr, newPline, PluginLayers.SegmentedServitude, 3);
-                        }
-                    }
-
-                    tr.Commit();
-                }
-                FlushGraphics(doc);
-
-                AppendLog("  Сегментираната линия е добавена в чертежа (Слой: segmented SERV).");
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"\nГРЕШКА при сегментиране: {ex.Message}\n{ex.StackTrace}");
-            }
-        }
-
         // ================================================================
         //  HELPERS
         // ================================================================
@@ -1384,7 +1276,8 @@ namespace PUP_AUTO.UI.Windows
         private void AppendLog(string message)
         {
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
-            _txtLog.Text += $"\n[{timestamp}] {message}";
+            if (_txtLog.Text.Length > 0) _txtLog.AppendText("\n");
+            _txtLog.AppendText($"[{timestamp}] {message}");
             _txtLog.ScrollToEnd();
         }
 
