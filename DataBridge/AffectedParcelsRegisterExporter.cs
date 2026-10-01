@@ -43,7 +43,6 @@ namespace PUP_AUTO.DataBridge
         private const int GroupRow = 3;
         private const int HeaderRow = 4;
         private const int NumbersRow = 5;
-        private const int FirstDataRow = 6;
 
         // cellXfs indexes, see BuildStylesheet
         private const uint StyleTitle = 1;
@@ -59,117 +58,70 @@ namespace PUP_AUTO.DataBridge
 
         private static readonly double[] ColumnWidths = { 17, 12, 22, 26, 16, 10, 12, 12, 12, 20, 14, 18, 16, 36 };
 
-        /// <summary>Writes the file and returns its path.</summary>
-        public static string Export(AffectedRegister register, string outputDir)
+        /// <summary>Writes a workbook with ONE sheet (<see cref="SheetName"/>) holding one землище and returns its path.</summary>
+        public static string Export(AffectedRegister register, string outputDir) =>
+            Export(new[] { (SheetName, (IReadOnlyList<AffectedRegister>)new[] { register }) }, outputDir);
+
+        /// <summary>
+        /// Writes a workbook with one sheet per item (a municipality) and one section per землище in it, stacked one
+        /// under the other, and returns its path.
+        /// </summary>
+        public static string Export(IReadOnlyList<(string SheetName, IReadOnlyList<AffectedRegister> Sections)> sheets, string outputDir)
         {
             string filePath = Path.Combine(outputDir, FileNames.AffectedParcelsRegisterFile);
 
-            using (SpreadsheetDocument document = SpreadsheetDocument.Create(filePath, SpreadsheetDocumentType.Workbook))
-            {
-                WorkbookPart workbookPart = document.AddWorkbookPart();
-                workbookPart.Workbook = new Workbook();
-
-                WorkbookStylesPart stylesPart = workbookPart.AddNewPart<WorkbookStylesPart>();
-                stylesPart.Stylesheet = BuildStylesheet();
-                stylesPart.Stylesheet.Save();
-
-                WorksheetPart worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
-
-                var sheetData = new SheetData();
-                var mergeCells = new MergeCells();
-                FillSheet(sheetData, mergeCells, register);
-
-                var columns = new Columns();
-                for (int c = 0; c < ColumnWidths.Length; c++)
-                {
-                    columns.Append(new Column { Min = (uint)(c + 1), Max = (uint)(c + 1), Width = ColumnWidths[c], CustomWidth = true });
-                }
-
-                worksheetPart.Worksheet = new Worksheet(
-                    new SheetProperties(new PageSetupProperties { FitToPage = true }),
-                    new SheetViews(new SheetView(
-                        new Pane
-                        {
-                            VerticalSplit = NumbersRow,
-                            TopLeftCell = "A" + FirstDataRow,
-                            ActivePane = PaneValues.BottomLeft,
-                            State = PaneStateValues.Frozen
-                        },
-                        new Selection { Pane = PaneValues.BottomLeft })
-                    { WorkbookViewId = 0U }),
-                    columns,
-                    sheetData,
-                    mergeCells,
-                    new PageMargins { Left = 0.4, Right = 0.4, Top = 0.6, Bottom = 0.6, Header = 0.3, Footer = 0.3 },
-                    new PageSetup
-                    {
-                        PaperSize = 9U, // A4
-                        Orientation = OrientationValues.Landscape,
-                        FitToWidth = 1U,
-                        FitToHeight = 0U // as many pages tall as needed
-                    });
-                worksheetPart.Worksheet.Save();
-
-                Sheets sheets = workbookPart.Workbook.AppendChild(new Sheets());
-                sheets.Append(new Sheet
-                {
-                    Id = workbookPart.GetIdOfPart(worksheetPart),
-                    SheetId = 1U,
-                    Name = SheetName
-                });
-
-                // Repeat the header rows (group row, headers, numbers) on every printed page
-                workbookPart.Workbook.AppendChild(new DefinedNames(
-                    new DefinedName($"'{SheetName}'!${GroupRow}:${NumbersRow}")
-                    {
-                        Name = "_xlnm.Print_Titles",
-                        LocalSheetId = 0U
-                    }));
-                workbookPart.Workbook.Save();
-            }
-
+            // Titles, group row, headers and numbers rows of the section; one section keeps the freeze pane and Print_Titles
+            // (the group row, headers and numbers rows repeat on every printed page)
+            var layout = new SingleSectionLayout { FreezeRows = NumbersRow, FirstTitleRow = GroupRow, LastTitleRow = NumbersRow };
+            SectionedWorkbook.Write(filePath, sheets, BuildStylesheet(), ColumnWidths, ColumnCount, layout, WriteSection);
             return filePath;
         }
 
-        private static void FillSheet(SheetData sheetData, MergeCells mergeCells, AffectedRegister register)
+        /// <summary>Writes one section starting at <paramref name="firstRow"/> and returns the next free row.</summary>
+        private static int WriteSection(SheetData sheetData, MergeCells mergeCells, AffectedRegister register, int firstRow)
         {
-            // Rows 1-2: titles (not merged; the text runs over the empty cells to its right)
-            var titleRow = new Row { RowIndex = 1U, Height = 22D, CustomHeight = true };
-            titleRow.Append(TextCell(1, 1, register.Title, StyleTitle));
+            int titleRowIndex = firstRow;
+            int groupRowIndex = firstRow + (GroupRow - 1);
+            int headerRowIndex = firstRow + (HeaderRow - 1);
+            int numbersRowIndex = firstRow + (NumbersRow - 1);
+
+            // Rows 1-2 of the section: titles (not merged; the text runs over the empty cells to its right)
+            var titleRow = new Row { RowIndex = (uint)titleRowIndex, Height = 22D, CustomHeight = true };
+            titleRow.Append(TextCell(1, titleRowIndex, register.Title, StyleTitle));
             sheetData.Append(titleRow);
 
-            var subtitleRow = new Row { RowIndex = 2U, Height = 20D, CustomHeight = true };
-            subtitleRow.Append(TextCell(1, 2, register.Subtitle, StyleSubtitle));
+            var subtitleRow = new Row { RowIndex = (uint)(titleRowIndex + 1), Height = 20D, CustomHeight = true };
+            subtitleRow.Append(TextCell(1, titleRowIndex + 1, register.Subtitle, StyleSubtitle));
             sheetData.Append(subtitleRow);
 
             // Row 3: group headers. Columns 1-9 stay empty above their headers (no vertical merges).
-            var groupRow = new Row { RowIndex = (uint)GroupRow };
+            var groupRow = new Row { RowIndex = (uint)groupRowIndex };
             for (int c = 1; c <= ColumnCount; c++)
             {
                 string text = c == 10 ? PoleGroupTitle : c == 12 ? OwnerGroupTitle : string.Empty;
-                groupRow.Append(text.Length > 0 ? TextCell(c, GroupRow, text, StyleHeader) : EmptyCell(c, GroupRow, StyleHeader));
+                groupRow.Append(text.Length > 0 ? TextCell(c, groupRowIndex, text, StyleHeader) : EmptyCell(c, groupRowIndex, StyleHeader));
             }
             sheetData.Append(groupRow);
-            mergeCells.Append(Merge("J3", "K3"));
-            mergeCells.Append(Merge("L3", "N3"));
+            mergeCells.Append(Merge($"J{groupRowIndex}", $"K{groupRowIndex}"));
+            mergeCells.Append(Merge($"L{groupRowIndex}", $"N{groupRowIndex}"));
 
             // Row 4: headers
-            var headerRow = new Row { RowIndex = (uint)HeaderRow, Height = 48D, CustomHeight = true };
+            var headerRow = new Row { RowIndex = (uint)headerRowIndex, Height = 48D, CustomHeight = true };
             for (int c = 0; c < Headers.Length; c++)
             {
-                headerRow.Append(TextCell(c + 1, HeaderRow, Headers[c], StyleHeader));
+                headerRow.Append(TextCell(c + 1, headerRowIndex, Headers[c], StyleHeader));
             }
             sheetData.Append(headerRow);
 
             // Row 5: column numbers 1..14
-            var numbersRow = new Row { RowIndex = (uint)NumbersRow };
+            var numbersRow = new Row { RowIndex = (uint)numbersRowIndex };
             for (int c = 1; c <= ColumnCount; c++)
             {
-                numbersRow.Append(NumberCell(c, NumbersRow, c, StyleIndex));
+                numbersRow.Append(NumberCell(c, numbersRowIndex, c, StyleIndex));
             }
             sheetData.Append(numbersRow);
 
-            int rowIndex = NumbersRow;
+            int rowIndex = numbersRowIndex;
             foreach (AffectedRegisterRow data in register.Rows)
             {
                 rowIndex++;
@@ -203,6 +155,7 @@ namespace PUP_AUTO.DataBridge
             totalRow.Append(NumberCell(11, rowIndex, Clean(register.TotalStepDka), StyleTotalNumber));
             for (int c = 12; c <= ColumnCount; c++) totalRow.Append(EmptyCell(c, rowIndex, StyleTotalEmpty));
             sheetData.Append(totalRow);
+            return rowIndex + 1;
         }
 
         // -----------------------------------------------------------------

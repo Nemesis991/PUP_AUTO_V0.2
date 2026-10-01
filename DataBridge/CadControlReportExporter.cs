@@ -47,94 +47,47 @@ namespace PUP_AUTO.DataBridge
 
         private static readonly double[] ColumnWidths = { 16, 26, 34, 18, 11, 15, 17, 14, 22, 20, 12, 18, 16, 40 };
 
-        /// <summary>Writes the file and returns its path.</summary>
-        public static string Export(CadControlReport report, string outputDir)
+        /// <summary>Writes a workbook with ONE sheet (<see cref="SheetName"/>) holding one землище and returns its path.</summary>
+        public static string Export(CadControlReport report, string outputDir) =>
+            Export(new[] { (SheetName, (IReadOnlyList<CadControlReport>)new[] { report }) }, outputDir);
+
+        /// <summary>
+        /// Writes a workbook with one sheet per item (a municipality) and one section per землище in it, stacked one
+        /// under the other, and returns its path.
+        /// </summary>
+        public static string Export(IReadOnlyList<(string SheetName, IReadOnlyList<CadControlReport> Sections)> sheets, string outputDir)
         {
             string filePath = Path.Combine(outputDir, FileNames.CadControlReportFile);
 
-            using (SpreadsheetDocument document = SpreadsheetDocument.Create(filePath, SpreadsheetDocumentType.Workbook))
+            // One section keeps the freeze pane, the autofilter and Print_Titles (the title and header rows)
+            var layout = new SingleSectionLayout
             {
-                WorkbookPart workbookPart = document.AddWorkbookPart();
-                workbookPart.Workbook = new Workbook();
-
-                WorkbookStylesPart stylesPart = workbookPart.AddNewPart<WorkbookStylesPart>();
-                stylesPart.Stylesheet = BuildStylesheet();
-                stylesPart.Stylesheet.Save();
-
-                WorksheetPart worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
-
-                var sheetData = new SheetData();
-                int lastRow = FillSheet(sheetData, report);
-
-                var columns = new Columns();
-                for (int c = 0; c < ColumnWidths.Length; c++)
-                {
-                    columns.Append(new Column { Min = (uint)(c + 1), Max = (uint)(c + 1), Width = ColumnWidths[c], CustomWidth = true });
-                }
-
-                worksheetPart.Worksheet = new Worksheet(
-                    new SheetProperties(new PageSetupProperties { FitToPage = true }),
-                    new SheetViews(new SheetView(
-                        new Pane
-                        {
-                            VerticalSplit = HeaderRow,
-                            TopLeftCell = "A" + (HeaderRow + 1),
-                            ActivePane = PaneValues.BottomLeft,
-                            State = PaneStateValues.Frozen
-                        },
-                        new Selection { Pane = PaneValues.BottomLeft })
-                    { WorkbookViewId = 0U }),
-                    columns,
-                    sheetData,
-                    new AutoFilter { Reference = $"A{HeaderRow}:{Ref(Headers.Length, Math.Max(lastRow, HeaderRow))}" },
-                    new PageMargins { Left = 0.4, Right = 0.4, Top = 0.6, Bottom = 0.6, Header = 0.3, Footer = 0.3 },
-                    new PageSetup
-                    {
-                        PaperSize = 9U, // A4
-                        Orientation = OrientationValues.Landscape,
-                        FitToWidth = 1U,
-                        FitToHeight = 0U
-                    });
-                worksheetPart.Worksheet.Save();
-
-                Sheets sheets = workbookPart.Workbook.AppendChild(new Sheets());
-                sheets.Append(new Sheet
-                {
-                    Id = workbookPart.GetIdOfPart(worksheetPart),
-                    SheetId = 1U,
-                    Name = SheetName
-                });
-
-                // Repeat the title + header rows on every printed page
-                workbookPart.Workbook.AppendChild(new DefinedNames(
-                    new DefinedName($"'{SheetName}'!$1:${HeaderRow}")
-                    {
-                        Name = "_xlnm.Print_Titles",
-                        LocalSheetId = 0U
-                    }));
-                workbookPart.Workbook.Save();
-            }
-
+                FreezeRows = HeaderRow, FirstTitleRow = TitleRow, LastTitleRow = HeaderRow, AutoFilterHeaderRow = HeaderRow
+            };
+            SectionedWorkbook.Write(filePath, sheets, BuildStylesheet(), ColumnWidths, Headers.Length, layout, WriteSection);
             return filePath;
         }
 
-        /// <summary>Fills the rows and returns the index of the last one.</summary>
-        private static int FillSheet(SheetData sheetData, CadControlReport report)
+        /// <summary>Writes one section starting at <paramref name="firstRow"/> and returns the next free row.</summary>
+        private static int WriteSection(SheetData sheetData, MergeCells mergeCells, CadControlReport report, int firstRow)
         {
-            // Row 1: title in A1 (not merged; the text runs over the empty cells to its right)
-            var titleRow = new Row { RowIndex = (uint)TitleRow, Height = 24D, CustomHeight = true };
-            titleRow.Append(TextCell(1, TitleRow, report.Title, StyleTitle));
+            int titleRowIndex = firstRow + (TitleRow - 1);
+            int headerRowIndex = firstRow + (HeaderRow - 1);
+
+            // Row 1 of the section: title in A (not merged; the text runs over the empty cells to its right)
+            var titleRow = new Row { RowIndex = (uint)titleRowIndex, Height = 24D, CustomHeight = true };
+            titleRow.Append(TextCell(1, titleRowIndex, report.Title, StyleTitle));
             sheetData.Append(titleRow);
 
             // Row 2: header
-            var headerRow = new Row { RowIndex = (uint)HeaderRow, Height = 32D, CustomHeight = true };
+            var headerRow = new Row { RowIndex = (uint)headerRowIndex, Height = 32D, CustomHeight = true };
             for (int c = 0; c < Headers.Length; c++)
             {
-                headerRow.Append(TextCell(c + 1, HeaderRow, Headers[c], StyleHeader));
+                headerRow.Append(TextCell(c + 1, headerRowIndex, Headers[c], StyleHeader));
             }
             sheetData.Append(headerRow);
 
-            int rowIndex = HeaderRow;
+            int rowIndex = headerRowIndex;
             foreach (CadControlRow data in report.Rows)
             {
                 rowIndex++;
@@ -155,7 +108,7 @@ namespace PUP_AUTO.DataBridge
                 row.Append(TextCell(14, rowIndex, data.PersonName, StyleText));
                 sheetData.Append(row);
             }
-            return rowIndex;
+            return rowIndex + 1;
         }
 
         // -----------------------------------------------------------------
