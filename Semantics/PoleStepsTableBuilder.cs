@@ -54,7 +54,7 @@ namespace PUP_AUTO.Semantics
         public string PoleNumber { get; set; } = string.Empty;
         public double PieceAreaDka { get; set; }
 
-        /// <summary>True on the first row of a parcel (the row that carries the merged parcel cells).</summary>
+        /// <summary>True on the first row of a parcel.</summary>
         public bool IsFirstOfParcel { get; set; }
 
         /// <summary>Number of rows of the parcel; set on the first row, 0 on the others.</summary>

@@ -216,24 +216,76 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void SeveralPolesInAParcel_MergeParcelAreaAndRemainder()
+        public void SeveralPolesInAParcel_RepeatParcelAreaAndRemainderOnEveryRow_WithoutMerging()
         {
             var s = Export(
                 Piece("A", 1000.0, "1", 30.0),
                 Piece("A", 1000.0, "2", 40.0),
                 Piece("B", 500.0, "3", 10.0));
 
-            Assert.Equal(new[] { "A3:A4", "B3:B4", "E3:E4" }, s.Merges().Where(m => m != "A1:E1").ToArray());
+            // The title is the only merged region
+            Assert.Equal(new[] { "A1:E1" }, s.Merges().ToArray());
 
+            // Parcel A on rows 3 and 4: same parcel, same area, same remainder (1.000 - 0.030 - 0.040 = 0.930)
             Assert.Equal("A", s.Text("A3"));
+            Assert.Equal("A", s.Text("A4"));
+            Assert.Equal(1.000, s.Number("B3"));
+            Assert.Equal(s.Number("B3"), s.Number("B4"));
             Assert.Equal(0.930, s.Number("E3"));
+            Assert.Equal(s.Number("E3"), s.Number("E4"));
+            Assert.True(s.IsNumeric("B4"));
+            Assert.True(s.IsNumeric("E4"));
+
+            // Their own step areas differ
+            Assert.Equal(0.030, s.Number("D3"));
+            Assert.Equal(0.040, s.Number("D4"));
+
+            // Parcel B on row 5
             Assert.Equal("B", s.Text("A5"));
             Assert.Equal(0.490, s.Number("E5"));
+        }
 
-            // continuation cells of a merged range are empty but keep the borders
-            Assert.Null(s.CellAt("A4").InlineString);
-            Assert.Null(s.CellAt("B4").CellValue);
-            Assert.NotNull(s.BorderOf("A4").LeftBorder!.Style);
+        [Fact]
+        public void RepeatedCells_HaveTheSameFormatAndBordersAsTheFirstRow()
+        {
+            var s = Export(
+                Piece("A", 1000.0, "1", 30.0),
+                Piece("A", 1000.0, "2", 40.0),
+                Piece("A", 1000.0, "3", 20.0));
+
+            foreach (string column in new[] { "A", "B", "C", "D", "E" })
+            {
+                foreach (string row in new[] { "4", "5" })
+                {
+                    Assert.Equal(s.CellAt(column + "3").StyleIndex!.Value, s.CellAt(column + row).StyleIndex!.Value);
+                    Assert.Equal(s.NumberFormatCode(column + "3"), s.NumberFormatCode(column + row));
+                }
+
+                // thin borders on all four sides of every data cell
+                foreach (string row in new[] { "3", "4", "5" })
+                {
+                    Border b = s.BorderOf(column + row);
+                    Assert.Equal(BorderStyleValues.Thin, b.LeftBorder!.Style!.Value);
+                    Assert.Equal(BorderStyleValues.Thin, b.RightBorder!.Style!.Value);
+                    Assert.Equal(BorderStyleValues.Thin, b.TopBorder!.Style!.Value);
+                    Assert.Equal(BorderStyleValues.Thin, b.BottomBorder!.Style!.Value);
+                }
+            }
+            Assert.Equal("0.000", s.NumberFormatCode("B5"));
+            Assert.Equal("0.000", s.NumberFormatCode("E5"));
+        }
+
+        [Fact]
+        public void RowsOfOneParcelStayTogether_InTheCurrentOrder()
+        {
+            var s = Export(
+                Piece("B", 500.0, "9", 10.0),
+                Piece("A", 1000.0, "2", 40.0),
+                Piece("B", 500.0, "8", 5.0),
+                Piece("A", 1000.0, "1", 30.0));
+
+            Assert.Equal(new[] { "A", "A", "B", "B" }, new[] { "A3", "A4", "A5", "A6" }.Select(s.Text).ToArray());
+            Assert.Equal(new[] { 1.0, 2.0, 8.0, 9.0 }, new[] { "C3", "C4", "C5", "C6" }.Select(s.Number).ToArray());
         }
 
         [Fact]
@@ -264,7 +316,7 @@ namespace PUP_AUTO.Tests
 
             Assert.Equal("Имот", s.Text("A2"));
             Assert.Equal("Няма стъпки в избраните имоти", s.Text("A3"));
-            Assert.Contains("A3:E3", s.Merges());
+            Assert.Equal(new[] { "A1:E1" }, s.Merges().ToArray()); // the message row is not merged
             Assert.DoesNotContain(s.Worksheet.Descendants<Row>(), r => r.RowIndex!.Value > 3U);
         }
 

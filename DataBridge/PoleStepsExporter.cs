@@ -117,7 +117,7 @@ namespace PUP_AUTO.DataBridge
 
         private static void FillSheet(SheetData sheetData, MergeCells mergeCells, PoleStepsTable table)
         {
-            // Row 1: title, merged across the table
+            // Row 1: title, merged across the table (the only merged region of the sheet)
             var titleRow = new Row { RowIndex = 1U, Height = 24D, CustomHeight = true };
             titleRow.Append(TextCell(1, 1, Title, StyleTitle));
             for (int c = 2; c <= ColumnCount; c++) titleRow.Append(EmptyCell(c, 1, StyleTitle));
@@ -139,7 +139,6 @@ namespace PUP_AUTO.DataBridge
                 messageRow.Append(TextCell(1, rowIndex, NoStepsMessage, StyleMessage));
                 for (int c = 2; c <= ColumnCount; c++) messageRow.Append(EmptyCell(c, rowIndex, StyleMessage));
                 sheetData.Append(messageRow);
-                mergeCells.Append(Merge($"A{rowIndex}", $"E{rowIndex}"));
                 return;
             }
 
@@ -148,34 +147,14 @@ namespace PUP_AUTO.DataBridge
                 rowIndex++;
                 var row = new Row { RowIndex = (uint)rowIndex };
 
-                if (data.IsFirstOfParcel)
-                {
-                    row.Append(TextCell(1, rowIndex, data.ParcelId, StyleText));
-                    row.Append(NumberCell(2, rowIndex, Clean(data.ParcelAreaDka), StyleNumber));
-                }
-                else
-                {
-                    row.Append(EmptyCell(1, rowIndex, StyleText));
-                    row.Append(EmptyCell(2, rowIndex, StyleNumber));
-                }
-
+                // No vertical merges: parcel, parcel area and remainder are repeated on every row of the parcel
+                row.Append(TextCell(1, rowIndex, data.ParcelId, StyleText));
+                row.Append(NumberCell(2, rowIndex, Clean(data.ParcelAreaDka), StyleNumber));
                 row.Append(PoleCell(3, rowIndex, data.PoleNumber));
                 row.Append(NumberCell(4, rowIndex, Clean(data.PieceAreaDka), StyleNumber));
-
-                if (data.IsFirstOfParcel)
-                    row.Append(NumberCell(5, rowIndex, Clean(data.RemainderDka), StyleNumber));
-                else
-                    row.Append(EmptyCell(5, rowIndex, StyleNumber));
+                row.Append(NumberCell(5, rowIndex, Clean(data.RemainderDka), StyleNumber));
 
                 sheetData.Append(row);
-
-                // Parcel, parcel area and remainder are merged vertically across the parcel's rows
-                if (data.IsFirstOfParcel && data.ParcelRowCount > 1)
-                {
-                    int last = rowIndex + data.ParcelRowCount - 1;
-                    foreach (string col in new[] { "A", "B", "E" })
-                        mergeCells.Append(Merge($"{col}{rowIndex}", $"{col}{last}"));
-                }
             }
 
             // Last row: total of the step areas only
@@ -274,7 +253,7 @@ namespace PUP_AUTO.DataBridge
                 Format(0U, 1U, 0U, 2U, Align(HorizontalAlignmentValues.Left, false)),                // 6 total label
                 Format(164U, 1U, 0U, 2U, Align(HorizontalAlignmentValues.Right, false)),             // 7 total number
                 Format(0U, 1U, 0U, 2U, Align(HorizontalAlignmentValues.Left, false)),                // 8 total empty
-                Format(0U, 0U, 0U, 1U, Align(HorizontalAlignmentValues.Center, false)))              // 9 message
+                Format(0U, 0U, 0U, 1U, Align(HorizontalAlignmentValues.Left, false)))                // 9 message (not merged, so left-aligned)
             { Count = 10U };
 
             var cellStyles = new CellStyles(
