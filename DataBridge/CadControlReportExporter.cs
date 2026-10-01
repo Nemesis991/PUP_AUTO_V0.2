@@ -27,6 +27,7 @@ namespace PUP_AUTO.DataBridge
             "Разлика (м²)",
             "Вид собственост",
             "Вид право",
+            "Срок",
             "Дял (DOCID1/DOCID2)",
             "ЕГН/БУЛСТАТ",
             "Име"
@@ -44,7 +45,7 @@ namespace PUP_AUTO.DataBridge
         private const int TitleRow = 1;
         private const int HeaderRow = 2;
 
-        private static readonly double[] ColumnWidths = { 16, 26, 34, 18, 11, 15, 17, 14, 22, 20, 18, 16, 40 };
+        private static readonly double[] ColumnWidths = { 16, 26, 34, 18, 11, 15, 17, 14, 22, 20, 12, 18, 16, 40 };
 
         /// <summary>Writes the file and returns its path.</summary>
         public static string Export(CadControlReport report, string outputDir)
@@ -148,9 +149,10 @@ namespace PUP_AUTO.DataBridge
                 row.Append(NumberCell(8, rowIndex, data.DifferenceSqm));
                 row.Append(TextCell(9, rowIndex, data.Vids, StyleText));
                 row.Append(TextCell(10, rowIndex, data.PravoVid, StyleText));
-                row.Append(TextCell(11, rowIndex, data.Share, StyleText));
-                row.Append(TextCell(12, rowIndex, data.PersonId, StyleIdText));
-                row.Append(TextCell(13, rowIndex, data.PersonName, StyleText));
+                row.Append(TextCell(11, rowIndex, data.Srok, StyleText));
+                row.Append(TextCell(12, rowIndex, data.Share, StyleText));
+                row.Append(TextCell(13, rowIndex, data.PersonId, StyleIdText));
+                row.Append(TextCell(14, rowIndex, data.PersonName, StyleText));
                 sheetData.Append(row);
             }
             return rowIndex;

@@ -8,8 +8,8 @@ namespace PUP_AUTO.Semantics
         /// <summary>Drawn parcel area.</summary>
         public double DrawnAreaSqm { get; set; }
 
-        /// <summary>Servitude ∩ parcel without the pole footprints (the MVP "net servitude" area).</summary>
-        public double ServitudeNetAreaSqm { get; set; }
+        /// <summary>Gross servitude ∩ parcel, pole footprints included (the MVP "gross servitude" area).</summary>
+        public double ServitudeGrossAreaSqm { get; set; }
     }
 
     /// <summary>Everything the register needs from the drawing: parcel areas plus the pole footprints and pieces.</summary>

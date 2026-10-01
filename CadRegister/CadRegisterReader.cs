@@ -355,7 +355,8 @@ namespace PUP_AUTO.CadRegister
                         PersonName = personName,
                         PersonIsHeirs = isHeirs,
                         DocId1 = row.Get("DOCID1"),
-                        DocId2 = row.Get("DOCID2")
+                        DocId2 = row.Get("DOCID2"),
+                        Srok = row.Get("SROK")
                     });
                 }
             }
@@ -388,8 +389,10 @@ namespace PUP_AUTO.CadRegister
             return ekatte + "." + ident;
         }
 
-        /// <summary>\АГРО\ inside a name means quotes: "АГРО". Straight quotes, like the ones already written in the .cad.</summary>
-        public static string UnescapeQuotes(string name) => name.Replace('\\', '"');
+        /// <summary>
+        /// Both escapes of a quote inside a name give ONE straight quote: \"АГРО\" and \АГРО\ are "АГРО".
+        /// </summary>
+        public static string UnescapeQuotes(string name) => name.Replace("\\\"", "\"").Replace('\\', '"');
 
         /// <summary>
         /// Comma-separated values. A string is wrapped in double quotes and may contain unescaped quotes
@@ -406,7 +409,13 @@ namespace PUP_AUTO.CadRegister
                 char c = line[i];
                 if (inQuotes)
                 {
-                    if (c == '"' && EndsField(line, i)) inQuotes = false;
+                    if (c == '\\' && i + 1 < line.Length && line[i + 1] == '"' && !EndsField(line, i + 1))
+                    {
+                        // \" inside the text is an escaped quote; a \ right before the closing quote is the old \АГРО\ form
+                        sb.Append(c).Append('"');
+                        i++;
+                    }
+                    else if (c == '"' && EndsField(line, i)) inQuotes = false;
                     else sb.Append(c);
                 }
                 else if (c == '"' && sb.ToString().Trim().Length == 0)

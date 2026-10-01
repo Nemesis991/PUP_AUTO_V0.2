@@ -68,8 +68,8 @@ namespace PUP_AUTO.Tests
             return data;
         }
 
-        public static RegisterParcelAreas Areas(string id, double drawnSqm, double netSqm) =>
-            new RegisterParcelAreas { ParcelId = id, DrawnAreaSqm = drawnSqm, ServitudeNetAreaSqm = netSqm };
+        public static RegisterParcelAreas Areas(string id, double drawnSqm, double grossSqm) =>
+            new RegisterParcelAreas { ParcelId = id, DrawnAreaSqm = drawnSqm, ServitudeGrossAreaSqm = grossSqm };
 
         public static PoleStepPiece Piece(string parcel, string pole, double sqm) =>
             new PoleStepPiece { ParcelId = parcel, PoleNumber = pole, PieceAreaSqm = sqm };
@@ -154,8 +154,8 @@ namespace PUP_AUTO.Tests
             Assert.Equal("Стълб №113, Стълб №114", row.PoleNumbers);
             Assert.Equal(0.026, row.StepDka);        // 0.014 + 0.012
             Assert.Equal(5.380, row.AreaDka);
-            Assert.Equal(1.200, row.RestrictedDka);
-            Assert.Equal(4.154, row.RemainderDka);   // 5.380 - 1.200 - 0.026
+            Assert.Equal(1.174, row.RestrictedDka);  // gross 1.200 - steps 0.026
+            Assert.Equal(4.180, row.RemainderDka);   // 5.380 - 1.174 - 0.026
             Assert.Equal("VIII", row.Category);
             Assert.Equal("За селскостопански, горски, ведомствен път", row.Ntp);
         }
@@ -224,7 +224,7 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void ParcelWithoutOwners_IsOneRow_WithColumns12To14Empty_AndIsReported()
+        public void ParcelWithoutOwners_IsOneRow_WithColumn12Filled_13And14Empty_AndIsReported()
         {
             AffectedRegister r = RegisterFixture.Build();
 
@@ -233,9 +233,9 @@ namespace PUP_AUTO.Tests
             Assert.Equal("", row.Subdivisions);        // Подотдели stay empty even though the .cad has GORIMOTI rows
             Assert.Equal("", row.Category);            // KAT 0
             Assert.Equal(1.500, row.AreaDka);
-            Assert.Equal(0.400, row.RestrictedDka);
-            Assert.Equal(1.092, row.RemainderDka);     // 1.500 - 0.400 - 0.008
-            Assert.Equal("", row.Vids);
+            Assert.Equal(0.392, row.RestrictedDka);    // gross 0.400 - step 0.008
+            Assert.Equal(1.100, row.RemainderDka);     // 1.500 - 0.392 - 0.008
+            Assert.Equal("Общинска публична", row.Vids);  // the VIDS text is filled even without an owner
             Assert.Equal("", row.PersonId);
             Assert.Equal("", row.PersonName);
             Assert.Equal(new[] { "06433.100.7" }, r.WithoutOwners);
@@ -248,9 +248,9 @@ namespace PUP_AUTO.Tests
             AffectedRegister r = RegisterFixture.Build();
 
             Assert.Equal(7.680, r.TotalAreaDka);          // 0.800 + 5.380 + 1.500
-            Assert.Equal(1.900, r.TotalRestrictedDka);    // 0.300 + 1.200 + 0.400
+            Assert.Equal(1.866, r.TotalRestrictedDka);    // 0.300 + 1.174 + 0.392
             Assert.Equal(0.034, r.TotalStepDka);          // 0.026 + 0.008
-            Assert.Equal(5.746, r.TotalRemainderDka);     // 0.500 + 4.154 + 1.092
+            Assert.Equal(5.780, r.TotalRemainderDka);     // 0.500 + 4.180 + 1.100
 
             // the total row adds up on paper as well
             Assert.Equal(
@@ -315,11 +315,40 @@ namespace PUP_AUTO.Tests
         public void NegativeRemainder_IsPrintedAsIs_AndReported()
         {
             AffectedRegister r = RegisterFixture.Build(
-                parcels: new[] { RegisterFixture.Areas("06433.9.2", 100.0, 90.0) },
+                parcels: new[] { RegisterFixture.Areas("06433.9.2", 100.0, 110.0) },
                 pieces: new[] { RegisterFixture.Piece("06433.9.2", "Стълб №1", 20.0) });
 
             Assert.Equal(-0.010, r.Rows[0].RemainderDka);
             Assert.Equal(new[] { "06433.9.2" }, r.NegativeRemainder);
+        }
+
+        [Fact]
+        public void RestrictedColumn_IsTheRoundedGrossMinusTheRoundedStepSum_NotTheRoundedNet()
+        {
+            // Official register 364.365: gross 0.077, steps 0.024 -> 0.053 (the net 77.4 - 24.0 = 53.4 would round to 0.053 too,
+            // but 380.4-like values do not: gross 85.6 m2 -> 0.086, steps 12.4 + 11.6 -> 0.012 + 0.012 = 0.024, column 8 = 0.062)
+            AffectedRegister r = RegisterFixture.Build(
+                parcels: new[]
+                {
+                    RegisterFixture.Areas("06433.9.2", 1000.0, 77.4),
+                    RegisterFixture.Areas("06433.10.1", 1000.0, 85.6)
+                },
+                pieces: new[]
+                {
+                    RegisterFixture.Piece("06433.9.2", "Стълб №1", 24.0),
+                    RegisterFixture.Piece("06433.10.1", "Стълб №1", 12.4),
+                    RegisterFixture.Piece("06433.10.1", "Стълб №2", 11.6)
+                });
+
+            AffectedRegisterRow a = r.Rows.First(x => x.Number == "06433.9.2");
+            Assert.Equal(0.024, a.StepDka);
+            Assert.Equal(0.053, a.RestrictedDka);   // 0.077 - 0.024
+            Assert.Equal(0.923, a.RemainderDka);    // 1.000 - 0.053 - 0.024
+
+            AffectedRegisterRow b = r.Rows.First(x => x.Number == "06433.10.1");
+            Assert.Equal(0.024, b.StepDka);
+            Assert.Equal(0.062, b.RestrictedDka);   // 0.086 - 0.024
+            Assert.Equal(0.914, b.RemainderDka);    // 1.000 - 0.062 - 0.024
         }
 
         [Fact]
@@ -515,7 +544,7 @@ namespace PUP_AUTO.Tests
             Assert.Equal("06433.10.1", s.Text("A7"));
             Assert.Equal("Стълб №113, Стълб №114", s.Text("J7"));
             Assert.Equal(0.026, s.Number("K7"));
-            Assert.Equal(4.154, s.Number("I7"));
+            Assert.Equal(4.18, s.Number("I7"));
             Assert.Equal("Частна", s.Text("L7"));
             Assert.Equal("0000000001", s.Text("M7"));
 
@@ -528,11 +557,11 @@ namespace PUP_AUTO.Tests
             Assert.Equal("000123456", s.Text("M8"));
             Assert.Equal("\"АГРО\" ЕООД", s.Text("N8"));
 
-            // row 9: parcel without owners — columns 12-14 empty
+            // row 9: parcel without owners — column 12 filled with the VIDS text, 13-14 empty
             Assert.Equal("06433.100.7", s.Text("A9"));
             Assert.True(s.IsEmpty("B9"));      // Подотдели stay empty for now
             Assert.Equal(0.008, s.Number("K9"));
-            Assert.True(s.IsEmpty("L9"));
+            Assert.Equal("Общинска публична", s.Text("L9"));
             Assert.True(s.IsEmpty("M9"));
             Assert.True(s.IsEmpty("N9"));
         }
@@ -548,8 +577,8 @@ namespace PUP_AUTO.Tests
                 Assert.True(s.IsEmpty(c + "10"), c + "10");
             }
             Assert.Equal(7.68, s.Number("G10"));
-            Assert.Equal(1.9, s.Number("H10"));
-            Assert.Equal(5.746, s.Number("I10"));
+            Assert.Equal(1.866, s.Number("H10"));
+            Assert.Equal(5.78, s.Number("I10"));
             Assert.Equal(0.034, s.Number("K10"));
             Assert.False(s.Exists("A11"));
         }

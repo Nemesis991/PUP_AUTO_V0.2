@@ -48,6 +48,9 @@ namespace PUP_AUTO.CadRegister
 
         /// <summary>DOCID2 as read from the file (share denominator, unverified).</summary>
         public string DocId2 { get; set; } = string.Empty;
+
+        /// <summary>SROK (term of the right) as read from the file, e.g. "29.03.2030"; empty when none.</summary>
+        public string Srok { get; set; } = string.Empty;
     }
 
     /// <summary>The data of ONE .cad file (one землище). Keyed by full parcel ID so several files can be merged later.</summary>

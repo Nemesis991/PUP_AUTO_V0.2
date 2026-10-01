@@ -17,11 +17,15 @@ namespace PUP_AUTO.CadRegister
         /// <summary>Area of the drawn polyline in square meters.</summary>
         public double DrawnAreaSqm { get; set; }
 
-        /// <summary>Drawn minus official area, square meters; null when there is no official area.</summary>
-        public double? DifferenceSqm => CadAreaSqm.HasValue ? DrawnAreaSqm - CadAreaSqm.Value : (double?)null;
+        /// <summary>Drawn minus official area, square meters rounded to 2 decimals; null when there is no official area.</summary>
+        public double? DifferenceSqm =>
+            CadAreaSqm.HasValue ? Math.Round(DrawnAreaSqm - CadAreaSqm.Value, 2, MidpointRounding.AwayFromZero) : (double?)null;
 
         public string Vids { get; set; } = string.Empty;
         public string PravoVid { get; set; } = string.Empty;
+
+        /// <summary>SROK of the right as read from the .cad; empty when none.</summary>
+        public string Srok { get; set; } = string.Empty;
         public string Share { get; set; } = string.Empty;
         public string PersonId { get; set; } = string.Empty;
         public string PersonName { get; set; } = string.Empty;
@@ -90,6 +94,7 @@ namespace PUP_AUTO.CadRegister
                 {
                     CadControlRow row = NewRow(parcel, drawnAreas[id], nomenclatures);
                     row.PravoVid = nomenclatures.PravoVid.Describe(right.PravoVid);
+                    row.Srok = right.Srok.Trim();
                     row.Share = FormatShare(right.DocId1, right.DocId2);
                     row.PersonId = right.PersonId;
                     row.PersonName = right.PersonName;
@@ -112,11 +117,15 @@ namespace PUP_AUTO.CadRegister
                 Vids = nomenclatures.Vids.Describe(parcel.Vids)
             };
 
-        /// <summary>DOCID1/DOCID2 exactly as read: "1/2"; a single value alone; empty when both are empty.</summary>
+        /// <summary>DOCID1 value that means "no share" (the real files write -2 there).</summary>
+        public const string NoShareDocId1 = "-2";
+
+        /// <summary>DOCID1/DOCID2 as read: "1/2"; a single value alone; empty when both are empty or DOCID1 is -2.</summary>
         public static string FormatShare(string docId1, string docId2)
         {
             string a = docId1.Trim();
             string b = docId2.Trim();
+            if (a == NoShareDocId1) return string.Empty;
             if (a.Length > 0 && b.Length > 0) return a + "/" + b;
             return a.Length > 0 ? a : b;
         }

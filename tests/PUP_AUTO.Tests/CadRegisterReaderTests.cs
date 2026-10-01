@@ -243,6 +243,7 @@ namespace PUP_AUTO.Tests
         }
 
         [Theory]
+        [InlineData("\\\"ТИМЕКС ЕНЕРДЖИ\\\" ЕООД", "\"ТИМЕКС ЕНЕРДЖИ\" ЕООД")]
         [InlineData("\\АГРО\\", "\"АГРО\"")]
         [InlineData("\\А\\ и \\Б\\ ООД", "\"А\" и \"Б\" ООД")]
         [InlineData("\\НЕЗАТВОРЕНО", "\"НЕЗАТВОРЕНО")]
@@ -251,6 +252,55 @@ namespace PUP_AUTO.Tests
         public void UnescapeQuotes_AlternatesOpeningAndClosing(string raw, string expected)
         {
             Assert.Equal(expected, CadRegisterReader.UnescapeQuotes(raw));
+        }
+
+        [Fact]
+        public void BackslashQuoteInARealPersonRow_BecomesOneQuote()
+        {
+            string text =
+@"HEADER
+VERSION 4.02
+EKATTE 06433
+END_HEADER
+
+TABLE PRAVA
+F IDENT    C  20 0 1
+F PERSON   C 13 0 3 PERSONS
+F PRAVOVID S  2 0 2
+D ""501.1"",""202685868"",1
+END_TABLE
+
+TABLE PERSONS
+F PERSON   C 13 0 1
+F SUBTYPE  S  1 0 2
+F NAME     C 45 0
+F NSTATE   C  2 0 2
+F ADDRCODE L 10 0 3 ADDRESS
+F ADDR     C 50 0
+F ADDRET   C  4 0
+F ADDRAP   C  4 0
+F FLAG     B  1 0
+F SPERSON  C 10 0
+F FIRMREG  C 50 0
+F BEG_DATE D 10 0
+F END_DATE D 10 0
+D ""202685868"",2,""\""ТИМЕКС ЕНЕРДЖИ\"" ЕООД"",""BG"",5,"""","""","""",F,"""","""",31.05.2016,
+END_TABLE
+";
+            CadRegisterData data = SyntheticCad.Read(out List<string> warnings, text);
+
+            Assert.Empty(warnings);
+            Assert.Equal("\"ТИМЕКС ЕНЕРДЖИ\" ЕООД", data.RightsOf("06433.501.1").Single().PersonName);
+        }
+
+        [Fact]
+        public void Srok_IsReadFromPrava()
+        {
+            CadRegisterData data = SyntheticCad.Read(out _);
+
+            IReadOnlyList<OwnershipRight> rights = data.RightsOf("06433.501.1");
+            Assert.Equal("", rights[0].Srok);
+            Assert.Equal("29.03.2030", rights[1].Srok);
         }
 
         [Fact]
@@ -484,6 +534,9 @@ namespace PUP_AUTO.Tests
         [InlineData("\"x \"y\" z\",1", new[] { "x \"y\" z", "1" })]
         [InlineData("6,\"ОБЩИНСКА СЛУЖБА \"ЗГ\"ГР.Ч.БРЯГ\",08.05.2016,", new[] { "6", "ОБЩИНСКА СЛУЖБА \"ЗГ\"ГР.Ч.БРЯГ", "08.05.2016", "" })]
         [InlineData("\"000414154\",4,F,06.06.2023,,", new[] { "000414154", "4", "F", "06.06.2023", "", "" })]
+        [InlineData("\"\\\"ТИМЕКС ЕНЕРДЖИ\\\" ЕООД\",\"BG\"", new[] { "\\\"ТИМЕКС ЕНЕРДЖИ\\\" ЕООД", "BG" })]
+        [InlineData("\"ФИРМА \\\"X\\\"\",5", new[] { "ФИРМА \\\"X\\\"", "5" })]
+        [InlineData("\"\\АГРО\\\",5", new[] { "\\АГРО\\", "5" })]
         [InlineData("'q',w", new[] { "'q'", "w" })]
         [InlineData("\"7497_0006082776\",\"8690П\"", new[] { "7497_0006082776", "8690П" })]
         public void SplitCsv_HandlesQuotesAndKeepsText(string line, string[] expected)

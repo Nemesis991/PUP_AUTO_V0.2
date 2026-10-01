@@ -333,9 +333,9 @@ namespace PUP_AUTO.Geometry
         // -----------------------------------------------------------------
 
         /// <summary>
-        /// Per parcel: drawn area and the net servitude area (servitude ∩ parcel minus the footprints of the poles
-        /// that touch the parcel), computed by the same helpers as <see cref="RunMvpMathTest"/>; plus the pole
-        /// footprint areas and the footprint ∩ parcel pieces (as in <see cref="ComputePoleStepPieces"/>).
+        /// Per parcel: drawn area and the gross servitude area (servitude ∩ parcel, poles included), computed by the
+        /// same helper as <see cref="RunMvpMathTest"/>; plus the pole footprint areas and the footprint ∩ parcel
+        /// pieces (as in <see cref="ComputePoleStepPieces"/>).
         /// Parcel IDs are the ones resolved at pick time.
         /// </summary>
         public RegisterGeometry ComputeRegisterGeometry(
@@ -358,7 +358,6 @@ namespace PUP_AUTO.Geometry
             {
                 Polyline parcelPline = parcelKvp.Value;
                 double parcelArea = parcelPline.Area;
-                var touchingPoles = new List<Polyline>();
 
                 foreach (var poleKvp in polePolylines)
                 {
@@ -372,7 +371,6 @@ namespace PUP_AUTO.Geometry
                             PoleNumber = poleKvp.Key,
                             PieceAreaSqm = intersectArea
                         });
-                        touchingPoles.Add(poleKvp.Value);
                     }
                 }
 
@@ -380,7 +378,7 @@ namespace PUP_AUTO.Geometry
                 {
                     ParcelId = parcelKvp.Key,
                     DrawnAreaSqm = parcelArea,
-                    ServitudeNetAreaSqm = GetPreciseSubtractedArea(parcelPline, servitudePline, touchingPoles)
+                    ServitudeGrossAreaSqm = GetPreciseIntersectionArea(parcelPline, servitudePline)
                 });
             }
 

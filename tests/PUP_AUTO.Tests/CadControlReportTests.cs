@@ -49,11 +49,22 @@ namespace PUP_AUTO.Tests
                 Assert.Equal("1 – Собственост", r.PravoVid);
                 Assert.Equal("1/2", r.Share);
             });
+            Assert.Equal("", report.Rows[0].Srok);
+            Assert.Equal("29.03.2030", report.Rows[1].Srok);
             Assert.Equal(SyntheticCad.FakeEgn1, report.Rows[0].PersonId);
             Assert.Equal(SyntheticCad.Person1Name, report.Rows[0].PersonName);
             Assert.Equal(SyntheticCad.FakeBulstat, report.Rows[1].PersonId);
             Assert.Equal(SyntheticCad.FirmNameUnescaped, report.Rows[1].PersonName);
             Assert.Equal("ЗАГЛАВИЕ", report.Title);
+        }
+
+        [Fact]
+        public void Difference_IsRoundedToTwoDecimals()
+        {
+            CadControlReport report = Build(new[] { Drawn("06433.501.1", 1201.256), Drawn("06433.501.2", 800.004) });
+
+            Assert.Equal(0.76, report.Rows[0].DifferenceSqm);   // 1201.256 - 1200.5 = 0.756
+            Assert.Equal(0.0, report.Rows.First(r => r.ParcelId == "06433.501.2").DifferenceSqm);
         }
 
         [Fact]
@@ -139,6 +150,9 @@ namespace PUP_AUTO.Tests
             Assert.Equal("3", CadControlReportBuilder.FormatShare("3", ""));
             Assert.Equal("7", CadControlReportBuilder.FormatShare("", "7"));
             Assert.Equal("", CadControlReportBuilder.FormatShare("", " "));
+            Assert.Equal("", CadControlReportBuilder.FormatShare("-2", "5"));   // DOCID1 -2: no share at all
+            Assert.Equal("", CadControlReportBuilder.FormatShare(" -2 ", ""));
+            Assert.Equal("2/1", CadControlReportBuilder.FormatShare("2", "1"));
         }
     }
 
@@ -219,7 +233,7 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void TitleRow_ThenTheThirteenHeaders_InTheAgreedOrder()
+        public void TitleRow_ThenTheFourteenHeaders_InTheAgreedOrder()
         {
             Sheet_ s = Export(SampleReport(), out _);
 
@@ -227,7 +241,7 @@ namespace PUP_AUTO.Tests
             string[] expected =
             {
                 "Имот", "ТП (код + текст)", "НТП (код + текст)", "Местност", "Категория", "Площ .cad (м²)",
-                "Начертана площ (м²)", "Разлика (м²)", "Вид собственост", "Вид право", "Дял (DOCID1/DOCID2)",
+                "Начертана площ (м²)", "Разлика (м²)", "Вид собственост", "Вид право", "Срок", "Дял (DOCID1/DOCID2)",
                 "ЕГН/БУЛСТАТ", "Име"
             };
             for (int i = 0; i < expected.Length; i++)
@@ -261,8 +275,10 @@ namespace PUP_AUTO.Tests
             Assert.Equal("2230 – Нива", s.Text("C4"));
             Assert.Equal("ТЕСТОВА МЕСТНОСТ", s.Text("D4"));
             Assert.Equal("VIII", s.Text("E3"));
-            Assert.Equal("1/2", s.Text("K3"));
-            Assert.Equal(SyntheticCad.FirmNameUnescaped, s.Text("M4"));
+            Assert.Equal("", s.Text("K3"));
+            Assert.Equal("29.03.2030", s.Text("K4"));
+            Assert.Equal("1/2", s.Text("L3"));
+            Assert.Equal(SyntheticCad.FirmNameUnescaped, s.Text("N4"));
         }
 
         [Fact]
@@ -286,10 +302,10 @@ namespace PUP_AUTO.Tests
         {
             Sheet_ s = Export(SampleReport(), out _);
 
-            Assert.Equal("0000000001", s.Text("L3"));
-            Assert.Equal("000123456", s.Text("L4"));
-            Assert.False(s.IsNumeric("L3"));
-            Assert.False(s.IsNumeric("L4"));
+            Assert.Equal("0000000001", s.Text("M3"));
+            Assert.Equal("000123456", s.Text("M4"));
+            Assert.False(s.IsNumeric("M3"));
+            Assert.False(s.IsNumeric("M4"));
         }
 
         [Fact]
@@ -299,7 +315,7 @@ namespace PUP_AUTO.Tests
 
             Pane pane = s.Worksheet.Descendants<Pane>().Single();
             Assert.Equal(2D, pane.VerticalSplit!.Value);
-            Assert.Equal("A2:M5", s.Worksheet.Descendants<AutoFilter>().Single().Reference!.Value);
+            Assert.Equal("A2:N5", s.Worksheet.Descendants<AutoFilter>().Single().Reference!.Value);
         }
 
         [Fact]

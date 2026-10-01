@@ -44,7 +44,7 @@ namespace PUP_AUTO.CadRegister
         /// <summary>Picked parcels that are not in the .cad (they still get a row with the drawn areas).</summary>
         public List<string> NotFound { get; } = new List<string>();
 
-        /// <summary>Parcels in the .cad without a right of ownership (one row, columns 12-14 empty).</summary>
+        /// <summary>Parcels in the .cad without a right of ownership (one row, column 12 filled, 13-14 empty).</summary>
         public List<string> WithoutOwners { get; } = new List<string>();
 
         /// <summary>Parcels whose printed remainder came out negative (steps + servitude larger than the parcel).</summary>
@@ -88,7 +88,7 @@ namespace PUP_AUTO.CadRegister
                     areasById[parcel.ParcelId] = sum;
                 }
                 sum.DrawnAreaSqm += parcel.DrawnAreaSqm;
-                sum.ServitudeNetAreaSqm += parcel.ServitudeNetAreaSqm;
+                sum.ServitudeGrossAreaSqm += parcel.ServitudeGrossAreaSqm;
             }
 
             var piecesById = new Dictionary<string, List<PoleStepPiece>>(StringComparer.Ordinal);
@@ -111,7 +111,7 @@ namespace PUP_AUTO.CadRegister
             {
                 RegisterParcelAreas areas = areasById[id];
                 decimal areaDka = (decimal)AreaUnits.SqmToDka(areas.DrawnAreaSqm);
-                decimal restrictedDka = (decimal)AreaUnits.SqmToDka(areas.ServitudeNetAreaSqm);
+                decimal grossDka = (decimal)AreaUnits.SqmToDka(areas.ServitudeGrossAreaSqm);
 
                 // Poles of the parcel ascending; the step is the sum of the printed (rounded) pieces
                 piecesById.TryGetValue(id, out List<PoleStepPiece>? parcelPieces);
@@ -126,6 +126,8 @@ namespace PUP_AUTO.CadRegister
                 poleNumbers.Sort(PoleStepsTableBuilder.ComparePoleNumbers);
                 bool hasPoles = poleNumbers.Count > 0;
 
+                // Column 8 = printed gross servitude minus the printed steps (not the rounded net area)
+                decimal restrictedDka = grossDka - stepDka;
                 decimal remainderDka = areaDka - restrictedDka - stepDka;
                 if (remainderDka < 0m) result.NegativeRemainder.Add(id);
 
@@ -162,7 +164,11 @@ namespace PUP_AUTO.CadRegister
                 List<AffectedRegisterRow> ownerRows = OwnerRows(register, id, cad, nomenclatures);
                 if (ownerRows.Count == 0)
                 {
-                    if (cad != null) result.WithoutOwners.Add(id);
+                    if (cad != null)
+                    {
+                        result.WithoutOwners.Add(id);
+                        first.Vids = nomenclatures.Vids.TextOf(cad.Vids); // columns 13-14 stay empty
+                    }
                     result.Rows.Add(first);
                     continue;
                 }
