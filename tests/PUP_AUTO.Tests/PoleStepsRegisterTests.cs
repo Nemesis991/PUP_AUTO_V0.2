@@ -225,7 +225,7 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void SamePoleTwiceInTheSameParcelId_IsOneBlock_WithThePiecesAddedBeforeRounding()
+        public void SamePoleTwiceInTheSameParcelId_IsOneBlock_WithTheRoundedPiecesAdded()
         {
             PoleStepsRegister r = StepsFixture.Build(
                 pieces: new[]
@@ -235,9 +235,42 @@ namespace PUP_AUTO.Tests
                 });
 
             Assert.Single(r.Rows);
-            Assert.Equal(0.021, r.Rows[0].PieceDka);     // 21.2 m², not 0.011 + 0.011
-            Assert.Equal(0.021, r.TotalPieceDka);
+            Assert.Equal(0.022, r.Rows[0].PieceDka);     // 0.011 + 0.011 (each 10.6 m² rounded), not 21.2 m² -> 0.021
+            Assert.Equal(0.022, r.TotalPieceDka);
             Assert.Equal(1, r.PoleCount);
+        }
+
+        [Fact]
+        public void Column2SummedPerParcel_EqualsColumn11OfTheAffectedRegister_EvenWhenAPoleHasSeveralPiecesInOneParcel()
+        {
+            var pieces = new[]
+            {
+                RegisterFixture.Piece("06433.10.1", "Стълб №113", 10.6),   // pole 113 split over two polylines of 10.1
+                RegisterFixture.Piece("06433.10.1", "Стълб №113", 10.6),
+                RegisterFixture.Piece("06433.10.1", "Стълб №114", 9.4),
+                RegisterFixture.Piece("06433.100.7", "Стълб №114", 8.4),
+                RegisterFixture.Piece("06433.100.7", "Стълб №115", 3.3),
+                RegisterFixture.Piece("06433.100.7", "Стълб №115", 3.3),
+                RegisterFixture.Piece("06433.9.2", "Стълб №116", 0.6)
+            };
+
+            PoleStepsRegister steps = StepsFixture.Build(pieces: pieces);
+            AffectedRegister affected = RegisterFixture.Build(
+                parcels: new[]
+                {
+                    RegisterFixture.Areas("06433.10.1", 5380.0, 1200.0),
+                    RegisterFixture.Areas("06433.100.7", 1500.0, 400.0),
+                    RegisterFixture.Areas("06433.9.2", 800.0, 300.0)
+                },
+                pieces: pieces);
+
+            foreach (string id in new[] { "06433.10.1", "06433.100.7", "06433.9.2" })
+            {
+                decimal sum = steps.Rows.Where(x => x.IsFirstOfBlock && x.ParcelId == id).Sum(x => (decimal)x.PieceDka!.Value);
+                double column11 = affected.Rows.Single(x => x.IsFirstOfParcel && x.Number == id).StepDka!.Value;
+                Assert.Equal((decimal)column11, sum);
+            }
+            Assert.Equal((decimal)affected.TotalStepDka, (decimal)steps.TotalPieceDka);
         }
 
         [Fact]

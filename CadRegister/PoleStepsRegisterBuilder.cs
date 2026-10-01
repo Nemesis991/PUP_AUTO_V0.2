@@ -49,7 +49,7 @@ namespace PUP_AUTO.CadRegister
     /// <summary>
     /// Builds the register of pole steps from plain data (no AutoCAD types): one block per (pole, parcel) piece with
     /// the parcel data from the .cad and one row per owner. Areas come in as raw m² and are rounded to decares once
-    /// per printed value.
+    /// per piece; a block's column 2 is the decimal sum of its rounded pieces.
     /// </summary>
     public static class PoleStepsRegisterBuilder
     {
@@ -71,8 +71,9 @@ namespace PUP_AUTO.CadRegister
                 Subtitle = ekatteTitle
             };
 
-            // One pole in one parcel ID is one block: pieces over several polylines of the same ID are added in m²
-            var blocks = new List<(string Pole, string ParcelId, double Sqm, double FallbackParcelSqm)>();
+            // One pole in one parcel ID is one block: pieces over several polylines of the same ID are rounded one by one
+            // and the rounded values added (decimal), exactly like column 11 of the affected-parcels register
+            var blocks = new List<(string Pole, string ParcelId, decimal Dka, double FallbackParcelSqm)>();
             var blockIndex = new Dictionary<(string, string), int>();
             foreach (PoleStepPiece piece in pieces)
             {
@@ -81,13 +82,13 @@ namespace PUP_AUTO.CadRegister
                 if (blockIndex.TryGetValue(key, out int index))
                 {
                     var block = blocks[index];
-                    block.Sqm += piece.PieceAreaSqm;
+                    block.Dka += (decimal)AreaUnits.SqmToDka(piece.PieceAreaSqm);
                     blocks[index] = block;
                 }
                 else
                 {
                     blockIndex[key] = blocks.Count;
-                    blocks.Add((pole, piece.ParcelId, piece.PieceAreaSqm, piece.ParcelAreaSqm));
+                    blocks.Add((pole, piece.ParcelId, (decimal)AreaUnits.SqmToDka(piece.PieceAreaSqm), piece.ParcelAreaSqm));
                 }
             }
 
@@ -107,7 +108,7 @@ namespace PUP_AUTO.CadRegister
             {
                 poles.Add(block.Pole);
 
-                decimal pieceDka = (decimal)AreaUnits.SqmToDka(block.Sqm);
+                decimal pieceDka = block.Dka;
                 totalPiece += pieceDka;
 
                 double drawnSqm = drawnAreaSqmById.TryGetValue(block.ParcelId, out double drawn) ? drawn : block.FallbackParcelSqm;
