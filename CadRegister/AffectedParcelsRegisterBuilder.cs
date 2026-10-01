@@ -59,11 +59,6 @@ namespace PUP_AUTO.CadRegister
     public static class AffectedParcelsRegisterBuilder
     {
         public const string TitlePrefix = "РЕГИСТЪР НА ЗАСЕГНАТИТЕ ИМОТИ ОТ ";
-        public const string HeirsPrefix = "н-ци на ";
-
-        /// <summary>PRAVOVID code of the right of ownership.</summary>
-        public const string OwnershipRightCode = "1";
-
         public static AffectedRegister Build(
             IEnumerable<RegisterParcelAreas> parcels,
             IEnumerable<PoleStepPiece> pieces,
@@ -189,8 +184,8 @@ namespace PUP_AUTO.CadRegister
         }
 
         /// <summary>
-        /// One row per owner: PRAVA rows with PRAVOVID 1 only, de-duplicated by person ID (first order kept).
-        /// Column 12 is the parcel's ownership type. A parcel that is not in the .cad has no owners.
+        /// One row per owner (rules in <see cref="CadOwners"/>). Column 12 is the parcel's ownership type.
+        /// A parcel that is not in the .cad has no owners.
         /// </summary>
         private static List<AffectedRegisterRow> OwnerRows(
             CadRegisterData register, string parcelId, CadastralParcel? cad, Nomenclatures nomenclatures)
@@ -198,19 +193,9 @@ namespace PUP_AUTO.CadRegister
             var rows = new List<AffectedRegisterRow>();
             if (cad == null) return rows;
 
-            string vids = nomenclatures.Vids.TextOf(cad.Vids);
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (OwnershipRight right in register.RightsOf(parcelId))
+            foreach (CadOwner owner in CadOwners.OwnersOf(register, parcelId, cad, nomenclatures))
             {
-                if (!IsOwnership(right.PravoVid)) continue;
-                if (!seen.Add(right.PersonId)) continue;
-
-                rows.Add(new AffectedRegisterRow
-                {
-                    Vids = vids,
-                    PersonId = right.PersonId,
-                    PersonName = (right.PersonIsHeirs ? HeirsPrefix : string.Empty) + right.PersonName
-                });
+                rows.Add(new AffectedRegisterRow { Vids = owner.Vids, PersonId = owner.PersonId, PersonName = owner.PersonName });
             }
             return rows;
         }
@@ -220,12 +205,6 @@ namespace PUP_AUTO.CadRegister
             to.Vids = from.Vids;
             to.PersonId = from.PersonId;
             to.PersonName = from.PersonName;
-        }
-
-        private static bool IsOwnership(string pravoVid)
-        {
-            string code = pravoVid.Trim().TrimStart('0');
-            return code == OwnershipRightCode;
         }
 
         /// <summary>"45/а, 46/б": "&lt;OTDEL&gt;/&lt;PODOTDEL&gt;", one entry per row; a row without подотдел is just the отдел.</summary>

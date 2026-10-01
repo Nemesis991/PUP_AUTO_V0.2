@@ -59,6 +59,7 @@ namespace PUP_AUTO.UI.Windows
         private ReportOption _optPoleSteps = null!;
         private ReportOption _optCadControl = null!;
         private ReportOption _optAffectedRegister = null!;
+        private ReportOption _optPoleStepsRegister = null!;
         private readonly List<ReportOption> _reports = new List<ReportOption>();
         private TextBox _txtRegisterProject = null!;
         private TextBox _txtLog = null!;
@@ -262,8 +263,12 @@ namespace PUP_AUTO.UI.Windows
                 "Собственици и засегнати площи по имоти.",
                 AllRequirements);
 
-            // The register's object name sits under its row, outside the checkbox
-            var projectRow = new Grid { Margin = new Thickness(32, 10, 0, 0) };
+            _optPoleStepsRegister = AddReport(list, "Регистър на стъпките на стълбовете",
+                "Стъпките по стълбове и имоти, със собствениците от .cad.",
+                Requirement.Cad, Requirement.Poles, Requirement.Parcels);
+
+            // The object name is used by both registers: one text box above the list
+            var projectRow = new Grid { Margin = new Thickness(0, 0, 0, 10) };
             projectRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             projectRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             projectRow.Children.Add(new TextBlock
@@ -274,13 +279,16 @@ namespace PUP_AUTO.UI.Windows
             _txtRegisterProject = new TextBox
             {
                 Text = DefaultRegisterProject, MaxWidth = 360, HorizontalAlignment = HorizontalAlignment.Left,
-                MinWidth = 220, ToolTip = "Текстът след \"РЕГИСТЪР НА ЗАСЕГНАТИТЕ ИМОТИ ОТ\""
+                MinWidth = 220, ToolTip = "Текстът след \"РЕГИСТЪР НА ... ОТ\" в регистрите"
             };
             Grid.SetColumn(_txtRegisterProject, 1);
             projectRow.Children.Add(_txtRegisterProject);
-            ((StackPanel)_optAffectedRegister.Card.Child).Children.Add(projectRow);
 
-            return MakeCard(3, "Справки", "Отметнете кои справки да се генерират. Файловете се записват в папката на чертежа.", list);
+            var content = new StackPanel();
+            content.Children.Add(projectRow);
+            content.Children.Add(list);
+
+            return MakeCard(3, "Справки", "Отметнете кои справки да се генерират. Файловете се записват в папката на чертежа.", content);
         }
 
         private UIElement BuildLogCard()
@@ -950,6 +958,7 @@ namespace PUP_AUTO.UI.Windows
                     else if (option == _optPoleSteps) RunPoleStepsTable(doc);
                     else if (option == _optCadControl) RunCadControlReport(doc, _cadRegister!);
                     else if (option == _optAffectedRegister) RunAffectedParcelsRegister(doc, _cadRegister!);
+                    else if (option == _optPoleStepsRegister) RunPoleStepsRegister(doc, _cadRegister!);
                     ranAny = true;
                 }
 
@@ -1250,6 +1259,105 @@ namespace PUP_AUTO.UI.Windows
             {
                 AppendLog($"ГРЕШКА при регистъра на засегнатите имоти: {ex.Message}");
                 _logger?.LogError($"Affected parcels register failed: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// Builds Регистър_на_стъпките_на_стълбовете.xlsx from the picked poles and parcels and the loaded .cad.
+        /// Short transaction under a document lock, nothing is written to the drawing; the in-memory footprints are
+        /// disposed before anything is written. Personal data (ЕГН/БУЛСТАТ, names) never goes to the log.
+        /// </summary>
+        private void RunPoleStepsRegister(Document doc, CadRegisterData register)
+        {
+            try
+            {
+                AppendLog("── СТАРТИРАНЕ НА РЕГИСТЪР НА СТЪПКИТЕ НА СТЪЛБОВЕТЕ ──");
+                EnsureServices();
+                var topo = new TopologyProcessor(_logger!);
+
+                PoleStepsGeometry? geometry = null;
+                var drawnAreaSqmById = new Dictionary<string, double>(StringComparer.Ordinal);
+                using (doc.LockDocument())
+                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+                {
+                    var parcels = OpenParcels(tr);
+                    var entries = ExtractPoles(tr);
+                    try
+                    {
+                        geometry = topo.ComputePoleStepPieces(PoleFootprints(entries), parcels);
+                        // One ID drawn as several polylines is one parcel: the areas are summed
+                        foreach (var parcel in parcels)
+                        {
+                            drawnAreaSqmById.TryGetValue(parcel.Key, out double sum);
+                            drawnAreaSqmById[parcel.Key] = sum + parcel.Value.Area;
+                        }
+                        tr.Commit();
+                    }
+                    finally
+                    {
+                        DisposeFootprints(entries);
+                    }
+                }
+
+                foreach (var step in PoleStepsTableBuilder.FindUncoveredSteps(
+                    geometry!.Footprints, geometry.Pieces, GeometryTolerances.SliverAreaSqm))
+                {
+                    LogWarning(PoleStepsTableBuilder.FormatUncoveredWarning(step));
+                }
+
+                if (geometry.Pieces.Count == 0)
+                {
+                    AppendLog("Няма стъпки на стълбове в избраните имоти — регистърът не е създаден.");
+                    return;
+                }
+
+                string templateDir = TemplateDir;
+                var warnings = new List<string>();
+                Nomenclatures nomenclatures = Nomenclatures.Load(
+                    Path.Combine(templateDir, FileNames.NomenclaturesFolder), warnings.Add);
+                EkatteRegister ekatte = EkatteRegister.LoadWithDefaults(
+                    Path.Combine(templateDir, FileNames.EkatteRegisterFile), warnings.Add);
+                if (ekatte.Count > 0 && !ekatte.TryGet(register.Ekatte, out _))
+                {
+                    warnings.Add($"ЕКАТТЕ {register.Ekatte} не е в регистъра на ЕКАТТЕ — заглавието е непълно.");
+                }
+
+                string project = string.IsNullOrWhiteSpace(_txtRegisterProject.Text) ? DefaultRegisterProject : _txtRegisterProject.Text;
+                PoleStepsRegister report = PoleStepsRegisterBuilder.Build(
+                    geometry.Pieces, drawnAreaSqmById, register, nomenclatures, project,
+                    ekatte.FormatTitle(register.Ekatte, register.SettlementName));
+
+                // The nomenclature warnings ("no text for code N") are raised while the register is built
+                foreach (string warning in warnings) LogWarning(warning);
+
+                var foreign = report.NotFound.Where(id =>
+                {
+                    string e = CadRegisterData.EkatteOf(id);
+                    return e.Length > 0 && e != register.Ekatte;
+                }).ToList();
+                if (foreign.Count > 0)
+                {
+                    LogWarning($"{foreign.Count} избрани имота са с ЕКАТТЕ, различно от заредения .cad ({register.Ekatte}): " +
+                               JoinLimited(foreign, 10));
+                }
+                if (report.NotFound.Count > 0)
+                {
+                    LogWarning($"{report.NotFound.Count} избрани имота не са намерени в .cad (ред само с площите от чертежа): " +
+                               JoinLimited(report.NotFound, 30));
+                }
+                if (report.WithoutOwners.Count > 0)
+                {
+                    LogWarning($"{report.WithoutOwners.Count} имота нямат собственик (право 1) в .cad — ред без собственик: " +
+                               JoinLimited(report.WithoutOwners, 30));
+                }
+
+                string path = PoleStepsRegisterExporter.Export(report, _projectDir);
+                AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}: {report.PoleCount} стълба, {report.Rows.Count} реда.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ГРЕШКА при регистъра на стъпките: {ex.Message}");
+                _logger?.LogError($"Pole steps register failed: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
