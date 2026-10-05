@@ -23,6 +23,13 @@ namespace PUP_AUTO.CadRegister
         public string Vids { get; set; } = string.Empty;            // 12
         public string PersonId { get; set; } = string.Empty;        // 13
         public string PersonName { get; set; } = string.Empty;      // 14
+
+        // Raw .cad codes of the parcel row (empty when the parcel is not in the .cad); not printed by the register,
+        // used by the territory balance to group the same rows.
+        public string KatCode { get; set; } = string.Empty;
+        public string VidsCode { get; set; } = string.Empty;
+        public string VidtCode { get; set; } = string.Empty;
+        public string NtpCode { get; set; } = string.Empty;
     }
 
     public sealed class AffectedRegister
@@ -150,6 +157,10 @@ namespace PUP_AUTO.CadRegister
                     first.Ntp = nomenclatures.Ntp.TextOf(cad.Ntp);
                     first.Mestnost = cad.MestnostName;
                     first.Category = CategoryFormat.Format(cad.Kat);
+                    first.KatCode = cad.Kat;
+                    first.VidsCode = cad.Vids;
+                    first.VidtCode = cad.Vidt;
+                    first.NtpCode = cad.Ntp;
                 }
                 else
                 {

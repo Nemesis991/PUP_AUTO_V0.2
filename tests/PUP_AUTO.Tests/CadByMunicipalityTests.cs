@@ -59,7 +59,7 @@ namespace PUP_AUTO.Tests
             Assert.DoesNotContain(warnings, w => w.Contains("не може да се прочете"));
             Assert.Equal(2, set.Count);
             Assert.Equal(new[] { "11111", "22222" }, set.ByEkatte.Keys.OrderBy(k => k).ToArray());
-            Assert.EndsWith("first.cad", set.SourceFiles["11111"]);
+            Assert.EndsWith("first.cad", Assert.Single(set.SourceFilesOf("11111")));
             Assert.True(set.TryGetFor("22222.501.1", out CadRegisterData data));
             Assert.Equal("22222", data.Ekatte);
             Assert.False(set.TryGetFor("33333.501.1", out _));
@@ -106,33 +106,19 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void SameEkatteInTwoFiles_TheNewerFileWins_AndBothAreNamedInTheWarning()
+        public void SameEkatteInTwoFiles_AreMerged_AndBothAreNamedInTheInfoLine()
         {
             string older = WriteCad("older.cad", "11111");
             string newer = WriteCad("newer.cad", "11111");
             File.SetLastWriteTime(older, new DateTime(2026, 1, 1));
             File.SetLastWriteTime(newer, new DateTime(2026, 6, 1));
 
-            var warnings = new List<string>();
-            CadRegisterSet set = CadRegisterSet.Load(new[] { newer, older }, warnings.Add);
+            var infos = new List<string>();
+            CadRegisterSet set = CadRegisterSet.Load(new[] { newer, older }, _ => { }, infos.Add);
 
             Assert.Equal(1, set.Count);
-            Assert.EndsWith("newer.cad", set.SourceFiles["11111"]);
-            Assert.Single(warnings, w => w.Contains("older.cad") && w.Contains("newer.cad"));
-
-            // the order the files are given in does not matter
-            set = CadRegisterSet.Load(new[] { older, newer }, _ => { });
-            Assert.EndsWith("newer.cad", set.SourceFiles["11111"]);
-        }
-
-        [Fact]
-        public void PreferNewer_IsStrict_ATieKeepsTheFirstFile()
-        {
-            var t = new DateTime(2026, 3, 1);
-
-            Assert.True(CadRegisterSet.PreferNewer(t, t.AddSeconds(1)));
-            Assert.False(CadRegisterSet.PreferNewer(t, t));
-            Assert.False(CadRegisterSet.PreferNewer(t, t.AddSeconds(-1)));
+            Assert.Equal(2, set.SourceFilesOf("11111").Count);
+            Assert.Single(infos, i => i.Contains("older.cad") && i.Contains("newer.cad") && i.Contains("обединени 2 файла"));
         }
 
         [Fact]

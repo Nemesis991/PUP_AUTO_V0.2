@@ -13,6 +13,7 @@ namespace PUP_AUTO.Core
         public const string CadControlReportFile = "Контролна_справка_cad.xlsx";
         public const string AffectedParcelsRegisterFile = "Регистър_на_засегнатите_имоти.xlsx";
         public const string PoleStepsRegisterFile = "Регистър_на_стъпките_на_стълбовете.xlsx";
+        public const string TerritoryBalanceFile = "Баланси_на_територията.xlsx";
         public const string NomenclaturesFolder = "Номенклатури";
         public const string EkatteRegisterFile = "EKATTE.csv";
     }

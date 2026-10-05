@@ -60,6 +60,7 @@ namespace PUP_AUTO.UI.Windows
         private ReportOption _optCadControl = null!;
         private ReportOption _optAffectedRegister = null!;
         private ReportOption _optPoleStepsRegister = null!;
+        private ReportOption _optTerritoryBalance = null!;
         private readonly List<ReportOption> _reports = new List<ReportOption>();
         private TextBox _txtRegisterProject = null!;
         private TextBox _txtLog = null!;
@@ -271,6 +272,10 @@ namespace PUP_AUTO.UI.Windows
                 "Стъпките по стълбове и имоти, със собствениците от .cad.",
                 Requirement.Cad, Requirement.Poles, Requirement.Parcels);
 
+            _optTerritoryBalance = AddReport(list, "Баланси на територията",
+                "Площите на засегнатите имоти по категория, собственост, територия и НТП.",
+                AllRequirements);
+
             // The object name is used by both registers: one text box above the list
             var projectRow = new Grid { Margin = new Thickness(0, 0, 0, 10) };
             projectRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -283,7 +288,7 @@ namespace PUP_AUTO.UI.Windows
             _txtRegisterProject = new TextBox
             {
                 Text = DefaultRegisterProject, MaxWidth = 360, HorizontalAlignment = HorizontalAlignment.Left,
-                MinWidth = 220, ToolTip = "Текстът след \"РЕГИСТЪР НА ... ОТ\" в регистрите"
+                MinWidth = 220, ToolTip = "Текстът след \"РЕГИСТЪР НА ... ОТ\" в регистрите и след \"БАЛАНСИ НА ... ЗА\" в балансите"
             };
             Grid.SetColumn(_txtRegisterProject, 1);
             projectRow.Children.Add(_txtRegisterProject);
@@ -614,7 +619,14 @@ namespace PUP_AUTO.UI.Windows
                 EnsureServices();
 
                 var warnings = new List<string>();
-                CadRegisterSet set = CadRegisterSet.Load(paths, warnings.Add);
+                var infos = new List<string>();
+                CadRegisterSet set = CadRegisterSet.Load(paths, warnings.Add, infos.Add);
+
+                foreach (string line in infos)
+                {
+                    _logger!.LogSuccess(line);
+                    AppendLog(line);
+                }
 
                 foreach (string warning in warnings) _logger!.LogWarning(warning);
                 foreach (string warning in warnings.Take(MaxWindowWarnings)) AppendLog($"ПРЕДУПРЕЖДЕНИЕ: {warning}");
@@ -664,10 +676,11 @@ namespace PUP_AUTO.UI.Windows
             if (ordered.Count == 1)
             {
                 CadRegisterData only = ordered[0].Value;
-                string path = _cadSet.SourceFiles[ordered[0].Key];
+                IReadOnlyList<string> paths = _cadSet.SourceFilesOf(ordered[0].Key);
                 _lblCadRegister.Text = $"ЕКАТТЕ {only.Ekatte} · {only.SettlementName}";
-                _lblCadDetails.Text = $"{only.Parcels.Count} имота · {Path.GetFileName(path)}";
-                _lblCadDetails.ToolTip = path;
+                _lblCadDetails.Text = $"{only.Parcels.Count} имота · " +
+                                      (paths.Count == 1 ? Path.GetFileName(paths[0]) : $"{paths.Count} файла");
+                _lblCadDetails.ToolTip = string.Join("\n", paths);
                 return;
             }
 
@@ -683,7 +696,7 @@ namespace PUP_AUTO.UI.Windows
                     municipality = entry.Municipality;
                 }
                 if (!municipalities.Contains(municipality)) municipalities.Add(municipality);
-                tooltip.Add($"{pair.Key} {name} — {Path.GetFileName(_cadSet.SourceFiles[pair.Key])}");
+                tooltip.Add($"{pair.Key} {name} — {string.Join(", ", _cadSet.SourceFilesOf(pair.Key).Select(Path.GetFileName))}");
             }
 
             _lblCadRegister.Text = municipalities.Count == 1
@@ -1051,6 +1064,7 @@ namespace PUP_AUTO.UI.Windows
                     else if (option == _optCadControl) RunCadControlReport(doc, _cadSet!);
                     else if (option == _optAffectedRegister) RunAffectedParcelsRegister(doc, _cadSet!);
                     else if (option == _optPoleStepsRegister) RunPoleStepsRegister(doc, _cadSet!);
+                    else if (option == _optTerritoryBalance) RunTerritoryBalance(doc, _cadSet!);
                     ranAny = true;
                 }
 
@@ -1300,10 +1314,100 @@ namespace PUP_AUTO.UI.Windows
             }
         }
 
+        /// <summary>The finished registers of affected parcels of a run, grouped like the report sheets, plus what was found on the way.</summary>
+        private sealed class AffectedRegisterRun
+        {
+            /// <summary>Groups (sheets) with their registers (sections); a section without rows is left out.</summary>
+            public readonly List<(MunicipalityGroup Group, List<AffectedRegister> Reports)> Groups =
+                new List<(MunicipalityGroup, List<AffectedRegister>)>();
+
+            /// <summary>All pole-step pieces of the run (not per section).</summary>
+            public List<PoleStepPiece> Pieces = new List<PoleStepPiece>();
+
+            public readonly List<string> NotFound = new List<string>();
+            public readonly List<string> WithoutOwners = new List<string>();
+            public readonly List<string> NegativeRemainder = new List<string>();
+
+            /// <summary>Nomenclature warnings ("no text for code N"); raised while the registers are built, logged by the caller.</summary>
+            public readonly List<string> Warnings = new List<string>();
+
+            public Nomenclatures Nomenclatures = null!;
+        }
+
+        /// <summary>
+        /// The geometry of the picked servitude, poles and parcels (one short transaction under a document lock; the in-memory
+        /// footprints are disposed before returning), grouped by municipality and землище, and one register of affected parcels
+        /// per section. Shared by the register and the territory balance, so both are built from the same rows.
+        /// Returns null (after logging the reason) when the servitude no longer exists.
+        /// </summary>
+        private AffectedRegisterRun? BuildAffectedRegisters(Document doc, CadRegisterSet cadSet, string project)
+        {
+            EnsureServices();
+            var topo = new TopologyProcessor(_logger!);
+
+            RegisterGeometry? geometry = null;
+            using (doc.LockDocument())
+            using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                Polyline? servitude = OpenPolyline(tr, _servitudeId);
+                if (servitude == null)
+                {
+                    AppendLog("ГРЕШКА: Сервитутът вече не съществува в чертежа — изберете отново.");
+                    return null;
+                }
+
+                var parcels = OpenParcels(tr);
+                var entries = ExtractPoles(tr);
+                try
+                {
+                    geometry = topo.ComputeRegisterGeometry(servitude, PoleFootprints(entries), parcels);
+                    tr.Commit();
+                }
+                finally
+                {
+                    DisposeFootprints(entries);
+                }
+            }
+
+            foreach (var step in PoleStepsTableBuilder.FindUncoveredSteps(
+                geometry!.Footprints, geometry.Pieces, GeometryTolerances.SliverAreaSqm))
+            {
+                LogWarning(PoleStepsTableBuilder.FormatUncoveredWarning(step));
+            }
+
+            var run = new AffectedRegisterRun { Pieces = geometry.Pieces };
+            LoadReportReferenceData(out Nomenclatures nomenclatures, out EkatteRegister ekatte, run.Warnings);
+            run.Nomenclatures = nomenclatures;
+            MunicipalityGroupingResult grouping = GroupParcelsForReport(
+                cadSet, geometry.Parcels.Select(p => p.ParcelId), ekatte, MunicipalityGrouping.LowestPoleByParcel(geometry.Pieces));
+
+            foreach (MunicipalityGroup group in grouping.Groups)
+            {
+                var reports = new List<AffectedRegister>();
+                foreach (SettlementSection section in group.Sections)
+                {
+                    var ids = new HashSet<string>(section.ParcelIds, StringComparer.Ordinal);
+                    AffectedRegister report = AffectedParcelsRegisterBuilder.Build(
+                        geometry.Parcels.Where(p => ids.Contains(p.ParcelId)),
+                        geometry.Pieces.Where(p => ids.Contains(p.ParcelId)),
+                        section.Register, nomenclatures, project, section.EkatteTitle);
+
+                    if (section.HasCad) run.NotFound.AddRange(report.NotFound); // a землище without a .cad is already reported
+                    run.WithoutOwners.AddRange(report.WithoutOwners);
+                    run.NegativeRemainder.AddRange(report.NegativeRemainder);
+                    if (report.Rows.Count == 0) continue;
+
+                    reports.Add(report);
+                }
+
+                if (reports.Count > 0) run.Groups.Add((group, reports));
+            }
+            return run;
+        }
+
         /// <summary>
         /// Builds Регистър_на_засегнатите_имоти.xlsx from the picked servitude, poles and parcels and the loaded .cad files, one
-        /// sheet per municipality and one section per землище. The geometry is computed once, in a short transaction under a
-        /// document lock; the in-memory footprints are disposed before anything is written.
+        /// sheet per municipality and one section per землище (see <see cref="BuildAffectedRegisters"/>).
         /// Personal data (ЕГН/БУЛСТАТ, names) never goes to the log.
         /// </summary>
         private void RunAffectedParcelsRegister(Document doc, CadRegisterSet cadSet)
@@ -1311,92 +1415,35 @@ namespace PUP_AUTO.UI.Windows
             try
             {
                 AppendLog("── СТАРТИРАНЕ НА РЕГИСТЪР НА ЗАСЕГНАТИТЕ ИМОТИ ──");
-                EnsureServices();
-                var topo = new TopologyProcessor(_logger!);
-
-                RegisterGeometry? geometry = null;
-                using (doc.LockDocument())
-                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
-                {
-                    Polyline? servitude = OpenPolyline(tr, _servitudeId);
-                    if (servitude == null)
-                    {
-                        AppendLog("ГРЕШКА: Сервитутът вече не съществува в чертежа — изберете отново.");
-                        return;
-                    }
-
-                    var parcels = OpenParcels(tr);
-                    var entries = ExtractPoles(tr);
-                    try
-                    {
-                        geometry = topo.ComputeRegisterGeometry(servitude, PoleFootprints(entries), parcels);
-                        tr.Commit();
-                    }
-                    finally
-                    {
-                        DisposeFootprints(entries);
-                    }
-                }
-
-                foreach (var step in PoleStepsTableBuilder.FindUncoveredSteps(
-                    geometry!.Footprints, geometry.Pieces, GeometryTolerances.SliverAreaSqm))
-                {
-                    LogWarning(PoleStepsTableBuilder.FormatUncoveredWarning(step));
-                }
-
-                var warnings = new List<string>();
-                LoadReportReferenceData(out Nomenclatures nomenclatures, out EkatteRegister ekatte, warnings);
-                MunicipalityGroupingResult grouping = GroupParcelsForReport(
-                    cadSet, geometry.Parcels.Select(p => p.ParcelId), ekatte, MunicipalityGrouping.LowestPoleByParcel(geometry.Pieces));
-
                 string project = string.IsNullOrWhiteSpace(_txtRegisterProject.Text) ? DefaultRegisterProject : _txtRegisterProject.Text;
+                AffectedRegisterRun? run = BuildAffectedRegisters(doc, cadSet, project);
+                if (run == null) return;
+
                 var sheets = new List<(string SheetName, IReadOnlyList<AffectedRegister> Sections)>();
-                var notFound = new List<string>();
-                var withoutOwners = new List<string>();
-                var negativeRemainder = new List<string>();
-                foreach (MunicipalityGroup group in grouping.Groups)
+                foreach ((MunicipalityGroup group, List<AffectedRegister> reports) in run.Groups)
                 {
-                    var reports = new List<AffectedRegister>();
-                    int parcelCount = 0, rowCount = 0;
-                    foreach (SettlementSection section in group.Sections)
-                    {
-                        var ids = new HashSet<string>(section.ParcelIds, StringComparer.Ordinal);
-                        AffectedRegister report = AffectedParcelsRegisterBuilder.Build(
-                            geometry.Parcels.Where(p => ids.Contains(p.ParcelId)),
-                            geometry.Pieces.Where(p => ids.Contains(p.ParcelId)),
-                            section.Register, nomenclatures, project, section.EkatteTitle);
-
-                        if (section.HasCad) notFound.AddRange(report.NotFound); // a землище without a .cad is already reported
-                        withoutOwners.AddRange(report.WithoutOwners);
-                        negativeRemainder.AddRange(report.NegativeRemainder);
-                        if (report.Rows.Count == 0) continue;
-
-                        reports.Add(report);
-                        parcelCount += report.Rows.Count(r => r.IsFirstOfParcel);
-                        rowCount += report.Rows.Count;
-                    }
-
-                    if (reports.Count == 0) continue;
+                    int parcelCount = reports.Sum(r => r.Rows.Count(x => x.IsFirstOfParcel));
+                    int rowCount = reports.Sum(r => r.Rows.Count);
                     sheets.Add((group.SheetName, reports));
                     AppendLog($"  {group.SheetName}: {reports.Count} землища, {parcelCount} имота, {rowCount} реда.");
                 }
 
                 // The nomenclature warnings ("no text for code N") are raised while the registers are built
-                foreach (string warning in warnings) LogWarning(warning);
+                foreach (string warning in run.Warnings) LogWarning(warning);
 
-                if (notFound.Count > 0)
+                if (run.NotFound.Count > 0)
                 {
-                    LogWarning($"{notFound.Count} избрани имота не са намерени в .cad (ред само с площите от чертежа): " +
-                               JoinLimited(notFound, 30));
+                    LogWarning($"{run.NotFound.Count} избрани имота не са намерени в .cad (ред само с площите от чертежа): " +
+                               JoinLimited(run.NotFound, 30));
                 }
-                if (withoutOwners.Count > 0)
+                if (run.WithoutOwners.Count > 0)
                 {
-                    LogWarning($"{withoutOwners.Count} имота нямат собственик (право 1) в .cad — ред без собственик: " +
-                               JoinLimited(withoutOwners, 30));
+                    LogWarning($"{run.WithoutOwners.Count} имота нямат собственик (право 1) в .cad — ред без собственик: " +
+                               JoinLimited(run.WithoutOwners, 30));
                 }
-                if (negativeRemainder.Count > 0)
+                if (run.NegativeRemainder.Count > 0)
                 {
-                    LogWarning($"Отрицателен остатък при {negativeRemainder.Count} имота: " + JoinLimited(negativeRemainder, 30));
+                    LogWarning($"Отрицателен остатък при {run.NegativeRemainder.Count} имота: " + JoinLimited(run.NegativeRemainder, 30));
                 }
 
                 if (sheets.Count == 0)
@@ -1412,6 +1459,69 @@ namespace PUP_AUTO.UI.Windows
             {
                 AppendLog($"ГРЕШКА при регистъра на засегнатите имоти: {ex.Message}");
                 _logger?.LogError($"Affected parcels register failed: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// Builds Баланси_на_територията.xlsx: the register of affected parcels (same rows, same printed areas) summed by
+        /// category, ownership, territory type and НТП, one sheet per municipality and one section per землище. Every pole is
+        /// counted once per землище (largest piece in that землище wins). Only counts go to the log.
+        /// </summary>
+        private void RunTerritoryBalance(Document doc, CadRegisterSet cadSet)
+        {
+            try
+            {
+                AppendLog("── СТАРТИРАНЕ НА БАЛАНСИ НА ТЕРИТОРИЯТА ──");
+                string project = string.IsNullOrWhiteSpace(_txtRegisterProject.Text) ? DefaultRegisterProject : _txtRegisterProject.Text;
+                AffectedRegisterRun? run = BuildAffectedRegisters(doc, cadSet, project);
+                if (run == null) return;
+
+                var sheets = new List<(string SheetName, IReadOnlyList<TerritoryBalance> Sections)>();
+                int notFoundCount = 0;
+                foreach ((MunicipalityGroup group, List<AffectedRegister> reports) in run.Groups)
+                {
+                    var balances = new List<TerritoryBalance>();
+                    int parcelCount = 0;
+                    foreach (AffectedRegister report in reports)
+                    {
+                        // Each pole once per землище, for the parcel with its largest piece there: a pole on the border of two
+                        // землища is counted in both (the pole-steps register lists it in both too)
+                        SectionPoles poles = TerritoryBalanceBuilder.PolesOfSection(report, run.Pieces);
+                        TerritoryBalance balance = TerritoryBalanceBuilder.Build(
+                            report, poles.ByParcel, project, run.Nomenclatures, poles.DistinctPoles);
+                        if (!balance.PoleCountsAgree)
+                        {
+                            LogWarning($"Баланси, {balance.Subtitle}: \"Стъпки бр.\" не съвпада с броя на стълбовете в землището " +
+                                       $"({poles.DistinctPoles}) — проверете таблиците.");
+                        }
+                        balances.Add(balance);
+                        parcelCount += balance.Tables[0].Total.ParcelCount;
+                        notFoundCount += balance.NotFoundCount;
+                    }
+                    sheets.Add((group.SheetName, balances));
+                    AppendLog($"  {group.SheetName}: {balances.Count} землища, {parcelCount} имота.");
+                }
+
+                // The nomenclature warnings ("no text for code N") are raised while the balances are built
+                foreach (string warning in run.Warnings) LogWarning(warning);
+                if (notFoundCount > 0)
+                {
+                    LogWarning($"{notFoundCount} избрани имота не са намерени в .cad (в групата \"{TerritoryBalanceBuilder.NotInCad}\").");
+                }
+
+                if (sheets.Count == 0)
+                {
+                    AppendLog("Няма имоти за баланса — файлът не е записан.");
+                    return;
+                }
+
+                string path = TerritoryBalanceExporter.Export(sheets, _projectDir);
+                AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ГРЕШКА при балансите: {ex.Message}");
+                _logger?.LogError($"Territory balance failed: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
