@@ -1465,7 +1465,7 @@ namespace PUP_AUTO.UI.Windows
         /// <summary>
         /// Builds Баланси_на_територията.xlsx: the register of affected parcels (same rows, same printed areas) summed by
         /// category, ownership, territory type and НТП, one sheet per municipality and one section per землище. Every pole is
-        /// counted once over the whole run (largest piece wins). Only counts go to the log.
+        /// counted once per землище (largest piece in that землище wins). Only counts go to the log.
         /// </summary>
         private void RunTerritoryBalance(Document doc, CadRegisterSet cadSet)
         {
@@ -1476,9 +1476,6 @@ namespace PUP_AUTO.UI.Windows
                 AffectedRegisterRun? run = BuildAffectedRegisters(doc, cadSet, project);
                 if (run == null) return;
 
-                // Each pole once, over ALL pieces of the run: a pole split between two землища counts in the section of its largest piece
-                Dictionary<string, int> polesByParcel = TerritoryBalanceBuilder.AssignPolesToParcels(run.Pieces);
-
                 var sheets = new List<(string SheetName, IReadOnlyList<TerritoryBalance> Sections)>();
                 int notFoundCount = 0;
                 foreach ((MunicipalityGroup group, List<AffectedRegister> reports) in run.Groups)
@@ -1487,7 +1484,16 @@ namespace PUP_AUTO.UI.Windows
                     int parcelCount = 0;
                     foreach (AffectedRegister report in reports)
                     {
-                        TerritoryBalance balance = TerritoryBalanceBuilder.Build(report, polesByParcel, project, run.Nomenclatures);
+                        // Each pole once per землище, for the parcel with its largest piece there: a pole on the border of two
+                        // землища is counted in both (the pole-steps register lists it in both too)
+                        SectionPoles poles = TerritoryBalanceBuilder.PolesOfSection(report, run.Pieces);
+                        TerritoryBalance balance = TerritoryBalanceBuilder.Build(
+                            report, poles.ByParcel, project, run.Nomenclatures, poles.DistinctPoles);
+                        if (!balance.PoleCountsAgree)
+                        {
+                            LogWarning($"Баланси, {balance.Subtitle}: \"Стъпки бр.\" не съвпада с броя на стълбовете в землището " +
+                                       $"({poles.DistinctPoles}) — проверете таблиците.");
+                        }
                         balances.Add(balance);
                         parcelCount += balance.Tables[0].Total.ParcelCount;
                         notFoundCount += balance.NotFoundCount;

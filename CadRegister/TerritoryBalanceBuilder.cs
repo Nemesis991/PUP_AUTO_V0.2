@@ -36,6 +36,22 @@ namespace PUP_AUTO.CadRegister
 
         /// <summary>Parcels of the section that are not in the .cad (they are in the "Няма данни в .cad" row of every table).</summary>
         public int NotFoundCount { get; set; }
+
+        /// <summary>Distinct poles that have a piece in this землище; null when the caller did not give it.</summary>
+        public int? DistinctPoles { get; set; }
+
+        /// <summary>
+        /// False when the "Стъпки бр." of any of the four Общо rows differs from <see cref="DistinctPoles"/>
+        /// (the caller logs one warning naming the землище). True when the count was not given.
+        /// </summary>
+        public bool PoleCountsAgree => !DistinctPoles.HasValue || Tables.All(t => t.Total.PoleCount == DistinctPoles.Value);
+    }
+
+    /// <summary>The poles of one землище: parcel ID -> poles counted for it, and the number of distinct poles with a piece there.</summary>
+    public sealed class SectionPoles
+    {
+        public Dictionary<string, int> ByParcel { get; set; } = new Dictionary<string, int>(StringComparer.Ordinal);
+        public int DistinctPoles { get; set; }
     }
 
     /// <summary>
@@ -57,7 +73,7 @@ namespace PUP_AUTO.CadRegister
         /// <summary>
         /// Every pole is counted once, for the parcel that holds its largest piece (pieces of one pole in one parcel are
         /// added first; a tie goes to the smaller parcel ID by <see cref="PoleStepsTableBuilder.CompareParcelIds"/>).
-        /// Give it ALL pieces of the run, not those of one section.
+        /// Give it the pieces of ONE землище: a pole on the border of two землища is then counted once in each of them.
         /// </summary>
         public static Dictionary<string, int> AssignPolesToParcels(IEnumerable<PoleStepPiece> allPieces)
         {
@@ -94,12 +110,29 @@ namespace PUP_AUTO.CadRegister
             return polesByParcel;
         }
 
+        /// <summary>
+        /// The poles of the землище of <paramref name="register"/>: only the pieces lying in its parcels decide which parcel
+        /// gets a pole, so a pole that touches two землища is counted once in each.
+        /// </summary>
+        public static SectionPoles PolesOfSection(AffectedRegister register, IEnumerable<PoleStepPiece> runPieces)
+        {
+            var parcelIds = new HashSet<string>(
+                register.Rows.Where(r => r.IsFirstOfParcel).Select(r => r.Number), StringComparer.Ordinal);
+            List<PoleStepPiece> pieces = runPieces.Where(p => parcelIds.Contains(p.ParcelId)).ToList();
+            return new SectionPoles
+            {
+                ByParcel = AssignPolesToParcels(pieces),
+                DistinctPoles = pieces.Select(p => PoleLabels.StripPrefix(p.PoleNumber)).Distinct(StringComparer.Ordinal).Count()
+            };
+        }
+
         /// <exception cref="InvalidOperationException">The four tables (or the register totals) do not agree.</exception>
         public static TerritoryBalance Build(
             AffectedRegister register,
             IReadOnlyDictionary<string, int> polesByParcel,
             string projectName,
-            Nomenclatures nomenclatures)
+            Nomenclatures nomenclatures,
+            int? distinctPoles = null)
         {
             var notFound = new HashSet<string>(register.NotFound, StringComparer.Ordinal);
             List<AffectedRegisterRow> parcels = register.Rows.Where(r => r.IsFirstOfParcel).ToList();
@@ -129,7 +162,8 @@ namespace PUP_AUTO.CadRegister
                 Title = TitlePrefix + projectName.Trim(),
                 Subtitle = register.Subtitle,
                 Tables = tables,
-                NotFoundCount = notFound.Count
+                NotFoundCount = notFound.Count,
+                DistinctPoles = distinctPoles
             };
             Verify(balance, register, parcels.Count);
             return balance;

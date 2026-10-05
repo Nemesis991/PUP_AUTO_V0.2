@@ -292,37 +292,95 @@ namespace PUP_AUTO.Tests
             Assert.False(poles.ContainsKey("06433.1.2"));
         }
 
-        [Fact]
-        public void PoleSplitBetweenTwoZemlishta_IsCountedOnlyInTheSectionOfItsLargestPiece()
+        /// <summary>Two землища: 06433 (the fixture's 6 parcels, pole 41 whole in 1.2) and 06434 (one parcel). Pole 40 is on the border.</summary>
+        private static (TerritoryBalance A, TerritoryBalance B, PoleStepPiece[] Pieces) TwoZemlishta(params PoleStepPiece[] extra)
         {
-            // pole 40: 5 m2 in the землище 06433, 9 m2 in 06434; pole 41 whole in 06433
-            var dataA = BalanceFixture.Data();
             var dataB = new CadRegisterData { Ekatte = "06434", SettlementName = "с. Другово" };
             BalanceFixture.Add(dataB, "06434.2.1", "4", "5", "3", "2800");
+            BalanceFixture.Add(dataB, "06434.2.2", "4", "3", "3", "2800");
 
-            var allPieces = new[]
+            var all = new List<PoleStepPiece>
             {
-                RegisterFixture.Piece("06433.1.1", "Стълб №40", 5.0),
-                RegisterFixture.Piece("06434.2.1", "Стълб №40", 9.0),
+                RegisterFixture.Piece("06433.1.1", "Стълб №40", 5.0),   // the small piece of the border pole is in 06433
+                RegisterFixture.Piece("06434.2.1", "Стълб №40", 9.0),   // the larger one in 06434
                 RegisterFixture.Piece("06433.1.2", "Стълб №41", 12.0)
             };
+            all.AddRange(extra);
+
             AffectedRegister regA = BalanceFixture.Register(
-                BalanceFixture.Areas(), allPieces.Where(p => p.ParcelId.StartsWith("06433.")), dataA);
+                BalanceFixture.Areas(), all.Where(p => p.ParcelId.StartsWith("06433.")), BalanceFixture.Data());
             AffectedRegister regB = BalanceFixture.Register(
-                new[] { RegisterFixture.Areas("06434.2.1", 700.0, 100.0) },
-                allPieces.Where(p => p.ParcelId.StartsWith("06434.")), dataB);
+                new[] { RegisterFixture.Areas("06434.2.1", 700.0, 100.0), RegisterFixture.Areas("06434.2.2", 300.0, 50.0) },
+                all.Where(p => p.ParcelId.StartsWith("06434.")), dataB);
 
-            Dictionary<string, int> poles = TerritoryBalanceBuilder.AssignPolesToParcels(allPieces);
-            TerritoryBalance a = TerritoryBalanceBuilder.Build(regA, poles, "ОБЕКТ", BalanceFixture.Nomenclatures());
-            TerritoryBalance b = TerritoryBalanceBuilder.Build(regB, poles, "ОБЕКТ", BalanceFixture.Nomenclatures());
+            TerritoryBalance Build(AffectedRegister register)
+            {
+                SectionPoles poles = TerritoryBalanceBuilder.PolesOfSection(register, all);
+                return TerritoryBalanceBuilder.Build(register, poles.ByParcel, "ОБЕКТ", BalanceFixture.Nomenclatures(), poles.DistinctPoles);
+            }
+            return (Build(regA), Build(regB), all.ToArray());
+        }
 
-            Assert.Equal(1, a.Tables[0].Total.PoleCount);   // pole 41 only
-            Assert.Equal(1, b.Tables[0].Total.PoleCount);   // pole 40
-            Assert.Equal(2, a.Tables[0].Total.PoleCount + b.Tables[0].Total.PoleCount);
-            Assert.Equal(allPieces.Select(p => p.PoleNumber).Distinct().Count(), poles.Values.Sum());
-            // the step AREA of the small piece still stays in its own землище
+        [Fact]
+        public void PoleOnTheBorderOfTwoZemlishta_IsCountedOnceInEach_InTheParcelWithTheLargestPieceOfThatZemlishte()
+        {
+            var (a, b, pieces) = TwoZemlishta();
+
+            // 06433: poles 40 (its 5 m2 piece in 1.1) and 41 (1.2)
+            Assert.Equal(2, a.Tables[0].Total.PoleCount);
+            Assert.Equal(2, a.Tables[1].Rows.Single(r => r.Group == "Частна").PoleCount);   // 1.1 and 1.2 are both Частна
+            // 06434: pole 40 (its 9 m2 piece in 2.1)
+            Assert.Equal(1, b.Tables[0].Total.PoleCount);
+            Assert.Equal(1, b.Tables[1].Rows.Single(r => r.Group == "Частна").PoleCount);
+            Assert.Equal(0, b.Tables[1].Rows.Single(r => r.Group == "Общинска публична").PoleCount);
+            // the step AREA of each землище is only its own pieces
             Assert.Equal(0.017m, a.Tables[0].Total.StepDka);
             Assert.Equal(0.009m, b.Tables[0].Total.StepDka);
+            // the same pole is in both землища: the sum over землища is NOT the number of distinct poles of the run
+            Assert.Equal(3, a.Tables[0].Total.PoleCount + b.Tables[0].Total.PoleCount);
+            Assert.Equal(2, pieces.Select(p => p.PoleNumber).Distinct().Count());
+        }
+
+        [Fact]
+        public void PoleAcrossTwoParcelsOfOneZemlishte_IsStillCountedOnce_ForTheLargerPiece()
+        {
+            // pole 42: 4 m2 in 06433.1.1 (Частна), 10 m2 in 06433.1.3 (Общинска публична); and a small piece in the other землище
+            var (a, b, _) = TwoZemlishta(
+                RegisterFixture.Piece("06433.1.1", "Стълб №42", 4.0),
+                RegisterFixture.Piece("06433.1.3", "Стълб №42", 10.0),
+                RegisterFixture.Piece("06434.2.2", "Стълб №42", 1.0));
+
+            Assert.Equal(3, a.Tables[0].Total.PoleCount);                                                 // 40, 41, 42 once each
+            Assert.Equal(1, a.Tables[1].Rows.Single(r => r.Group == "Общинска публична").PoleCount);     // 42 -> 1.3
+            Assert.Equal(2, a.Tables[1].Rows.Single(r => r.Group == "Частна").PoleCount);                // 40, 41; not 42
+            Assert.Equal(2, b.Tables[0].Total.PoleCount);                                                 // 40 and 42 each once
+            Assert.Equal(1, b.Tables[1].Rows.Single(r => r.Group == "Общинска публична").PoleCount);     // 42's 1 m2 piece in 2.2
+        }
+
+        [Fact]
+        public void TotalOfPolesInEveryTable_EqualsTheDistinctPolesWithAPieceInTheZemlishte()
+        {
+            var (a, b, _) = TwoZemlishta(
+                RegisterFixture.Piece("06433.1.3", "Стълб №42", 10.0),
+                RegisterFixture.Piece("06434.2.2", "Стълб №43", 7.0));
+
+            Assert.Equal(3, a.DistinctPoles);   // 40, 41, 42
+            Assert.Equal(2, b.DistinctPoles);   // 40 and 43; pole 42 has no piece here
+            foreach (TerritoryBalance balance in new[] { a, b })
+            {
+                Assert.True(balance.PoleCountsAgree, balance.Subtitle);
+                Assert.All(balance.Tables, table => Assert.Equal(balance.DistinctPoles, table.Total.PoleCount));
+            }
+        }
+
+        [Fact]
+        public void PoleCountCheck_FlagsAMismatch()
+        {
+            TerritoryBalance b = BalanceFixture.Balance();
+            Assert.True(b.PoleCountsAgree);
+
+            b.DistinctPoles = 3;                      // two poles are counted, three claimed
+            Assert.False(b.PoleCountsAgree);
         }
     }
 
