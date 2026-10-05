@@ -70,6 +70,9 @@ namespace PUP_AUTO.CadRegister
         /// <summary>Number of distinct persons (after de-duplication by ID).</summary>
         public int PersonCount { get; set; }
 
+        /// <summary>The IDs of those persons; used to count the distinct persons when several files of one землище are merged.</summary>
+        public HashSet<string> PersonIds { get; } = new HashSet<string>(StringComparer.Ordinal);
+
         public IReadOnlyList<OwnershipRight> RightsOf(string parcelId) =>
             Rights.TryGetValue(parcelId, out List<OwnershipRight>? rights) ? rights : Array.Empty<OwnershipRight>();
 

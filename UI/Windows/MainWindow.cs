@@ -619,7 +619,14 @@ namespace PUP_AUTO.UI.Windows
                 EnsureServices();
 
                 var warnings = new List<string>();
-                CadRegisterSet set = CadRegisterSet.Load(paths, warnings.Add);
+                var infos = new List<string>();
+                CadRegisterSet set = CadRegisterSet.Load(paths, warnings.Add, infos.Add);
+
+                foreach (string line in infos)
+                {
+                    _logger!.LogSuccess(line);
+                    AppendLog(line);
+                }
 
                 foreach (string warning in warnings) _logger!.LogWarning(warning);
                 foreach (string warning in warnings.Take(MaxWindowWarnings)) AppendLog($"ПРЕДУПРЕЖДЕНИЕ: {warning}");
@@ -669,10 +676,11 @@ namespace PUP_AUTO.UI.Windows
             if (ordered.Count == 1)
             {
                 CadRegisterData only = ordered[0].Value;
-                string path = _cadSet.SourceFiles[ordered[0].Key];
+                IReadOnlyList<string> paths = _cadSet.SourceFilesOf(ordered[0].Key);
                 _lblCadRegister.Text = $"ЕКАТТЕ {only.Ekatte} · {only.SettlementName}";
-                _lblCadDetails.Text = $"{only.Parcels.Count} имота · {Path.GetFileName(path)}";
-                _lblCadDetails.ToolTip = path;
+                _lblCadDetails.Text = $"{only.Parcels.Count} имота · " +
+                                      (paths.Count == 1 ? Path.GetFileName(paths[0]) : $"{paths.Count} файла");
+                _lblCadDetails.ToolTip = string.Join("\n", paths);
                 return;
             }
 
@@ -688,7 +696,7 @@ namespace PUP_AUTO.UI.Windows
                     municipality = entry.Municipality;
                 }
                 if (!municipalities.Contains(municipality)) municipalities.Add(municipality);
-                tooltip.Add($"{pair.Key} {name} — {Path.GetFileName(_cadSet.SourceFiles[pair.Key])}");
+                tooltip.Add($"{pair.Key} {name} — {string.Join(", ", _cadSet.SourceFilesOf(pair.Key).Select(Path.GetFileName))}");
             }
 
             _lblCadRegister.Text = municipalities.Count == 1

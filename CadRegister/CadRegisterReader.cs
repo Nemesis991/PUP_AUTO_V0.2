@@ -259,6 +259,7 @@ namespace PUP_AUTO.CadRegister
                 }
             }
             result.PersonCount = persons.Count;
+            foreach (string personId in persons.Keys) result.PersonIds.Add(personId);
             if (conflictingNames > 0)
             {
                 _warn($"{conflictingNames} лица се повтарят в PERSONS с различно име — взето е първото.");
