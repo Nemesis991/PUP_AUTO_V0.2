@@ -273,7 +273,7 @@ namespace PUP_AUTO.UI.Windows
                 Requirement.Cad, Requirement.Poles, Requirement.Parcels);
 
             _optTerritoryBalance = AddReport(list, "Баланси на територията",
-                "Площите на засегнатите имоти по категория, собственост, територия и НТП.",
+                "Балансите по землища и общият баланс за общината (категория, собственост, територия, НТП).",
                 AllRequirements);
 
             // The object name is used by both registers: one text box above the list
@@ -1465,7 +1465,8 @@ namespace PUP_AUTO.UI.Windows
         /// <summary>
         /// Builds Баланси_на_територията.xlsx: the register of affected parcels (same rows, same printed areas) summed by
         /// category, ownership, territory type and НТП, one sheet per municipality and one section per землище. Every pole is
-        /// counted once per землище (largest piece in that землище wins). Only counts go to the log.
+        /// counted once per землище (largest piece in that землище wins). In the same run, Общ_баланс_за_общината.xlsx: the
+        /// землища of each municipality combined (<see cref="TerritoryBalanceBuilder.Combine"/>). Only counts go to the log.
         /// </summary>
         private void RunTerritoryBalance(Document doc, CadRegisterSet cadSet)
         {
@@ -1477,6 +1478,7 @@ namespace PUP_AUTO.UI.Windows
                 if (run == null) return;
 
                 var sheets = new List<(string SheetName, IReadOnlyList<TerritoryBalance> Sections)>();
+                var municipalities = new List<(MunicipalityGroup Group, List<TerritoryBalance> Sections)>();
                 int notFoundCount = 0;
                 foreach ((MunicipalityGroup group, List<AffectedRegister> reports) in run.Groups)
                 {
@@ -1499,6 +1501,7 @@ namespace PUP_AUTO.UI.Windows
                         notFoundCount += balance.NotFoundCount;
                     }
                     sheets.Add((group.SheetName, balances));
+                    municipalities.Add((group, balances));
                     AppendLog($"  {group.SheetName}: {balances.Count} землища, {parcelCount} имота.");
                 }
 
@@ -1517,6 +1520,28 @@ namespace PUP_AUTO.UI.Windows
 
                 string path = TerritoryBalanceExporter.Export(sheets, _projectDir);
                 AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
+
+                // Общ баланс за общината: the землища of each sheet combined, so it always equals the sum of the sections above
+                var totals = new List<(string SheetName, TerritoryBalance Balance)>();
+                foreach ((MunicipalityGroup group, List<TerritoryBalance> sections) in municipalities)
+                {
+                    try
+                    {
+                        totals.Add((group.SheetName, TerritoryBalanceBuilder.Combine(
+                            sections,
+                            TerritoryBalanceBuilder.MunicipalityTitle(project),
+                            TerritoryBalanceBuilder.MunicipalitySubtitle(group.Municipality, group.Province))));
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        LogWarning($"{group.SheetName}: общият баланс не е създаден — {ex.Message}");
+                    }
+                }
+                if (totals.Count > 0)
+                {
+                    string totalsPath = TerritoryBalanceExporter.ExportMunicipalities(totals, _projectDir);
+                    AppendLog($"  Записан {Path.GetFileName(totalsPath)} в {_projectDir}.");
+                }
             }
             catch (Exception ex)
             {

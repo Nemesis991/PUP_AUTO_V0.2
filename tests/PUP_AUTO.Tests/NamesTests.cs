@@ -19,6 +19,7 @@ namespace PUP_AUTO.Tests
             Assert.Equal("Контролна_справка_cad.xlsx", FileNames.CadControlReportFile);
             Assert.Equal("Регистър_на_стъпките_на_стълбовете.xlsx", FileNames.PoleStepsRegisterFile);
             Assert.Equal("Баланси_на_територията.xlsx", FileNames.TerritoryBalanceFile);
+            Assert.Equal("Общ_баланс_за_общината.xlsx", FileNames.MunicipalityBalanceFile);
             Assert.Equal("Номенклатури", FileNames.NomenclaturesFolder);
             Assert.Equal("EKATTE.csv", FileNames.EkatteRegisterFile);
         }

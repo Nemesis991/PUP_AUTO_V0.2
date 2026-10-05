@@ -59,9 +59,20 @@ namespace PUP_AUTO.DataBridge
         /// Writes a workbook with one sheet per item (a municipality) and one section per землище in it, stacked one
         /// under the other, and returns its path. No freeze pane and no Print_Titles: four tables cannot share one header.
         /// </summary>
-        public static string Export(IReadOnlyList<(string SheetName, IReadOnlyList<TerritoryBalance> Sections)> sheets, string outputDir)
+        public static string Export(IReadOnlyList<(string SheetName, IReadOnlyList<TerritoryBalance> Sections)> sheets, string outputDir) =>
+            Write(Path.Combine(outputDir, FileNames.TerritoryBalanceFile), sheets);
+
+        /// <summary>
+        /// Writes Общ_баланс_за_общината.xlsx: one sheet per municipality holding its combined balance (one section, the same
+        /// layout; the title and subtitle come from the balance) and returns its path.
+        /// </summary>
+        public static string ExportMunicipalities(IReadOnlyList<(string SheetName, TerritoryBalance Balance)> sheets, string outputDir) =>
+            Write(
+                Path.Combine(outputDir, FileNames.MunicipalityBalanceFile),
+                sheets.Select(s => (s.SheetName, (IReadOnlyList<TerritoryBalance>)new[] { s.Balance })).ToList());
+
+        private static string Write(string filePath, IReadOnlyList<(string SheetName, IReadOnlyList<TerritoryBalance> Sections)> sheets)
         {
-            string filePath = Path.Combine(outputDir, FileNames.TerritoryBalanceFile);
             SectionedWorkbook.Write(
                 filePath, sheets, BuildStylesheet(), ColumnWidths, ColumnCount, new SingleSectionLayout(), WriteSection,
                 OrientationValues.Portrait);

@@ -17,6 +17,18 @@ namespace PUP_AUTO.CadRegister
 
         /// <summary>Share of the section's affected area, 0.01; null when the section total is 0.</summary>
         public decimal? Percent { get; set; }
+
+        /// <summary>
+        /// The group key, "&lt;sort class&gt;|&lt;code&gt;" (e.g. "0|4" for KAT 4, "2|Без категория"); empty on the "Общо:" row.
+        /// Rows of several balances are merged by it, never by the display text.
+        /// </summary>
+        public string Key { get; set; } = string.Empty;
+
+        /// <summary>Sort class of the group: 0 = numeric code, 1 = other code, 2 = empty code, 3 = not in the .cad.</summary>
+        public int SortClass { get; set; }
+
+        /// <summary>The numeric code of a class-0 group (the sort order inside the class).</summary>
+        public long SortNumber { get; set; }
     }
 
     public sealed class BalanceTable
@@ -62,6 +74,7 @@ namespace PUP_AUTO.CadRegister
     public static class TerritoryBalanceBuilder
     {
         public const string TitlePrefix = "БАЛАНСИ НА ТЕРИТОРИЯТА НА ЗАСЕГНАТИТЕ ИМОТИ ЗА ";
+        public const string MunicipalityTitlePrefix = "ОБЩИ БАЛАНСИ НА ТЕРИТОРИЯТА НА ЗАСЕГНАТИТЕ ИМОТИ ЗА ";
         public const string TotalLabel = "Общо:";
         public const string NoCategory = "Без категория";
         public const string NoCode = "Без код";
@@ -226,7 +239,7 @@ namespace PUP_AUTO.CadRegister
                 string mapKey = group.Class + "|" + group.Key;
                 if (!groups.TryGetValue(mapKey, out (Group Group, BalanceRow Row) entry))
                 {
-                    entry = (group, new BalanceRow { Group = group.Text });
+                    entry = (group, new BalanceRow { Group = group.Text, Key = mapKey, SortClass = group.Class, SortNumber = group.Number });
                     groups[mapKey] = entry;
                 }
 
@@ -265,6 +278,108 @@ namespace PUP_AUTO.CadRegister
 
         private static decimal? Percent(decimal affected, decimal sectionAffected) =>
             sectionAffected == 0m ? (decimal?)null : Math.Round(affected / sectionAffected * 100m, 2, MidpointRounding.AwayFromZero);
+
+        // -----------------------------------------------------------------
+        //  Municipality balance (Общ баланс за общината)
+        // -----------------------------------------------------------------
+
+        /// <summary>"ОБЩИ БАЛАНСИ НА ТЕРИТОРИЯТА НА ЗАСЕГНАТИТЕ ИМОТИ ЗА &lt;обект&gt;".</summary>
+        public static string MunicipalityTitle(string projectName) => MunicipalityTitlePrefix + projectName.Trim();
+
+        /// <summary>"НА ТЕРИТОРИЯТА НА ОБЩИНА МЕЗДРА, ОБЛ. ВРАЦА"; without the province when it is unknown.</summary>
+        public static string MunicipalitySubtitle(string municipality, string province)
+        {
+            string name = municipality.Trim();
+            string text = name == MunicipalityGrouping.UnknownMunicipality
+                ? "НА ТЕРИТОРИЯТА НА " + name
+                : "НА ТЕРИТОРИЯТА НА ОБЩИНА " + name;
+            if (province.Trim().Length > 0) text += ", ОБЛ. " + province.Trim();
+            return text.ToUpperInvariant();
+        }
+
+        /// <summary>
+        /// The balance of a municipality: the four tables of its землища combined. Rows are merged by <see cref="BalanceRow.Key"/>,
+        /// C-G are summed (decimal), H = E + G and the percent is recomputed against the combined total, in the same order as a
+        /// section. Poles are summed as they are: a pole on the border of two землища counts in both.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">An Общо row is not the sum of the sections' Общо rows.</exception>
+        public static TerritoryBalance Combine(IReadOnlyList<TerritoryBalance> sections, string title, string subtitle)
+        {
+            if (sections.Count == 0) throw new ArgumentException("Няма землища за общия баланс.", nameof(sections));
+            int tableCount = sections[0].Tables.Length;
+
+            var tables = new BalanceTable[tableCount];
+            for (int t = 0; t < tableCount; t++)
+            {
+                var merged = new Dictionary<string, BalanceRow>(StringComparer.Ordinal);
+                var total = new BalanceRow { Group = TotalLabel };
+                foreach (TerritoryBalance section in sections)
+                {
+                    foreach (BalanceRow row in section.Tables[t].Rows)
+                    {
+                        if (!merged.TryGetValue(row.Key, out BalanceRow? sum))
+                        {
+                            sum = new BalanceRow { Group = row.Group, Key = row.Key, SortClass = row.SortClass, SortNumber = row.SortNumber };
+                            merged[row.Key] = sum;
+                        }
+                        AddRow(sum, row);
+                        AddRow(total, row);
+                    }
+                }
+
+                var table = new BalanceTable { GroupHeader = sections[0].Tables[t].GroupHeader, Total = total };
+                table.Rows.AddRange(merged.Values
+                    .OrderBy(r => r.SortClass)
+                    .ThenBy(r => r.SortNumber)
+                    .ThenBy(r => r.Key, StringComparer.Ordinal));
+                for (int i = 0; i < table.Rows.Count; i++)
+                {
+                    table.Rows[i].Number = i + 1;
+                    table.Rows[i].Percent = Percent(table.Rows[i].AffectedDka, total.AffectedDka);
+                }
+                total.Percent = total.AffectedDka == 0m ? (decimal?)null : 100m;
+                tables[t] = table;
+            }
+
+            var combined = new TerritoryBalance
+            {
+                Title = title,
+                Subtitle = subtitle,
+                Tables = tables,
+                NotFoundCount = sections.Sum(s => s.NotFoundCount)
+            };
+            VerifyCombined(combined, sections);
+            return combined;
+        }
+
+        private static void AddRow(BalanceRow sum, BalanceRow row)
+        {
+            sum.ParcelCount += row.ParcelCount;
+            sum.AreaDka += row.AreaDka;
+            sum.RestrictedDka += row.RestrictedDka;
+            sum.PoleCount += row.PoleCount;
+            sum.StepDka += row.StepDka;
+            sum.AffectedDka = sum.RestrictedDka + sum.StepDka;
+        }
+
+        /// <summary>Every Общо row of the municipality equals the sum of the same Общо rows of its землища (C, D, E, F, G, H).</summary>
+        private static void VerifyCombined(TerritoryBalance combined, IReadOnlyList<TerritoryBalance> sections)
+        {
+            for (int t = 0; t < combined.Tables.Length; t++)
+            {
+                var expected = new BalanceRow();
+                foreach (TerritoryBalance section in sections) AddRow(expected, section.Tables[t].Total);
+
+                BalanceRow got = combined.Tables[t].Total;
+                if (got.ParcelCount != expected.ParcelCount || got.AreaDka != expected.AreaDka ||
+                    got.RestrictedDka != expected.RestrictedDka || got.PoleCount != expected.PoleCount ||
+                    got.StepDka != expected.StepDka || got.AffectedDka != expected.AffectedDka)
+                {
+                    throw new InvalidOperationException(
+                        $"Общ баланс: таблица \"{combined.Tables[t].GroupHeader}\" не е равна на сбора от землищата ({combined.Subtitle}).");
+                }
+            }
+        }
 
         // -----------------------------------------------------------------
         //  Check
