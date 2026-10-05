@@ -207,6 +207,62 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
+        public void EmbeddedNtp_HoldsAllOfficialCodes()
+        {
+            string? csv = EmbeddedDefaults.ReadText(Nomenclatures.NtpFile);
+            Assert.NotNull(csv);
+
+            var codes = new List<string>();
+            foreach (string raw in EmbeddedDefaults.SplitLines(csv!))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0) continue;
+                string[] cells = line.Split(';');
+                if (cells[0].Equals("код", StringComparison.OrdinalIgnoreCase)) continue;
+                Assert.False(string.IsNullOrWhiteSpace(cells[1]), "empty text for code " + cells[0]);
+                codes.Add(cells[0]);
+            }
+            Assert.Equal(214, codes.Count);
+            Assert.Equal(codes.Count, codes.Distinct().Count());
+
+            var warnings = new List<string>();
+            Nomenclatures all = Nomenclatures.Load(Path.Combine(_dir, "no-such-folder"), warnings.Add);
+            Assert.Equal(214, all.Ntp.Count);
+            Assert.Equal("За съоръжение на електропровод", all.Ntp.TextOf("2420"));
+            Assert.Equal("Друг вид нива", all.Ntp.TextOf("2570"));
+            Assert.Equal("Овощна градина", all.Ntp.TextOf("2600"));
+            Assert.Equal("Лозе", all.Ntp.TextOf("2610"));
+            Assert.Equal("Изоставено трайно насаждение", all.Ntp.TextOf("2650"));
+            Assert.Equal("Друг вид дървопроизводителна гора", all.Ntp.TextOf("2950"));
+            Assert.Equal("За кариера за пясък, чакъл и глини за строителната керамика", all.Ntp.TextOf("3530"));
+            Assert.True(all.Ntp.TryGet("4000", out _));
+            Assert.True(all.Ntp.TryGet("4100", out _));
+            Assert.False(all.Ntp.TryGet("9999", out _));
+            Assert.Empty(warnings);
+        }
+
+        [Fact]
+        public void EmbeddedNtp_KeepsTheTwelveVerifiedTexts()
+        {
+            Nomenclatures all = Nomenclatures.Load(Path.Combine(_dir, "no-such-folder"));
+
+            string[,] verified =
+            {
+                { "2220", "За местен път" }, { "2230", "За селскостопански, горски, ведомствен път" }, { "2500", "Нива" },
+                { "2700", "Ливада" }, { "2800", "Пасище" }, { "2900", "Иглолистна гора" }, { "2910", "Широколистна гора" },
+                { "3040", "Друг вид недървопроизводителна горска площ" }, { "3100", "Водно течение, река" },
+                { "3200", "Отводнителен канал" }, { "3240", "За водностопанско, хидромелиоративно съоръжение" },
+                { "3250", "За друг вид водно течение, водна площ, съоръжение" }
+            };
+            Assert.Equal(12, verified.GetLength(0));
+            for (int i = 0; i < verified.GetLength(0); i++)
+            {
+                Assert.True(all.Ntp.TryGet(verified[i, 0], out string text), verified[i, 0]);
+                Assert.Equal(verified[i, 1], text);
+            }
+        }
+
+        [Fact]
         public void TextOf_IsTheTextAlone_KodNForUnknown_EmptyForEmpty()
         {
             var warnings = new List<string>();
