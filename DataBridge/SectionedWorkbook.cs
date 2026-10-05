@@ -36,7 +36,8 @@ namespace PUP_AUTO.DataBridge
             double[] columnWidths,
             int columnCount,
             SingleSectionLayout single,
-            Func<SheetData, MergeCells, T, int, int> writeSection)
+            Func<SheetData, MergeCells, T, int, int> writeSection,
+            OrientationValues orientation = OrientationValues.Landscape)
         {
             using (SpreadsheetDocument document = SpreadsheetDocument.Create(filePath, SpreadsheetDocumentType.Workbook))
             {
@@ -117,7 +118,7 @@ namespace PUP_AUTO.DataBridge
                     worksheet.Append(new PageSetup
                     {
                         PaperSize = 9U, // A4
-                        Orientation = OrientationValues.Landscape,
+                        Orientation = orientation,
                         FitToWidth = 1U,
                         FitToHeight = 0U // as many pages tall as needed
                     });
