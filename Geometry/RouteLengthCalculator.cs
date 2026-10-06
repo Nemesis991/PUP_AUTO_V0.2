@@ -27,6 +27,7 @@ namespace PUP_AUTO.Geometry
         public double ExtentX;
         public double ExtentY;
 
+        public int Chunks;
         public int IntersectCalls;
         public int IntersectPoints;
         public int IntersectSkipped;
@@ -48,7 +49,7 @@ namespace PUP_AUTO.Geometry
         {
             logger.LogPerf($"Route axis: {Curves} curves, {Vertices} vertices, {ArcSegments} arc segments, " +
                            $"length {LengthM:F0} m, extents {ExtentX:F0} x {ExtentY:F0} m");
-            logger.LogPerf($"Route IntersectWith: {IntersectCalls} calls, {IntersectSkipped} skipped by box, {IntersectPoints} points, " +
+            logger.LogPerf($"Route IntersectWith: {Chunks} axis chunks, {IntersectCalls} calls, {IntersectSkipped} chunk x parcel skipped by box, {IntersectPoints} points, " +
                            $"{Ms(IntersectTicks)} ms, longest call {Ms(IntersectMaxTicks)} ms; point -> parameter {Ms(ParameterTicks)} ms");
             logger.LogPerf($"Route GetSplitCurves: {SplitCalls} calls, {SplitPieces} pieces, {Ms(SplitTicks)} ms");
             logger.LogPerf($"Route piece -> parcel: {ContainsTried} point-in-polygon tests, {ContainsSkipped} skipped by box, {Ms(AssignTicks)} ms");
@@ -154,20 +155,26 @@ namespace PUP_AUTO.Geometry
         {
             BoundingBox? axisBox = BoxOf(axis);
             var parameters = new List<double>();
+            using AxisChunks chunks = AxisChunks.Create(axis);
+            stats.Chunks += chunks.Curves.Count;
             foreach (ParcelRing ring in rings)
             {
                 if (!BoundingBox.MayOverlap(axisBox, ring.Extents, BoxMarginM))
                 {
-                    stats.IntersectSkipped++;
+                    stats.IntersectSkipped += chunks.Curves.Count;
                     continue;
                 }
 
+                // only the chunks near the parcel: an intersection point lies in both boxes, so none is lost
+                List<int> candidates = RouteChunks.Candidates(chunks.Boxes, ring.Extents, BoxMarginM);
+                stats.IntersectSkipped += chunks.Curves.Count - candidates.Count;
+                foreach (int chunk in candidates)
                 using (var points = new Point3dCollection())
                 {
                     long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                     try
                     {
-                        axis.IntersectWith(ring.Polyline, Intersect.OnBothOperands, new Plane(Point3d.Origin, Vector3d.ZAxis), points, IntPtr.Zero, IntPtr.Zero);
+                        chunks.Curves[chunk].IntersectWith(ring.Polyline, Intersect.OnBothOperands, new Plane(Point3d.Origin, Vector3d.ZAxis), points, IntPtr.Zero, IntPtr.Zero);
                     }
                     catch (Autodesk.AutoCAD.Runtime.Exception)
                     {
@@ -198,6 +205,59 @@ namespace PUP_AUTO.Geometry
                 }
             }
             return RouteLengths.SortSplitParameters(parameters, axis.StartParam, axis.EndParam);
+        }
+
+        /// <summary>
+        /// The axis as chunks of <see cref="GeometryTolerances.RouteChunkVertices"/> segments with their boxes, read once per
+        /// axis. An open polyline with more segments is copied into in-memory sub-polylines (owned and disposed here); any other
+        /// curve, or one that cannot be copied, is one chunk: the axis itself, not disposed.
+        /// </summary>
+        private sealed class AxisChunks : IDisposable
+        {
+            public readonly List<Curve> Curves = new List<Curve>();
+            public readonly List<BoundingBox?> Boxes = new List<BoundingBox?>();
+            private readonly List<Polyline> _owned = new List<Polyline>();
+
+            public static AxisChunks Create(Curve axis)
+            {
+                var chunks = new AxisChunks();
+                if (axis is Polyline pline && !pline.Closed && pline.NumberOfVertices - 1 > GeometryTolerances.RouteChunkVertices)
+                {
+                    try
+                    {
+                        foreach ((int first, int last) in RouteChunks.Ranges(pline.NumberOfVertices, GeometryTolerances.RouteChunkVertices))
+                        {
+                            var copy = new Polyline();
+                            chunks._owned.Add(copy);
+                            copy.Normal = pline.Normal;
+                            copy.Elevation = pline.Elevation;
+                            for (int k = first; k <= last; k++)
+                            {
+                                copy.AddVertexAt(k - first, pline.GetPoint2dAt(k), k < last ? pline.GetBulgeAt(k) : 0.0, 0.0, 0.0);
+                            }
+                            chunks.Curves.Add(copy);
+                            chunks.Boxes.Add(BoxOf(copy));
+                        }
+                        return chunks;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        chunks.Dispose();
+                        chunks = new AxisChunks();
+                    }
+                }
+                chunks.Curves.Add(axis);
+                chunks.Boxes.Add(BoxOf(axis));
+                return chunks;
+            }
+
+            public void Dispose()
+            {
+                foreach (Polyline copy in _owned) copy.Dispose();
+                _owned.Clear();
+                Curves.Clear();
+                Boxes.Clear();
+            }
         }
 
         /// <summary>Adds the length of a piece to the parcel that contains its midpoint, or to the outside total.</summary>

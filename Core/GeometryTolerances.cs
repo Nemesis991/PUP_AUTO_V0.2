@@ -25,6 +25,9 @@ namespace PUP_AUTO.Core
         /// <summary>Two bounding boxes further apart than this are skipped before a region boolean (touching edges are still tested).</summary>
         public const double BoundingBoxMarginM = 0.01;
 
+        /// <summary>A route axis is intersected with the parcels in chunks of this many segments, each with its own box.</summary>
+        public const int RouteChunkVertices = 50;
+
         /// <summary>Consecutive marker points closer than this are merged.</summary>
         public const double DuplicatePointDistanceM = 0.01;
 
