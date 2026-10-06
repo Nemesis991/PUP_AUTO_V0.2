@@ -31,6 +31,12 @@ namespace PUP_AUTO.Core
             WriteLog("WARNING", message);
         }
 
+        /// <summary>Timing and count lines, "[PERF]"; they go to the log file only.</summary>
+        public void LogPerf(string message)
+        {
+            WriteLog("PERF", message);
+        }
+
         private void WriteLog(string level, string message)
         {
             try

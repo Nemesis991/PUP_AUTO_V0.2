@@ -234,29 +234,51 @@ namespace PUP_AUTO.Geometry
             List<KeyValuePair<string, Polyline>> parcelPolylines)
         {
             var results = new List<ParcelData>();
+            var perf = new PairStats();
+            var servitudeWatch = new System.Diagnostics.Stopwatch();
+            var total = System.Diagnostics.Stopwatch.StartNew();
+            BoundingBox?[] poleBoxes = polePolylines.Select(k => BoxOf(k.Value)).ToArray();
+            BoundingBox? servitudeBox = BoxOf(servitudePline);
+            var servitudeTimes = new SubjectTimes();
+            int servitudeCalls = 0;
+            LogServitudeShape(_logger, servitudePline);
+            using var servitudeCache = new ServitudeCache(servitudePline, _logger);
 
             foreach (var parcelKvp in parcelPolylines)
             {
                 Polyline parcelPline = parcelKvp.Value;
+                BoundingBox? parcelBox = BoxOf(parcelPline);
+                bool servitudeNear = BoundingBox.MayOverlap(parcelBox, servitudeBox, BoxMargin);
+                using var shifted = new ShiftedParcel(parcelPline);
                 string parcelId = XDataExtractor.GetParcelId(parcelPline);
                 
                 var pData = new ParcelData { ParcelId = parcelId };
                 pData.TotalAreaSqm = parcelPline.Area;
 
                 // 1. Gross Servitude Area
-                pData.ServitudeGrossAreaSqm = GetPreciseIntersectionArea(parcelPline, servitudePline);
+                servitudeWatch.Start();
+                if (servitudeNear) servitudeCalls++;
+                pData.ServitudeGrossAreaSqm = servitudeNear ? shifted.IntersectionArea(servitudeCache, servitudePline, servitudeTimes) : 0.0;
+                servitudeWatch.Stop();
 
                 // 2. Pole Area & Intersecting Poles
                 double totalPoleArea = 0;
                 List<string> assignedPoles = new List<string>();
                 List<Polyline> intersectingPolesList = new List<Polyline>();
 
-                foreach (var poleKvp in polePolylines)
+                for (int poleIndex = 0; poleIndex < polePolylines.Count; poleIndex++)
                 {
+                    var poleKvp = polePolylines[poleIndex];
                     string poleNumber = poleKvp.Key;
                     Polyline poleFootprintPoly = poleKvp.Value;
 
-                    double intersectArea = GetPreciseIntersectionArea(parcelPline, poleFootprintPoly);
+                    if (!BoundingBox.MayOverlap(parcelBox, poleBoxes[poleIndex], BoxMargin))
+                    {
+                        perf.Skipped++;
+                        continue;
+                    }
+
+                    double intersectArea = perf.Pair(() => shifted.IntersectionArea(poleFootprintPoly));
                     
                     if (intersectArea > SliverTolerance)
                     {
@@ -271,10 +293,15 @@ namespace PUP_AUTO.Geometry
                 pData.AssignedPoleNumbers = assignedPoles;
 
                 // 3. Net Servitude Area
-                pData.ServitudeNetAreaSqm = GetPreciseSubtractedArea(parcelPline, servitudePline, intersectingPolesList);
+                pData.ServitudeNetAreaSqm = servitudeNear
+                    ? GetPreciseSubtractedArea(parcelPline, servitudePline, intersectingPolesList)
+                    : 0.0;
 
                 results.Add(pData);
             }
+            perf.Log(_logger, "RunMvpMathTest", parcelPolylines.Count, polePolylines.Count, total.ElapsedMilliseconds);
+            _logger.LogPerf($"RunMvpMathTest servitude x parcel (gross): {servitudeWatch.ElapsedMilliseconds} ms");
+            servitudeTimes.Log(_logger, "RunMvpMathTest servitude x parcel (gross) split", servitudeCalls);
 
             return results;
         }
@@ -304,14 +331,25 @@ namespace PUP_AUTO.Geometry
                 });
             }
 
+            var perf = new PairStats();
+            var total = System.Diagnostics.Stopwatch.StartNew();
+            BoundingBox?[] poleBoxes = polePolylines.Select(k => BoxOf(k.Value)).ToArray();
             foreach (var parcelKvp in parcelPolylines)
             {
                 Polyline parcelPline = parcelKvp.Value;
                 double parcelArea = parcelPline.Area;
 
-                foreach (var poleKvp in polePolylines)
+                BoundingBox? parcelBox = BoxOf(parcelPline);
+                using var shifted = new ShiftedParcel(parcelPline);
+                for (int poleIndex = 0; poleIndex < polePolylines.Count; poleIndex++)
                 {
-                    double intersectArea = GetPreciseIntersectionArea(parcelPline, poleKvp.Value);
+                    var poleKvp = polePolylines[poleIndex];
+                    if (!BoundingBox.MayOverlap(parcelBox, poleBoxes[poleIndex], BoxMargin))
+                    {
+                        perf.Skipped++;
+                        continue;
+                    }
+                    double intersectArea = perf.Pair(() => shifted.IntersectionArea(poleKvp.Value));
                     if (intersectArea > SliverTolerance)
                     {
                         result.Pieces.Add(new PoleStepPiece
@@ -324,6 +362,7 @@ namespace PUP_AUTO.Geometry
                     }
                 }
             }
+            perf.Log(_logger, "ComputePoleStepPieces", parcelPolylines.Count, polePolylines.Count, total.ElapsedMilliseconds);
 
             return result;
         }
@@ -354,14 +393,31 @@ namespace PUP_AUTO.Geometry
                 });
             }
 
+            var perf = new PairStats();
+            var servitudeWatch = new System.Diagnostics.Stopwatch();
+            var total = System.Diagnostics.Stopwatch.StartNew();
+            BoundingBox?[] poleBoxes = polePolylines.Select(k => BoxOf(k.Value)).ToArray();
+            BoundingBox? servitudeBox = BoxOf(servitudePline);
+            var servitudeTimes = new SubjectTimes();
+            int servitudeCalls = 0;
+            LogServitudeShape(_logger, servitudePline);
+            using var servitudeCache = new ServitudeCache(servitudePline, _logger);
             foreach (var parcelKvp in parcelPolylines)
             {
                 Polyline parcelPline = parcelKvp.Value;
                 double parcelArea = parcelPline.Area;
 
-                foreach (var poleKvp in polePolylines)
+                BoundingBox? parcelBox = BoxOf(parcelPline);
+                using var shifted = new ShiftedParcel(parcelPline);
+                for (int poleIndex = 0; poleIndex < polePolylines.Count; poleIndex++)
                 {
-                    double intersectArea = GetPreciseIntersectionArea(parcelPline, poleKvp.Value);
+                    var poleKvp = polePolylines[poleIndex];
+                    if (!BoundingBox.MayOverlap(parcelBox, poleBoxes[poleIndex], BoxMargin))
+                    {
+                        perf.Skipped++;
+                        continue;
+                    }
+                    double intersectArea = perf.Pair(() => shifted.IntersectionArea(poleKvp.Value));
                     if (intersectArea > SliverTolerance)
                     {
                         result.Pieces.Add(new PoleStepPiece
@@ -374,25 +430,81 @@ namespace PUP_AUTO.Geometry
                     }
                 }
 
+                servitudeWatch.Start();
+                bool servitudeNearParcel = BoundingBox.MayOverlap(BoxOf(parcelPline), servitudeBox, BoxMargin);
+                if (servitudeNearParcel) servitudeCalls++;
+                double servitudeArea = servitudeNearParcel
+                    ? shifted.IntersectionArea(servitudeCache, servitudePline, servitudeTimes)
+                    : 0.0;
+                servitudeWatch.Stop();
                 result.Parcels.Add(new RegisterParcelAreas
                 {
                     ParcelId = parcelKvp.Key,
                     DrawnAreaSqm = parcelArea,
-                    ServitudeGrossAreaSqm = GetPreciseIntersectionArea(parcelPline, servitudePline)
+                    ServitudeGrossAreaSqm = servitudeArea
                 });
             }
+            perf.Log(_logger, "ComputeRegisterGeometry", parcelPolylines.Count, polePolylines.Count, total.ElapsedMilliseconds);
+            _logger.LogPerf($"ComputeRegisterGeometry servitude x parcel: {parcelPolylines.Count} parcels, {servitudeWatch.ElapsedMilliseconds} ms");
+            servitudeTimes.Log(_logger, "ComputeRegisterGeometry servitude x parcel split", servitudeCalls);
 
             return result;
+        }
+
+        /// <summary>Counts for the [PERF] lines: pairs tried and pairs that gave a piece above the sliver tolerance.</summary>
+        private sealed class PairStats
+        {
+            public int Tried;
+            public int WithArea;
+            public int Skipped;
+            public long BooleanMs;
+            private readonly System.Diagnostics.Stopwatch _watch = new System.Diagnostics.Stopwatch();
+
+            public double Pair(Func<double> compute)
+            {
+                Tried++;
+                _watch.Restart();
+                double area = compute();
+                _watch.Stop();
+                BooleanMs += _watch.ElapsedMilliseconds;
+                if (area > SliverTolerance) WithArea++;
+                return area;
+            }
+
+            public void Log(Logger logger, string name, int parcels, int poles, long totalMs)
+            {
+                logger.LogPerf($"{name} pole x parcel: {parcels} parcels, {poles} poles, {Tried} pairs tried, " +
+                               $"{WithArea} with area > sliver, {Skipped} skipped, pair loop {BooleanMs} ms, total {totalMs} ms");
+            }
         }
 
         // -----------------------------------------------------------------
         //  Precise Math Helpers (Origin Shift)
         // -----------------------------------------------------------------
 
+        private const double BoxMargin = GeometryTolerances.BoundingBoxMarginM;
+
+        /// <summary>
+        /// The 2D extents of a polyline, read once per polyline. Null when AutoCAD cannot give them: the pair is then
+        /// not skipped, so the boolean decides exactly as before.
+        /// </summary>
+        private static BoundingBox? BoxOf(Polyline pline)
+        {
+            try
+            {
+                Extents3d e = pline.GeometricExtents;
+                return new BoundingBox(e.MinPoint.X, e.MinPoint.Y, e.MaxPoint.X, e.MaxPoint.Y);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         /// <summary>The area (m²) where two polylines overlap; 0 when they only touch or are disjoint.</summary>
         public double IntersectionAreaSqm(Polyline a, Polyline b) => GetPreciseIntersectionArea(a, b);
 
-        private double GetPreciseIntersectionArea(Polyline parcelPoly, Polyline subjectPoly)
+        private static double GetPreciseIntersectionArea(Polyline parcelPoly, Polyline subjectPoly)
         {
             if (parcelPoly == null || subjectPoly == null) return 0.0;
             
@@ -417,6 +529,229 @@ namespace PUP_AUTO.Geometry
                     }
                     catch { return 0.0; }
                 }
+            }
+        }
+
+        /// <summary>Stopwatch ticks spent in the three parts of one subject ∩ parcel call, summed over a loop ([PERF] only).</summary>
+        private sealed class SubjectTimes
+        {
+            public long ParcelRegion;   // the parcel's own region, when this call was its first use
+            public long CloneShift;
+            public long CreateRegion;
+            public long Boolean;
+
+            private static long Ms(long ticks) => ticks * 1000 / System.Diagnostics.Stopwatch.Frequency;
+
+            public void Log(Logger logger, string name, int calls)
+            {
+                logger.LogPerf($"{name}: {calls} calls, parcel region {Ms(ParcelRegion)} ms, clone+shift {Ms(CloneShift)} ms, region build {Ms(CreateRegion)} ms, boolean {Ms(Boolean)} ms");
+            }
+        }
+
+        /// <summary>One [PERF] line about the servitude: vertices, arc segments and extents (counts and metres only).</summary>
+        private static void LogServitudeShape(Logger logger, Polyline servitude)
+        {
+            try
+            {
+                int vertices = servitude.NumberOfVertices;
+                int segments = servitude.Closed ? vertices : vertices - 1;
+                int arcs = 0;
+                for (int i = 0; i < segments; i++)
+                {
+                    if (Math.Abs(servitude.GetBulgeAt(i)) > GeometryTolerances.BulgeEpsilon) arcs++;
+                }
+                Extents3d e = servitude.GeometricExtents;
+                logger.LogPerf($"Servitude shape: {vertices} vertices, {arcs} arc segments, " +
+                               $"extents {e.MaxPoint.X - e.MinPoint.X:F0} x {e.MaxPoint.Y - e.MinPoint.Y:F0} m");
+            }
+            catch (Exception ex)
+            {
+                logger.LogPerf($"Servitude shape: unavailable ({ex.GetType().Name})");
+            }
+        }
+
+        /// <summary>
+        /// The servitude region, built once (shifted so its extents' minimum is the origin: the "G frame") and cloned for every
+        /// parcel, instead of cloning the polyline and building the region again for each parcel. Owns an unmanaged ACIS
+        /// region: dispose it. <see cref="Failed"/> means it could not be built and callers use the per-parcel path.
+        /// </summary>
+        private sealed class ServitudeCache : IDisposable
+        {
+            public Region? Region { get; private set; }
+            public bool Failed { get; private set; }
+
+            /// <summary>The move from the drawing's frame to the G frame.</summary>
+            public Vector3d ToGFrame { get; private set; }
+
+            public ServitudeCache(Polyline servitude, Logger logger)
+            {
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                try
+                {
+                    using (Polyline clone = (Polyline)servitude.Clone())
+                    {
+                        Point3d minPt = clone.GeometricExtents.MinPoint;
+                        ToGFrame = minPt.GetVectorTo(Point3d.Origin);
+                        clone.TransformBy(Matrix3d.Displacement(ToGFrame));
+                        Region = SafeCreateRegion(clone);
+                    }
+                }
+                catch
+                {
+                    Region?.Dispose();
+                    Region = null;
+                    Failed = true;
+                }
+                long ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                logger.LogPerf($"Servitude region built once: {ms} ms{(Failed ? " (failed, per-parcel path used)" : Region == null ? " (no region)" : string.Empty)}");
+            }
+
+            public void Dispose()
+            {
+                Region?.Dispose();
+                Region = null;
+            }
+        }
+
+        /// <summary>
+        /// One parcel for many intersections: the origin shift is computed and the parcel region built once, on first use, and
+        /// every subject (pole footprint, servitude) is intersected with a clone of that region. Same shift rule, same operand
+        /// order (parcel ∩ subject) and same sliver rule as <see cref="GetPreciseIntersectionArea"/>, so the areas are the same.
+        /// Owns an unmanaged ACIS region: dispose it.
+        /// </summary>
+        private sealed class ShiftedParcel : IDisposable
+        {
+            private readonly Polyline _parcel;
+            private bool _built;
+            private Vector3d _shift;
+            private Region? _region;
+
+            public ShiftedParcel(Polyline parcel)
+            {
+                _parcel = parcel;
+            }
+
+            public double IntersectionArea(Polyline subject, SubjectTimes? times = null)
+            {
+                if (subject == null) return 0.0;
+                if (!_built)
+                {
+                    long b0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    Build();
+                    if (times != null) times.ParcelRegion += System.Diagnostics.Stopwatch.GetTimestamp() - b0;
+                }
+                if (_region == null) return 0.0;
+
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                using (Polyline p2 = (Polyline)subject.Clone())
+                {
+                    p2.TransformBy(Matrix3d.Displacement(_shift));
+                    long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    using (Region? r2 = SafeCreateRegion(p2))
+                    {
+                        long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        if (times != null) { times.CloneShift += t1 - t0; times.CreateRegion += t2 - t1; }
+                        if (r2 == null) return 0.0;
+
+                        Region work;
+                        try
+                        {
+                            work = (Region)_region.Clone();
+                        }
+                        catch
+                        {
+                            return GetPreciseIntersectionArea(_parcel, subject); // as before, region by region
+                        }
+                        using (work)
+                        {
+                            try
+                            {
+                                work.BooleanOperation(BooleanOperationType.BoolIntersect, r2);
+                                return work.Area > SliverTolerance ? work.Area : 0.0;
+                            }
+                            catch { return 0.0; }
+                            finally
+                            {
+                                if (times != null) times.Boolean += System.Diagnostics.Stopwatch.GetTimestamp() - t2;
+                            }
+                        }
+                    }
+                }
+            }
+
+            /// <summary>
+            /// Parcel ∩ servitude with the servitude region cloned from the cache and moved from the G frame into this parcel's
+            /// frame; same operand order and sliver rule as <see cref="IntersectionArea(Polyline, SubjectTimes)"/>.
+            /// </summary>
+            public double IntersectionArea(ServitudeCache cache, Polyline servitude, SubjectTimes? times = null)
+            {
+                if (cache.Failed) return IntersectionArea(servitude, times);
+
+                if (!_built)
+                {
+                    long b0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    Build();
+                    if (times != null) times.ParcelRegion += System.Diagnostics.Stopwatch.GetTimestamp() - b0;
+                }
+                if (_region == null || cache.Region == null) return 0.0;
+
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                Region subject;
+                try
+                {
+                    subject = (Region)cache.Region.Clone();
+                    subject.TransformBy(Matrix3d.Displacement(_shift - cache.ToGFrame));
+                }
+                catch
+                {
+                    return IntersectionArea(servitude, times); // as before, per parcel
+                }
+
+                using (subject)
+                {
+                    long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    if (times != null) times.CloneShift += t1 - t0;
+                    Region work;
+                    try
+                    {
+                        work = (Region)_region.Clone();
+                    }
+                    catch
+                    {
+                        return IntersectionArea(servitude, times);
+                    }
+                    using (work)
+                    {
+                        try
+                        {
+                            work.BooleanOperation(BooleanOperationType.BoolIntersect, subject);
+                            return work.Area > SliverTolerance ? work.Area : 0.0;
+                        }
+                        catch { return 0.0; }
+                        finally
+                        {
+                            if (times != null) times.Boolean += System.Diagnostics.Stopwatch.GetTimestamp() - t1;
+                        }
+                    }
+                }
+            }
+
+            private void Build()
+            {
+                _built = true;
+                using (Polyline p1 = (Polyline)_parcel.Clone())
+                {
+                    Point3d minPt = p1.GeometricExtents.MinPoint;
+                    _shift = minPt.GetVectorTo(Point3d.Origin);
+                    p1.TransformBy(Matrix3d.Displacement(_shift));
+                    _region = SafeCreateRegion(p1);
+                }
+            }
+
+            public void Dispose()
+            {
+                _region?.Dispose();
+                _region = null;
             }
         }
 

@@ -819,6 +819,14 @@ namespace PUP_AUTO.UI.Windows
 
         private List<KeyValuePair<string, Polyline>> OpenParcels(Transaction tr)
         {
+            using (PerfTimer.Measure(_logger, "OpenParcels"))
+            {
+                return OpenParcelsCore(tr);
+            }
+        }
+
+        private List<KeyValuePair<string, Polyline>> OpenParcelsCore(Transaction tr)
+        {
             var parcels = new List<KeyValuePair<string, Polyline>>();
             foreach (var pick in _parcelPicks)
             {
@@ -834,6 +842,14 @@ namespace PUP_AUTO.UI.Windows
         /// The caller must dispose them with <see cref="DisposeFootprints"/>.
         /// </summary>
         private List<PoleFootprintEntry> ExtractPoles(Transaction tr)
+        {
+            using (PerfTimer.Measure(_logger, "ExtractPoles"))
+            {
+                return ExtractPolesCore(tr);
+            }
+        }
+
+        private List<PoleFootprintEntry> ExtractPolesCore(Transaction tr)
         {
             var blocks = new List<KeyValuePair<string, BlockReference>>();
             foreach (var pick in _polePicks)
@@ -916,6 +932,7 @@ namespace PUP_AUTO.UI.Windows
         {
             if (!BeginPick(out Document doc)) return;
             Editor ed = doc.Editor;
+            var pickWatch = Stopwatch.StartNew();
 
             using (EditorUserInteraction interaction = ed.StartUserInteraction(this))
             {
@@ -935,6 +952,7 @@ namespace PUP_AUTO.UI.Windows
                         var entries = new List<PoleFootprintEntry>();
                         var seenFootprints = new List<(string PoleId, double Area, double[] Box, string Handle)>();
                         var duplicatePoles = new List<DuplicateParcel>();
+                        PerfTimer extractTimer = PerfTimer.Measure(_logger, "BtnPickPoles extract + duplicate check");
                         try
                         {
                             int index = 0;
@@ -979,6 +997,7 @@ namespace PUP_AUTO.UI.Windows
                         }
                         finally
                         {
+                            extractTimer.Dispose();
                             DisposeFootprints(entries);
                         }
                         if (duplicatePoles.Count > 0)
@@ -1001,6 +1020,7 @@ namespace PUP_AUTO.UI.Windows
                         SetTile(_tilePoles, "Не са избрани", ErrorBrush, false);
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Не бяха извлечени валидни стълбове.");
                     }
+                    _logger?.LogPerf($"BtnPickPoles_Click: {pickWatch.ElapsedMilliseconds} ms (includes the time spent selecting)");
                 }
                 catch (Exception ex)
                 {
@@ -1014,6 +1034,7 @@ namespace PUP_AUTO.UI.Windows
         {
             if (!BeginPick(out Document doc)) return;
             Editor ed = doc.Editor;
+            var pickWatch = Stopwatch.StartNew();
 
             using (EditorUserInteraction interaction = ed.StartUserInteraction(this))
             {
@@ -1040,8 +1061,17 @@ namespace PUP_AUTO.UI.Windows
                                 Item = kvp
                             })
                             .ToList();
-                        DuplicateFilterResult<KeyValuePair<string, Polyline>> unique =
-                            DuplicatePolylines.Filter(shapes, (x, y) => topo.IntersectionAreaSqm(x.Item.Value, y.Item.Value));
+                        DuplicateFilterResult<KeyValuePair<string, Polyline>> unique;
+                        int overlapCalls = 0;
+                        using (PerfTimer.Measure(_logger, $"BtnPickParcels duplicate check ({shapes.Count} polylines)"))
+                        {
+                            unique = DuplicatePolylines.Filter(shapes, (x, y) =>
+                            {
+                                overlapCalls++;
+                                return topo.IntersectionAreaSqm(x.Item.Value, y.Item.Value);
+                            });
+                        }
+                        _logger!.LogPerf($"BtnPickParcels duplicate check: {overlapCalls} overlap booleans");
                         if (unique.Duplicates.Count > 0)
                         {
                             _logger!.LogWarning(DuplicatePolylines.FormatWarning(unique.Duplicates));
@@ -1076,6 +1106,7 @@ namespace PUP_AUTO.UI.Windows
                         SetTile(_tileParcels, "Не са избрани", ErrorBrush, false);
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Имотите не бяха избрани.");
                     }
+                    _logger?.LogPerf($"BtnPickParcels_Click: {pickWatch.ElapsedMilliseconds} ms (includes the time spent selecting)");
                 }
                 catch (Exception ex)
                 {
@@ -1138,7 +1169,12 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
 
+                EnsureServices();
+                ResetClickCache();
+                _clickWarnUncovered = ticked.Any(o => o == _optAffectedRegister || o == _optTerritoryBalance || o == _optPoleStepsRegister);
+                PerfTimer.LogMemory(_logger, "at start of Generate");
                 bool ranAny = false;
+                using (PerfTimer.Measure(_logger, "BtnGenerate_Click"))
                 foreach (ReportOption option in ticked)
                 {
                     List<Requirement> missing = Missing(option);
@@ -1148,14 +1184,19 @@ namespace PUP_AUTO.UI.Windows
                         continue;
                     }
 
-                    if (option == _optMvpMathTest) RunMvpMathTest(doc);
-                    else if (option == _optPoleSteps) RunPoleStepsTable(doc);
-                    else if (option == _optCadControl) RunCadControlReport(doc, _cadSet!);
-                    else if (option == _optAffectedRegister) RunAffectedParcelsRegister(doc, _cadSet!);
-                    else if (option == _optPoleStepsRegister) RunPoleStepsRegister(doc, _cadSet!);
-                    else if (option == _optTerritoryBalance) RunTerritoryBalance(doc, _cadSet!);
+                    using (PerfTimer timer = PerfTimer.Measure(_logger, "Report: " + option.Title))
+                    {
+                        if (option == _optMvpMathTest) RunMvpMathTest(doc);
+                        else if (option == _optPoleSteps) RunPoleStepsTable(doc);
+                        else if (option == _optCadControl) RunCadControlReport(doc, _cadSet!);
+                        else if (option == _optAffectedRegister) RunAffectedParcelsRegister(doc, _cadSet!);
+                        else if (option == _optPoleStepsRegister) RunPoleStepsRegister(doc, _cadSet!);
+                        else if (option == _optTerritoryBalance) RunTerritoryBalance(doc, _cadSet!);
+                        AppendLog($"  Време: {timer.ElapsedText}");
+                    }
                     ranAny = true;
                 }
+                PerfTimer.LogMemory(_logger, "at end of Generate");
 
                 if (ranAny && Directory.Exists(_projectDir))
                 {
@@ -1172,6 +1213,10 @@ namespace PUP_AUTO.UI.Windows
                 {
                     doc.Editor.WriteMessage($"\nFatal error in Generate: {ex.Message}\n");
                 }
+            }
+            finally
+            {
+                ResetClickCache();
             }
         }
 
@@ -1205,6 +1250,7 @@ namespace PUP_AUTO.UI.Windows
                 var topo = new TopologyProcessor(_logger!);
 
                 List<ParcelData>? results = null;
+                using (PerfTimer.Measure(_logger, "RunMvpMathTest transaction (parcels, poles, topology)"))
                 using (doc.LockDocument())
                 using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                 {
@@ -1228,7 +1274,10 @@ namespace PUP_AUTO.UI.Windows
                     }
                 }
 
-                MvpMathTestExporter.ExportMathTest(results!, _projectDir);
+                using (PerfTimer.Measure(_logger, "MvpMathTestExporter.ExportMathTest"))
+                {
+                    MvpMathTestExporter.ExportMathTest(results!, _projectDir);
+                }
                 AppendLog($"  Записан {FileNames.MvpMathTestFile} в {_projectDir}");
             }
             catch (Exception ex)
@@ -1249,33 +1298,23 @@ namespace PUP_AUTO.UI.Windows
             {
                 AppendLog("── СТАРТИРАНЕ НА ТАБЛИЦА СТЪПКИ НА СТЪЛБОВЕ ──");
                 EnsureServices();
-                var topo = new TopologyProcessor(_logger!);
+                ClickGeometry shared = GetClickGeometry(doc);
+                PoleStepsGeometry geometry = shared.AsPoleSteps();
 
-                PoleStepsGeometry? geometry = null;
-                using (doc.LockDocument())
-                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+                if (!shared.UncoveredLogged)
                 {
-                    var parcels = OpenParcels(tr);
-                    var entries = ExtractPoles(tr);
-                    try
+                    foreach (var step in PoleStepsTableBuilder.FindUncoveredSteps(
+                        geometry.Footprints, geometry.Pieces, GeometryTolerances.SliverAreaSqm))
                     {
-                        geometry = topo.ComputePoleStepPieces(PoleFootprints(entries), parcels);
-                        tr.Commit();
+                        AppendLog(PoleStepsTableBuilder.FormatUncoveredWarning(step));
                     }
-                    finally
-                    {
-                        DisposeFootprints(entries);
-                    }
-                }
-
-                foreach (var step in PoleStepsTableBuilder.FindUncoveredSteps(
-                    geometry!.Footprints, geometry.Pieces, GeometryTolerances.SliverAreaSqm))
-                {
-                    AppendLog(PoleStepsTableBuilder.FormatUncoveredWarning(step));
                 }
 
                 var table = PoleStepsTableBuilder.Build(geometry.Pieces);
-                PoleStepsExporter.Export(table, _projectDir);
+                using (PerfTimer.Measure(_logger, "PoleStepsExporter.Export"))
+                {
+                    PoleStepsExporter.Export(table, _projectDir);
+                }
                 AppendLog($"  Записан {FileNames.PoleStepsFile} в {_projectDir}");
             }
             catch (Exception ex)
@@ -1286,11 +1325,138 @@ namespace PUP_AUTO.UI.Windows
         }
 
         /// <summary>The nomenclatures and the EKATTE register the .cad reports share; the warnings are logged by the caller.</summary>
-        private void LoadReportReferenceData(out Nomenclatures nomenclatures, out EkatteRegister ekatte, List<string> warnings)
+        private void LoadReportReferenceData(out Nomenclatures nomenclatures, out EkatteRegister ekatte)
         {
-            string templateDir = TemplateDir;
-            nomenclatures = Nomenclatures.Load(Path.Combine(templateDir, FileNames.NomenclaturesFolder), warnings.Add);
-            ekatte = EkatteRegister.LoadWithDefaults(Path.Combine(templateDir, FileNames.EkatteRegisterFile), warnings.Add);
+            if (_clickReferenceData == null)
+            {
+                using (PerfTimer.Measure(_logger, "LoadReportReferenceData"))
+                {
+                    string templateDir = TemplateDir;
+                    Nomenclatures loadedNomenclatures = Nomenclatures.Load(Path.Combine(templateDir, FileNames.NomenclaturesFolder), _clickReferenceWarnings.Add);
+                    EkatteRegister loadedEkatte = EkatteRegister.LoadWithDefaults(Path.Combine(templateDir, FileNames.EkatteRegisterFile), _clickReferenceWarnings.Add);
+                    _clickReferenceData = (loadedNomenclatures, loadedEkatte);
+                }
+            }
+            nomenclatures = _clickReferenceData.Value.Nomenclatures;
+            ekatte = _clickReferenceData.Value.Ekatte;
+        }
+
+        /// <summary>Logs the nomenclature warnings raised since the last call (each one once per click, whichever report raised it).</summary>
+        private void LogNewReferenceWarnings()
+        {
+            while (_clickReferenceWarningsLogged < _clickReferenceWarnings.Count)
+            {
+                LogWarning(_clickReferenceWarnings[_clickReferenceWarningsLogged++]);
+            }
+        }
+
+        // What one click of "Генерирай" shares between its reports; never kept across clicks (the drawing may change).
+        private (Nomenclatures Nomenclatures, EkatteRegister Ekatte)? _clickReferenceData;
+        private readonly List<string> _clickReferenceWarnings = new List<string>();
+        private int _clickReferenceWarningsLogged;
+        private ClickGeometry? _clickGeometry;
+        private bool _clickWarnUncovered;
+        private AffectedRegisterRun? _clickRun;
+        private string? _clickRunProject;
+
+        private void ResetClickCache()
+        {
+            _clickReferenceData = null;
+            _clickReferenceWarnings.Clear();
+            _clickReferenceWarningsLogged = 0;
+            _clickGeometry = null;
+            _clickWarnUncovered = false;
+            _clickRun = null;
+            _clickRunProject = null;
+        }
+
+        /// <summary>
+        /// The geometry of one click: footprints and pieces (as <see cref="TopologyProcessor.ComputePoleStepPieces"/> gives them),
+        /// plus the per-parcel servitude areas when a servitude is picked and still in the drawing.
+        /// </summary>
+        private sealed class ClickGeometry
+        {
+            public List<PoleFootprintArea> Footprints = new List<PoleFootprintArea>();
+            public List<PoleStepPiece> Pieces = new List<PoleStepPiece>();
+
+            /// <summary>Null when there is no servitude to intersect (only the pole-steps reports can use this geometry then).</summary>
+            public List<RegisterParcelAreas>? Parcels;
+
+            /// <summary>One ID drawn as several polylines is one parcel: the areas are summed.</summary>
+            public Dictionary<string, double> DrawnAreaSqmById = new Dictionary<string, double>(StringComparer.Ordinal);
+
+            /// <summary>The "pole not entirely inside the parcels" warnings were already logged for this click.</summary>
+            public bool UncoveredLogged;
+
+            public PoleStepsGeometry AsPoleSteps()
+            {
+                var geometry = new PoleStepsGeometry();
+                geometry.Footprints.AddRange(Footprints);
+                geometry.Pieces.AddRange(Pieces);
+                return geometry;
+            }
+        }
+
+        /// <summary>
+        /// Intersects the poles with the parcels (and the servitude with the parcels) at most once per click, in one short
+        /// transaction under a document lock; the in-memory footprints are disposed before returning.
+        /// </summary>
+        private ClickGeometry GetClickGeometry(Document doc)
+        {
+            if (_clickGeometry != null) return _clickGeometry;
+
+            EnsureServices();
+            var topo = new TopologyProcessor(_logger!);
+            var shared = new ClickGeometry();
+
+            using (PerfTimer.Measure(_logger, "ClickGeometry transaction (parcels, poles, topology)"))
+            using (doc.LockDocument())
+            using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                Polyline? servitude = OpenPolyline(tr, _servitudeId);
+                var parcels = OpenParcels(tr);
+                var entries = ExtractPoles(tr);
+                try
+                {
+                    if (servitude != null)
+                    {
+                        RegisterGeometry registerGeometry = topo.ComputeRegisterGeometry(servitude, PoleFootprints(entries), parcels);
+                        shared.Footprints = registerGeometry.Footprints;
+                        shared.Pieces = registerGeometry.Pieces;
+                        shared.Parcels = registerGeometry.Parcels;
+                    }
+                    else
+                    {
+                        PoleStepsGeometry poleSteps = topo.ComputePoleStepPieces(PoleFootprints(entries), parcels);
+                        shared.Footprints = poleSteps.Footprints;
+                        shared.Pieces = poleSteps.Pieces;
+                    }
+
+                    foreach (var parcel in parcels)
+                    {
+                        shared.DrawnAreaSqmById.TryGetValue(parcel.Key, out double sum);
+                        shared.DrawnAreaSqmById[parcel.Key] = sum + parcel.Value.Area;
+                    }
+                    tr.Commit();
+                }
+                finally
+                {
+                    DisposeFootprints(entries);
+                }
+            }
+
+            if (_clickWarnUncovered)
+            {
+                foreach (var step in PoleStepsTableBuilder.FindUncoveredSteps(
+                    shared.Footprints, shared.Pieces, GeometryTolerances.SliverAreaSqm))
+                {
+                    LogWarning(PoleStepsTableBuilder.FormatUncoveredWarning(step));
+                }
+                shared.UncoveredLogged = true;
+            }
+
+            _clickGeometry = shared;
+            return shared;
         }
 
         /// <summary>
@@ -1300,7 +1466,11 @@ namespace PUP_AUTO.UI.Windows
         private MunicipalityGroupingResult GroupParcelsForReport(
             CadRegisterSet cadSet, IEnumerable<string> parcelIds, EkatteRegister ekatte, IReadOnlyDictionary<string, string>? lowestPoleByParcelId)
         {
-            MunicipalityGroupingResult grouping = MunicipalityGrouping.Group(parcelIds, cadSet, ekatte, lowestPoleByParcelId);
+            MunicipalityGroupingResult grouping;
+            using (PerfTimer.Measure(_logger, "MunicipalityGrouping.Group"))
+            {
+                grouping = MunicipalityGrouping.Group(parcelIds, cadSet, ekatte, lowestPoleByParcelId);
+            }
 
             if (grouping.IgnoredParcelIds.Count > 0)
             {
@@ -1343,11 +1513,11 @@ namespace PUP_AUTO.UI.Windows
                     tr.Commit();
                 }
 
-                var warnings = new List<string>();
-                LoadReportReferenceData(out Nomenclatures nomenclatures, out EkatteRegister ekatte, warnings);
+                LoadReportReferenceData(out Nomenclatures nomenclatures, out EkatteRegister ekatte);
                 MunicipalityGroupingResult grouping = GroupParcelsForReport(cadSet, drawn.Select(d => d.Key), ekatte, null);
 
                 var sheets = new List<(string SheetName, IReadOnlyList<CadControlReport> Sections)>();
+                using var buildTimer = PerfTimer.Measure(_logger, "RunCadControlReport builder loop");
                 var notFound = new List<string>();
                 var withoutRights = new List<string>();
                 foreach (MunicipalityGroup group in grouping.Groups)
@@ -1375,7 +1545,7 @@ namespace PUP_AUTO.UI.Windows
                 }
 
                 // The nomenclature warnings ("no text for code N") are raised while the reports are built
-                foreach (string warning in warnings) LogWarning(warning);
+                LogNewReferenceWarnings();
 
                 if (notFound.Count > 0)
                 {
@@ -1393,7 +1563,8 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
 
-                string path = CadControlReportExporter.Export(sheets, _projectDir);
+                string path;
+                using (PerfTimer.Measure(_logger, "CadControlReportExporter.Export")) path = CadControlReportExporter.Export(sheets, _projectDir);
                 AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
             }
             catch (Exception ex)
@@ -1417,9 +1588,6 @@ namespace PUP_AUTO.UI.Windows
             public readonly List<string> WithoutOwners = new List<string>();
             public readonly List<string> NegativeRemainder = new List<string>();
 
-            /// <summary>Nomenclature warnings ("no text for code N"); raised while the registers are built, logged by the caller.</summary>
-            public readonly List<string> Warnings = new List<string>();
-
             public Nomenclatures Nomenclatures = null!;
         }
 
@@ -1431,45 +1599,25 @@ namespace PUP_AUTO.UI.Windows
         /// </summary>
         private AffectedRegisterRun? BuildAffectedRegisters(Document doc, CadRegisterSet cadSet, string project)
         {
+            if (_clickRun != null && _clickRunProject == project) return _clickRun;
+
             EnsureServices();
-            var topo = new TopologyProcessor(_logger!);
-
-            RegisterGeometry? geometry = null;
-            using (doc.LockDocument())
-            using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+            ClickGeometry shared = GetClickGeometry(doc);
+            if (shared.Parcels == null)
             {
-                Polyline? servitude = OpenPolyline(tr, _servitudeId);
-                if (servitude == null)
-                {
-                    AppendLog("ГРЕШКА: Сервитутът вече не съществува в чертежа — изберете отново.");
-                    return null;
-                }
-
-                var parcels = OpenParcels(tr);
-                var entries = ExtractPoles(tr);
-                try
-                {
-                    geometry = topo.ComputeRegisterGeometry(servitude, PoleFootprints(entries), parcels);
-                    tr.Commit();
-                }
-                finally
-                {
-                    DisposeFootprints(entries);
-                }
+                AppendLog("ГРЕШКА: Сервитутът вече не съществува в чертежа — изберете отново.");
+                return null;
             }
-
-            foreach (var step in PoleStepsTableBuilder.FindUncoveredSteps(
-                geometry!.Footprints, geometry.Pieces, GeometryTolerances.SliverAreaSqm))
-            {
-                LogWarning(PoleStepsTableBuilder.FormatUncoveredWarning(step));
-            }
+            ClickGeometry geometry = shared;
+            List<RegisterParcelAreas> geometryParcels = shared.Parcels;
 
             var run = new AffectedRegisterRun { Pieces = geometry.Pieces };
-            LoadReportReferenceData(out Nomenclatures nomenclatures, out EkatteRegister ekatte, run.Warnings);
+            LoadReportReferenceData(out Nomenclatures nomenclatures, out EkatteRegister ekatte);
             run.Nomenclatures = nomenclatures;
             MunicipalityGroupingResult grouping = GroupParcelsForReport(
-                cadSet, geometry.Parcels.Select(p => p.ParcelId), ekatte, MunicipalityGrouping.LowestPoleByParcel(geometry.Pieces));
+                cadSet, geometryParcels.Select(p => p.ParcelId), ekatte, MunicipalityGrouping.LowestPoleByParcel(geometry.Pieces));
 
+            using var buildTimer = PerfTimer.Measure(_logger, "BuildAffectedRegisters builder loop");
             foreach (MunicipalityGroup group in grouping.Groups)
             {
                 var reports = new List<AffectedRegister>();
@@ -1477,7 +1625,7 @@ namespace PUP_AUTO.UI.Windows
                 {
                     var ids = new HashSet<string>(section.ParcelIds, StringComparer.Ordinal);
                     AffectedRegister report = AffectedParcelsRegisterBuilder.Build(
-                        geometry.Parcels.Where(p => ids.Contains(p.ParcelId)),
+                        geometryParcels.Where(p => ids.Contains(p.ParcelId)),
                         geometry.Pieces.Where(p => ids.Contains(p.ParcelId)),
                         section.Register, nomenclatures, project, section.EkatteTitle);
 
@@ -1491,6 +1639,8 @@ namespace PUP_AUTO.UI.Windows
 
                 if (reports.Count > 0) run.Groups.Add((group, reports));
             }
+            _clickRun = run;
+            _clickRunProject = project;
             return run;
         }
 
@@ -1518,7 +1668,7 @@ namespace PUP_AUTO.UI.Windows
                 }
 
                 // The nomenclature warnings ("no text for code N") are raised while the registers are built
-                foreach (string warning in run.Warnings) LogWarning(warning);
+                LogNewReferenceWarnings();
 
                 if (run.NotFound.Count > 0)
                 {
@@ -1541,7 +1691,8 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
 
-                string path = AffectedParcelsRegisterExporter.Export(sheets, _projectDir);
+                string path;
+                using (PerfTimer.Measure(_logger, "AffectedParcelsRegisterExporter.Export")) path = AffectedParcelsRegisterExporter.Export(sheets, _projectDir);
                 AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
             }
             catch (Exception ex)
@@ -1567,6 +1718,7 @@ namespace PUP_AUTO.UI.Windows
                 if (run == null) return;
 
                 var sheets = new List<(string SheetName, IReadOnlyList<TerritoryBalance> Sections)>();
+                using var buildTimer = PerfTimer.Measure(_logger, "RunTerritoryBalance builder loop");
                 var municipalities = new List<(MunicipalityGroup Group, List<TerritoryBalance> Sections)>();
                 int notFoundCount = 0;
                 // One winning parcel per pole for the whole run, so a border pole is counted in one землище only
@@ -1603,7 +1755,7 @@ namespace PUP_AUTO.UI.Windows
                 }
 
                 // The nomenclature warnings ("no text for code N") are raised while the balances are built
-                foreach (string warning in run.Warnings) LogWarning(warning);
+                LogNewReferenceWarnings();
                 if (notFoundCount > 0)
                 {
                     LogWarning($"{notFoundCount} избрани имота не са намерени в .cad (в групата \"{TerritoryBalanceBuilder.NotInCad}\").");
@@ -1615,7 +1767,8 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
 
-                string path = TerritoryBalanceExporter.Export(sheets, _projectDir);
+                string path;
+                using (PerfTimer.Measure(_logger, "TerritoryBalanceExporter.Export")) path = TerritoryBalanceExporter.Export(sheets, _projectDir);
                 AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
 
                 // Общ баланс за общината: the землища of each sheet combined, so it always equals the sum of the sections above
@@ -1636,7 +1789,8 @@ namespace PUP_AUTO.UI.Windows
                 }
                 if (totals.Count > 0)
                 {
-                    string totalsPath = TerritoryBalanceExporter.ExportMunicipalities(totals, _projectDir);
+                    string totalsPath;
+                using (PerfTimer.Measure(_logger, "TerritoryBalanceExporter.ExportMunicipalities")) totalsPath = TerritoryBalanceExporter.ExportMunicipalities(totals, _projectDir);
                     AppendLog($"  Записан {Path.GetFileName(totalsPath)} в {_projectDir}.");
                 }
 
@@ -1747,37 +1901,9 @@ namespace PUP_AUTO.UI.Windows
             {
                 AppendLog("── СТАРТИРАНЕ НА РЕГИСТЪР НА СТЪПКИТЕ НА СТЪЛБОВЕТЕ ──");
                 EnsureServices();
-                var topo = new TopologyProcessor(_logger!);
-
-                PoleStepsGeometry? geometry = null;
-                var drawnAreaSqmById = new Dictionary<string, double>(StringComparer.Ordinal);
-                using (doc.LockDocument())
-                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
-                {
-                    var parcels = OpenParcels(tr);
-                    var entries = ExtractPoles(tr);
-                    try
-                    {
-                        geometry = topo.ComputePoleStepPieces(PoleFootprints(entries), parcels);
-                        // One ID drawn as several polylines is one parcel: the areas are summed
-                        foreach (var parcel in parcels)
-                        {
-                            drawnAreaSqmById.TryGetValue(parcel.Key, out double sum);
-                            drawnAreaSqmById[parcel.Key] = sum + parcel.Value.Area;
-                        }
-                        tr.Commit();
-                    }
-                    finally
-                    {
-                        DisposeFootprints(entries);
-                    }
-                }
-
-                foreach (var step in PoleStepsTableBuilder.FindUncoveredSteps(
-                    geometry!.Footprints, geometry.Pieces, GeometryTolerances.SliverAreaSqm))
-                {
-                    LogWarning(PoleStepsTableBuilder.FormatUncoveredWarning(step));
-                }
+                ClickGeometry shared = GetClickGeometry(doc);
+                PoleStepsGeometry geometry = shared.AsPoleSteps();
+                Dictionary<string, double> drawnAreaSqmById = shared.DrawnAreaSqmById;
 
                 if (geometry.Pieces.Count == 0)
                 {
@@ -1785,8 +1911,7 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
 
-                var warnings = new List<string>();
-                LoadReportReferenceData(out Nomenclatures nomenclatures, out EkatteRegister ekatte, warnings);
+                LoadReportReferenceData(out Nomenclatures nomenclatures, out EkatteRegister ekatte);
                 MunicipalityGroupingResult grouping = GroupParcelsForReport(
                     cadSet, drawnAreaSqmById.Keys, ekatte, MunicipalityGrouping.LowestPoleByParcel(geometry.Pieces));
 
@@ -1794,6 +1919,7 @@ namespace PUP_AUTO.UI.Windows
                 var sheets = new List<(string SheetName, IReadOnlyList<PoleStepsRegister> Sections)>();
                 var notFound = new List<string>();
                 var withoutOwners = new List<string>();
+                using var buildTimer = PerfTimer.Measure(_logger, "RunPoleStepsRegister builder loop");
                 foreach (MunicipalityGroup group in grouping.Groups)
                 {
                     var reports = new List<PoleStepsRegister>();
@@ -1820,7 +1946,7 @@ namespace PUP_AUTO.UI.Windows
                 }
 
                 // The nomenclature warnings ("no text for code N") are raised while the registers are built
-                foreach (string warning in warnings) LogWarning(warning);
+                LogNewReferenceWarnings();
 
                 if (notFound.Count > 0)
                 {
@@ -1839,7 +1965,8 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
 
-                string path = PoleStepsRegisterExporter.Export(sheets, _projectDir);
+                string path;
+                using (PerfTimer.Measure(_logger, "PoleStepsRegisterExporter.Export")) path = PoleStepsRegisterExporter.Export(sheets, _projectDir);
                 AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
             }
             catch (Exception ex)

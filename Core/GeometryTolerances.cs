@@ -22,6 +22,9 @@ namespace PUP_AUTO.Core
         /// <summary>A polyline whose first and last vertex are closer than this counts as closed.</summary>
         public const double ClosureDistanceM = 0.01;
 
+        /// <summary>Two bounding boxes further apart than this are skipped before a region boolean (touching edges are still tested).</summary>
+        public const double BoundingBoxMarginM = 0.01;
+
         /// <summary>Consecutive marker points closer than this are merged.</summary>
         public const double DuplicatePointDistanceM = 0.01;
 
