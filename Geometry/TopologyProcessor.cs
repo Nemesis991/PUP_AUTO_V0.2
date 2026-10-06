@@ -242,6 +242,7 @@ namespace PUP_AUTO.Geometry
             var servitudeTimes = new SubjectTimes();
             int servitudeCalls = 0;
             LogServitudeShape(_logger, servitudePline);
+            using var servitudeCache = new ServitudeCache(servitudePline, _logger);
 
             foreach (var parcelKvp in parcelPolylines)
             {
@@ -257,7 +258,7 @@ namespace PUP_AUTO.Geometry
                 // 1. Gross Servitude Area
                 servitudeWatch.Start();
                 if (servitudeNear) servitudeCalls++;
-                pData.ServitudeGrossAreaSqm = servitudeNear ? shifted.IntersectionArea(servitudePline, servitudeTimes) : 0.0;
+                pData.ServitudeGrossAreaSqm = servitudeNear ? shifted.IntersectionArea(servitudeCache, servitudePline, servitudeTimes) : 0.0;
                 servitudeWatch.Stop();
 
                 // 2. Pole Area & Intersecting Poles
@@ -400,6 +401,7 @@ namespace PUP_AUTO.Geometry
             var servitudeTimes = new SubjectTimes();
             int servitudeCalls = 0;
             LogServitudeShape(_logger, servitudePline);
+            using var servitudeCache = new ServitudeCache(servitudePline, _logger);
             foreach (var parcelKvp in parcelPolylines)
             {
                 Polyline parcelPline = parcelKvp.Value;
@@ -432,7 +434,7 @@ namespace PUP_AUTO.Geometry
                 bool servitudeNearParcel = BoundingBox.MayOverlap(BoxOf(parcelPline), servitudeBox, BoxMargin);
                 if (servitudeNearParcel) servitudeCalls++;
                 double servitudeArea = servitudeNearParcel
-                    ? shifted.IntersectionArea(servitudePline, servitudeTimes)
+                    ? shifted.IntersectionArea(servitudeCache, servitudePline, servitudeTimes)
                     : 0.0;
                 servitudeWatch.Stop();
                 result.Parcels.Add(new RegisterParcelAreas
@@ -569,6 +571,49 @@ namespace PUP_AUTO.Geometry
         }
 
         /// <summary>
+        /// The servitude region, built once (shifted so its extents' minimum is the origin: the "G frame") and cloned for every
+        /// parcel, instead of cloning the polyline and building the region again for each parcel. Owns an unmanaged ACIS
+        /// region: dispose it. <see cref="Failed"/> means it could not be built and callers use the per-parcel path.
+        /// </summary>
+        private sealed class ServitudeCache : IDisposable
+        {
+            public Region? Region { get; private set; }
+            public bool Failed { get; private set; }
+
+            /// <summary>The move from the drawing's frame to the G frame.</summary>
+            public Vector3d ToGFrame { get; private set; }
+
+            public ServitudeCache(Polyline servitude, Logger logger)
+            {
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                try
+                {
+                    using (Polyline clone = (Polyline)servitude.Clone())
+                    {
+                        Point3d minPt = clone.GeometricExtents.MinPoint;
+                        ToGFrame = minPt.GetVectorTo(Point3d.Origin);
+                        clone.TransformBy(Matrix3d.Displacement(ToGFrame));
+                        Region = SafeCreateRegion(clone);
+                    }
+                }
+                catch
+                {
+                    Region?.Dispose();
+                    Region = null;
+                    Failed = true;
+                }
+                long ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                logger.LogPerf($"Servitude region built once: {ms} ms{(Failed ? " (failed, per-parcel path used)" : Region == null ? " (no region)" : string.Empty)}");
+            }
+
+            public void Dispose()
+            {
+                Region?.Dispose();
+                Region = null;
+            }
+        }
+
+        /// <summary>
         /// One parcel for many intersections: the origin shift is computed and the parcel region built once, on first use, and
         /// every subject (pole footprint, servitude) is intersected with a clone of that region. Same shift rule, same operand
         /// order (parcel ∩ subject) and same sliver rule as <see cref="GetPreciseIntersectionArea"/>, so the areas are the same.
@@ -629,6 +674,63 @@ namespace PUP_AUTO.Geometry
                             {
                                 if (times != null) times.Boolean += System.Diagnostics.Stopwatch.GetTimestamp() - t2;
                             }
+                        }
+                    }
+                }
+            }
+
+            /// <summary>
+            /// Parcel ∩ servitude with the servitude region cloned from the cache and moved from the G frame into this parcel's
+            /// frame; same operand order and sliver rule as <see cref="IntersectionArea(Polyline, SubjectTimes)"/>.
+            /// </summary>
+            public double IntersectionArea(ServitudeCache cache, Polyline servitude, SubjectTimes? times = null)
+            {
+                if (cache.Failed) return IntersectionArea(servitude, times);
+
+                if (!_built)
+                {
+                    long b0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    Build();
+                    if (times != null) times.ParcelRegion += System.Diagnostics.Stopwatch.GetTimestamp() - b0;
+                }
+                if (_region == null || cache.Region == null) return 0.0;
+
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                Region subject;
+                try
+                {
+                    subject = (Region)cache.Region.Clone();
+                    subject.TransformBy(Matrix3d.Displacement(_shift - cache.ToGFrame));
+                }
+                catch
+                {
+                    return IntersectionArea(servitude, times); // as before, per parcel
+                }
+
+                using (subject)
+                {
+                    long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    if (times != null) times.CloneShift += t1 - t0;
+                    Region work;
+                    try
+                    {
+                        work = (Region)_region.Clone();
+                    }
+                    catch
+                    {
+                        return IntersectionArea(servitude, times);
+                    }
+                    using (work)
+                    {
+                        try
+                        {
+                            work.BooleanOperation(BooleanOperationType.BoolIntersect, subject);
+                            return work.Area > SliverTolerance ? work.Area : 0.0;
+                        }
+                        catch { return 0.0; }
+                        finally
+                        {
+                            if (times != null) times.Boolean += System.Diagnostics.Stopwatch.GetTimestamp() - t1;
                         }
                     }
                 }
