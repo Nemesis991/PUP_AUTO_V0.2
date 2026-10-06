@@ -49,7 +49,7 @@ namespace PUP_AUTO.CadRegister
         /// <summary>Parcels of the section that are not in the .cad (they are in the "Няма данни в .cad" row of every table).</summary>
         public int NotFoundCount { get; set; }
 
-        /// <summary>Distinct poles that have a piece in this землище; null when the caller did not give it.</summary>
+        /// <summary>Poles whose largest piece is in this землище (each pole is counted in one землище only); null when the caller did not give it.</summary>
         public int? DistinctPoles { get; set; }
 
         /// <summary>
@@ -59,7 +59,7 @@ namespace PUP_AUTO.CadRegister
         public bool PoleCountsAgree => !DistinctPoles.HasValue || Tables.All(t => t.Total.PoleCount == DistinctPoles.Value);
     }
 
-    /// <summary>The poles of one землище: parcel ID -> poles counted for it, and the number of distinct poles with a piece there.</summary>
+    /// <summary>The poles counted in one землище: parcel ID -> poles counted for it, and their number.</summary>
     public sealed class SectionPoles
     {
         public Dictionary<string, int> ByParcel { get; set; } = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -84,11 +84,11 @@ namespace PUP_AUTO.CadRegister
             { "Категория земя", "Вид собственост", "Вид територия", "Начин на трайно ползване" };
 
         /// <summary>
-        /// Every pole is counted once, for the parcel that holds its largest piece (pieces of one pole in one parcel are
-        /// added first; a tie goes to the smaller parcel ID by <see cref="PoleStepsTableBuilder.CompareParcelIds"/>).
-        /// Give it the pieces of ONE землище: a pole on the border of two землища is then counted once in each of them.
+        /// Pole number -> the parcel that holds its largest piece (pieces of one pole in one parcel are added first; a tie goes
+        /// to the smaller parcel ID by <see cref="PoleStepsTableBuilder.CompareParcelIds"/>). Give it the pieces of the WHOLE run:
+        /// a pole on the border of two землища (or municipalities) has one winning parcel, in one землище only.
         /// </summary>
-        public static Dictionary<string, int> AssignPolesToParcels(IEnumerable<PoleStepPiece> allPieces)
+        public static Dictionary<string, string> WinningParcels(IEnumerable<PoleStepPiece> allPieces)
         {
             var sqmByPole = new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal);
             foreach (PoleStepPiece piece in allPieces)
@@ -103,12 +103,12 @@ namespace PUP_AUTO.CadRegister
                 byParcel[piece.ParcelId] = sum + piece.PieceAreaSqm;
             }
 
-            var polesByParcel = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (Dictionary<string, double> byParcel in sqmByPole.Values)
+            var winners = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, Dictionary<string, double>> pole in sqmByPole)
             {
                 string? best = null;
                 double bestSqm = 0.0;
-                foreach (KeyValuePair<string, double> entry in byParcel)
+                foreach (KeyValuePair<string, double> entry in pole.Value)
                 {
                     if (best == null || entry.Value > bestSqm ||
                         (entry.Value == bestSqm && PoleStepsTableBuilder.CompareParcelIds(entry.Key, best) < 0))
@@ -117,26 +117,39 @@ namespace PUP_AUTO.CadRegister
                         bestSqm = entry.Value;
                     }
                 }
-                polesByParcel.TryGetValue(best!, out int count);
-                polesByParcel[best!] = count + 1;
+                winners[pole.Key] = best!;
+            }
+            return winners;
+        }
+
+        /// <summary>Parcel ID -> number of poles whose largest piece is in it (<see cref="WinningParcels"/>).</summary>
+        public static Dictionary<string, int> AssignPolesToParcels(IEnumerable<PoleStepPiece> allPieces)
+        {
+            var polesByParcel = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (string parcel in WinningParcels(allPieces).Values)
+            {
+                polesByParcel.TryGetValue(parcel, out int count);
+                polesByParcel[parcel] = count + 1;
             }
             return polesByParcel;
         }
 
         /// <summary>
-        /// The poles of the землище of <paramref name="register"/>: only the pieces lying in its parcels decide which parcel
-        /// gets a pole, so a pole that touches two землища is counted once in each.
+        /// The poles counted in the землище of <paramref name="register"/>: those whose winning parcel of the run
+        /// (<see cref="WinningParcels"/>) is one of its parcels. A border pole is counted only where its largest piece is.
         /// </summary>
-        public static SectionPoles PolesOfSection(AffectedRegister register, IEnumerable<PoleStepPiece> runPieces)
+        public static SectionPoles PolesOfSection(AffectedRegister register, IReadOnlyDictionary<string, string> winners)
         {
             var parcelIds = new HashSet<string>(
                 register.Rows.Where(r => r.IsFirstOfParcel).Select(r => r.Number), StringComparer.Ordinal);
-            List<PoleStepPiece> pieces = runPieces.Where(p => parcelIds.Contains(p.ParcelId)).ToList();
-            return new SectionPoles
+            var section = new SectionPoles();
+            foreach (string parcel in winners.Values.Where(parcelIds.Contains))
             {
-                ByParcel = AssignPolesToParcels(pieces),
-                DistinctPoles = pieces.Select(p => PoleLabels.StripPrefix(p.PoleNumber)).Distinct(StringComparer.Ordinal).Count()
-            };
+                section.ByParcel.TryGetValue(parcel, out int count);
+                section.ByParcel[parcel] = count + 1;
+                section.DistinctPoles++;
+            }
+            return section;
         }
 
         /// <exception cref="InvalidOperationException">The four tables (or the register totals) do not agree.</exception>
@@ -300,7 +313,7 @@ namespace PUP_AUTO.CadRegister
         /// <summary>
         /// The balance of a municipality: the four tables of its землища combined. Rows are merged by <see cref="BalanceRow.Key"/>,
         /// C-G are summed (decimal), H = E + G and the percent is recomputed against the combined total, in the same order as a
-        /// section. Poles are summed as they are: a pole on the border of two землища counts in both.
+        /// section. Poles are summed as they are: a border pole is counted in one землище only, so the sum is the poles whose largest piece is in the municipality.
         /// </summary>
         /// <exception cref="InvalidOperationException">An Общо row is not the sum of the sections' Общо rows.</exception>
         public static TerritoryBalance Combine(IReadOnlyList<TerritoryBalance> sections, string title, string subtitle)

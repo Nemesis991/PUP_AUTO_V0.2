@@ -44,7 +44,7 @@ namespace PUP_AUTO.Tests
 
             TerritoryBalance Build(AffectedRegister register)
             {
-                SectionPoles poles = TerritoryBalanceBuilder.PolesOfSection(register, all);
+                SectionPoles poles = TerritoryBalanceBuilder.PolesOfSection(register, TerritoryBalanceBuilder.WinningParcels(all));
                 return TerritoryBalanceBuilder.Build(register, poles.ByParcel, "НОВА ВЛ 110kV", BalanceFixture.Nomenclatures(), poles.DistinctPoles);
             }
             return (Build(regA), Build(regB));
@@ -76,7 +76,7 @@ namespace PUP_AUTO.Tests
         {
             var (a, b) = MunicipalityFixture.Sections();
 
-            AssertRow(a.Tables[0].Total, "Общо:", 6, 7.100m, 1.519m, 3, 0.031m, 1.550m, 100m);
+            AssertRow(a.Tables[0].Total, "Общо:", 6, 7.100m, 1.519m, 2, 0.031m, 1.550m, 100m);
             AssertRow(b.Tables[0].Total, "Общо:", 4, 1.600m, 0.155m, 2, 0.015m, 0.170m, 100m);
         }
 
@@ -86,7 +86,7 @@ namespace PUP_AUTO.Tests
             BalanceTable kat = MunicipalityFixture.Combined().Tables[0];
 
             Assert.Equal(5, kat.Rows.Count);
-            AssertRow(kat.Rows[0], "IV категория", 4, 4.300m, 0.936m, 2, 0.014m, 0.950m, 55.23m);   // both землища
+            AssertRow(kat.Rows[0], "IV категория", 4, 4.300m, 0.936m, 1, 0.014m, 0.950m, 55.23m);   // both землища
             AssertRow(kat.Rows[1], "V категория", 1, 0.300m, 0.044m, 1, 0.006m, 0.050m, 2.91m);     // only 06434
             AssertRow(kat.Rows[2], "VIII категория", 2, 2.700m, 0.574m, 2, 0.026m, 0.600m, 34.88m); // only 06433
             AssertRow(kat.Rows[3], "Без категория", 2, 1.200m, 0.100m, 0, 0m, 0.100m, 5.81m);
@@ -102,7 +102,7 @@ namespace PUP_AUTO.Tests
             Assert.Equal(
                 new[] { "код 1", "Общинска публична", "Частна", "код 7", "Без код", "Няма данни в .cad" },
                 vids.Rows.Select(r => r.Group).ToArray());
-            AssertRow(vids.Rows[2], "Частна", 4, 4.500m, 0.986m, 2, 0.014m, 1.000m, 58.14m);
+            AssertRow(vids.Rows[2], "Частна", 4, 4.500m, 0.986m, 1, 0.014m, 1.000m, 58.14m);
 
             BalanceTable vidt = MunicipalityFixture.Combined().Tables[2];
             Assert.Equal(
@@ -118,7 +118,7 @@ namespace PUP_AUTO.Tests
 
             for (int t = 0; t < 4; t++)
             {
-                AssertRow(m.Tables[t].Total, "Общо:", 10, 8.700m, 1.674m, 5, 0.046m, 1.720m, 100m);
+                AssertRow(m.Tables[t].Total, "Общо:", 10, 8.700m, 1.674m, 4, 0.046m, 1.720m, 100m);
                 Assert.Equal(a.Tables[t].GroupHeader, m.Tables[t].GroupHeader);
                 Assert.Equal(10, m.Tables[t].Rows.Sum(r => r.ParcelCount));
                 Assert.Equal(1.720m, m.Tables[t].Rows.Sum(r => r.AffectedDka));
@@ -131,16 +131,31 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
-        public void BorderPole_IsCountedInBothZemlishta_AndStaysTwoInTheMunicipality()
+        public void BorderPole_IsCountedOnce_InTheZemlishteOfItsLargestPiece_AndOnceInTheMunicipality()
         {
             var (a, b) = MunicipalityFixture.Sections();
             TerritoryBalance m = TerritoryBalanceBuilder.Combine(new[] { a, b }, MunicipalityFixture.Title, MunicipalityFixture.Subtitle);
 
-            // pole 40: once in 06433 (1.1), once in 06434 (2.1); both are IV категория, Частна
-            Assert.Equal(1, a.Tables[1].Rows.Single(r => r.Group == "Частна").PoleCount);
+            // pole 40: 5 m2 in 06433 (1.1), 9 m2 in 06434 (2.1): counted only in 06434, its step area stays in both
+            Assert.Equal(0, a.Tables[1].Rows.Single(r => r.Group == "Частна").PoleCount);
             Assert.Equal(1, b.Tables[1].Rows.Single(r => r.Group == "Частна").PoleCount);
-            Assert.Equal(2, m.Tables[1].Rows.Single(r => r.Group == "Частна").PoleCount);
+            Assert.Equal(1, m.Tables[1].Rows.Single(r => r.Group == "Частна").PoleCount);
             Assert.Equal(a.Tables[0].Total.PoleCount + b.Tables[0].Total.PoleCount, m.Tables[0].Total.PoleCount);
+            Assert.Equal(4, m.Tables[0].Total.PoleCount);   // distinct poles of the run: 10, 11, 40, 50
+        }
+
+        [Fact]
+        public void BorderPoleBetweenTwoMunicipalities_IsCountedOnceInTheTotals()
+        {
+            // the two землища stand for two municipalities: a municipality balance is made of one землище each
+            var (a, b) = MunicipalityFixture.Sections();
+            TerritoryBalance ma = TerritoryBalanceBuilder.Combine(new[] { a }, MunicipalityFixture.Title, MunicipalityFixture.Subtitle);
+            TerritoryBalance mb = TerritoryBalanceBuilder.Combine(new[] { b }, MunicipalityFixture.Title, MunicipalityFixture.Subtitle);
+
+            Assert.Equal(2, ma.Tables[0].Total.PoleCount);   // 10, 11
+            Assert.Equal(2, mb.Tables[0].Total.PoleCount);   // 40, 50
+            Assert.Equal(0.031m, ma.Tables[0].Total.StepDka);
+            Assert.Equal(0.015m, mb.Tables[0].Total.StepDka);
         }
 
         [Fact]
@@ -242,7 +257,7 @@ namespace PUP_AUTO.Tests
                 Assert.Contains($"A{total}:B{total}", s1.Merges());
                 Assert.Equal(10, s1.Number($"C{total}"));
                 Assert.Equal(8.7, s1.Number($"D{total}"));
-                Assert.Equal(5, s1.Number($"F{total}"));
+                Assert.Equal(4, s1.Number($"F{total}"));
                 Assert.Equal(1.72, s1.Number($"H{total}"));
                 Assert.Equal(100, s1.Number($"I{total}"));
             }

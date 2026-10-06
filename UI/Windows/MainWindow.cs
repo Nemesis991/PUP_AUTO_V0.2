@@ -1514,7 +1514,7 @@ namespace PUP_AUTO.UI.Windows
         /// <summary>
         /// Builds Баланси_на_територията.xlsx: the register of affected parcels (same rows, same printed areas) summed by
         /// category, ownership, territory type and НТП, one sheet per municipality and one section per землище. Every pole is
-        /// counted once per землище (largest piece in that землище wins). In the same run, Общ_баланс_за_общината.xlsx: the
+        /// counted once in the whole run, in the землище and parcel with its largest piece. In the same run, Общ_баланс_за_общината.xlsx: the
         /// землища of each municipality combined (<see cref="TerritoryBalanceBuilder.Combine"/>). Only counts go to the log.
         /// </summary>
         private void RunTerritoryBalance(Document doc, CadRegisterSet cadSet)
@@ -1529,20 +1529,23 @@ namespace PUP_AUTO.UI.Windows
                 var sheets = new List<(string SheetName, IReadOnlyList<TerritoryBalance> Sections)>();
                 var municipalities = new List<(MunicipalityGroup Group, List<TerritoryBalance> Sections)>();
                 int notFoundCount = 0;
+                // One winning parcel per pole for the whole run, so a border pole is counted in one землище only
+                Dictionary<string, string> winners = TerritoryBalanceBuilder.WinningParcels(run.Pieces);
+                int countedPoles = 0;
                 foreach ((MunicipalityGroup group, List<AffectedRegister> reports) in run.Groups)
                 {
                     var balances = new List<TerritoryBalance>();
                     int parcelCount = 0;
                     foreach (AffectedRegister report in reports)
                     {
-                        // Each pole once per землище, for the parcel with its largest piece there: a pole on the border of two
-                        // землища is counted in both (the pole-steps register lists it in both too)
-                        SectionPoles poles = TerritoryBalanceBuilder.PolesOfSection(report, run.Pieces);
+                        // Step area stays per piece; a pole is counted only in the землище of its largest piece
+                        SectionPoles poles = TerritoryBalanceBuilder.PolesOfSection(report, winners);
+                        countedPoles += poles.DistinctPoles;
                         TerritoryBalance balance = TerritoryBalanceBuilder.Build(
                             report, poles.ByParcel, project, run.Nomenclatures, poles.DistinctPoles);
                         if (!balance.PoleCountsAgree)
                         {
-                            LogWarning($"Баланси, {balance.Subtitle}: \"Стъпки бр.\" не съвпада с броя на стълбовете в землището " +
+                            LogWarning($"Баланси, {balance.Subtitle}: \"Стъпки бр.\" не съвпада с броя на стълбовете с най-голямо парче в землището " +
                                        $"({poles.DistinctPoles}) — проверете таблиците.");
                         }
                         balances.Add(balance);
@@ -1552,6 +1555,11 @@ namespace PUP_AUTO.UI.Windows
                     sheets.Add((group.SheetName, balances));
                     municipalities.Add((group, balances));
                     AppendLog($"  {group.SheetName}: {balances.Count} землища, {parcelCount} имота.");
+                }
+
+                if (countedPoles != winners.Count)
+                {
+                    LogWarning($"Баланси: сборът на \"Стъпки бр.\" по землища ({countedPoles}) не е равен на броя на стълбовете ({winners.Count}).");
                 }
 
                 // The nomenclature warnings ("no text for code N") are raised while the balances are built
