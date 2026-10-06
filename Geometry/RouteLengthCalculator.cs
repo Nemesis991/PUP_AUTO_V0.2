@@ -17,6 +17,75 @@ namespace PUP_AUTO.Geometry
         public int Pieces { get; set; }
     }
 
+    /// <summary>Counts and stopwatch ticks of one route-length run, for the [PERF] lines (no personal data).</summary>
+    public sealed class RouteLengthStats
+    {
+        public int Curves;
+        public int Vertices;
+        public int ArcSegments;
+        public double LengthM;
+        public double ExtentX;
+        public double ExtentY;
+
+        public int IntersectCalls;
+        public int IntersectPoints;
+        public int IntersectSkipped;
+        public long IntersectTicks;
+        public long IntersectMaxTicks;
+        public long ParameterTicks;
+
+        public int SplitCalls;
+        public int SplitPieces;
+        public long SplitTicks;
+
+        public int ContainsTried;
+        public int ContainsSkipped;
+        public long AssignTicks;
+
+        private static long Ms(long ticks) => ticks * 1000 / System.Diagnostics.Stopwatch.Frequency;
+
+        public void Log(Logger logger)
+        {
+            logger.LogPerf($"Route axis: {Curves} curves, {Vertices} vertices, {ArcSegments} arc segments, " +
+                           $"length {LengthM:F0} m, extents {ExtentX:F0} x {ExtentY:F0} m");
+            logger.LogPerf($"Route IntersectWith: {IntersectCalls} calls, {IntersectSkipped} skipped by box, {IntersectPoints} points, " +
+                           $"{Ms(IntersectTicks)} ms, longest call {Ms(IntersectMaxTicks)} ms; point -> parameter {Ms(ParameterTicks)} ms");
+            logger.LogPerf($"Route GetSplitCurves: {SplitCalls} calls, {SplitPieces} pieces, {Ms(SplitTicks)} ms");
+            logger.LogPerf($"Route piece -> parcel: {ContainsTried} point-in-polygon tests, {ContainsSkipped} skipped by box, {Ms(AssignTicks)} ms");
+        }
+
+        /// <summary>The axis facts: counted once per run.</summary>
+        internal void AddAxis(Curve axis)
+        {
+            Curves++;
+            try
+            {
+                LengthM += axis.GetDistanceAtParameter(axis.EndParam) - axis.GetDistanceAtParameter(axis.StartParam);
+                if (axis is Polyline pline)
+                {
+                    Vertices += pline.NumberOfVertices;
+                    int segments = pline.Closed ? pline.NumberOfVertices : pline.NumberOfVertices - 1;
+                    for (int i = 0; i < segments; i++)
+                    {
+                        if (Math.Abs(pline.GetBulgeAt(i)) > GeometryTolerances.BulgeEpsilon) ArcSegments++;
+                    }
+                }
+                else
+                {
+                    Vertices += 2;
+                    if (axis is Arc) ArcSegments++;
+                }
+                Extents3d e = axis.GeometricExtents;
+                ExtentX = Math.Max(ExtentX, e.MaxPoint.X - e.MinPoint.X);
+                ExtentY = Math.Max(ExtentY, e.MaxPoint.Y - e.MinPoint.Y);
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception)
+            {
+                // facts for the log only
+            }
+        }
+    }
+
     /// <summary>
     /// Length of the route axis inside each picked parcel: the axis is split where it crosses a parcel boundary, and each piece
     /// goes to the parcel that contains its midpoint. Runs on the AutoCAD thread; every split piece is disposed.
@@ -57,53 +126,67 @@ namespace PUP_AUTO.Geometry
             public List<(double X, double Y)> Ring = new List<(double X, double Y)>();
         }
 
-        public static RouteLengthResult Compute(IEnumerable<Curve> axes, List<KeyValuePair<string, Polyline>> parcels)
+        public static RouteLengthResult Compute(IEnumerable<Curve> axes, List<KeyValuePair<string, Polyline>> parcels, RouteLengthStats? stats = null)
         {
+            stats ??= new RouteLengthStats();
             var result = new RouteLengthResult();
             var rings = parcels.Select(p => BuildRing(p.Key, p.Value)).ToList();
 
             foreach (Curve axis in axes)
             {
-                List<double> parameters = SplitParameters(axis, rings);
+                stats.AddAxis(axis);
+                List<double> parameters = SplitParameters(axis, rings, stats);
 
                 if (parameters.Count == 0)
                 {
-                    Assign(result, axis, rings); // the axis itself, not a copy: not disposed here
+                    Assign(result, axis, rings, stats); // the axis itself, not a copy: not disposed here
                     continue;
                 }
 
                 DBObjectCollection pieces;
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 try
                 {
                     pieces = axis.GetSplitCurves(new DoubleCollection(parameters.ToArray()));
                 }
                 catch (Autodesk.AutoCAD.Runtime.Exception)
                 {
-                    Assign(result, axis, rings);
+                    Assign(result, axis, rings, stats);
                     continue;
                 }
+                finally
+                {
+                    stats.SplitCalls++;
+                    stats.SplitTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                }
+                stats.SplitPieces += pieces.Count;
 
                 foreach (DBObject piece in pieces)
                 {
                     using (piece)
                     {
-                        if (piece is Curve curve) Assign(result, curve, rings);
+                        if (piece is Curve curve) Assign(result, curve, rings, stats);
                     }
                 }
             }
             return result;
         }
 
-        private static List<double> SplitParameters(Curve axis, List<ParcelRing> rings)
+        private static List<double> SplitParameters(Curve axis, List<ParcelRing> rings, RouteLengthStats stats)
         {
             Box? axisBox = BoxOf(axis);
             var parameters = new List<double>();
             foreach (ParcelRing ring in rings)
             {
-                if (!MayOverlap(axisBox, ring.Extents, BoxMarginM)) continue;
+                if (!MayOverlap(axisBox, ring.Extents, BoxMarginM))
+                {
+                    stats.IntersectSkipped++;
+                    continue;
+                }
 
                 using (var points = new Point3dCollection())
                 {
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                     try
                     {
                         axis.IntersectWith(ring.Polyline, Intersect.OnBothOperands, new Plane(Point3d.Origin, Vector3d.ZAxis), points, IntPtr.Zero, IntPtr.Zero);
@@ -112,7 +195,16 @@ namespace PUP_AUTO.Geometry
                     {
                         continue;
                     }
+                    finally
+                    {
+                        long ticks = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                        stats.IntersectCalls++;
+                        stats.IntersectTicks += ticks;
+                        stats.IntersectMaxTicks = Math.Max(stats.IntersectMaxTicks, ticks);
+                    }
+                    stats.IntersectPoints += points.Count;
 
+                    long p0 = System.Diagnostics.Stopwatch.GetTimestamp();
                     foreach (Point3d point in points)
                     {
                         try
@@ -124,13 +216,27 @@ namespace PUP_AUTO.Geometry
                             // a point that cannot be put on the axis cannot split it
                         }
                     }
+                    stats.ParameterTicks += System.Diagnostics.Stopwatch.GetTimestamp() - p0;
                 }
             }
             return RouteLengths.SortSplitParameters(parameters, axis.StartParam, axis.EndParam);
         }
 
         /// <summary>Adds the length of a piece to the parcel that contains its midpoint, or to the outside total.</summary>
-        private static void Assign(RouteLengthResult result, Curve piece, List<ParcelRing> rings)
+        private static void Assign(RouteLengthResult result, Curve piece, List<ParcelRing> rings, RouteLengthStats stats)
+        {
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                AssignCore(result, piece, rings, stats);
+            }
+            finally
+            {
+                stats.AssignTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+            }
+        }
+
+        private static void AssignCore(RouteLengthResult result, Curve piece, List<ParcelRing> rings, RouteLengthStats stats)
         {
             double length;
             Point3d middle;
@@ -147,7 +253,12 @@ namespace PUP_AUTO.Geometry
             result.Pieces++;
             foreach (ParcelRing ring in rings)
             {
-                if (!MayOverlap(new Box(middle.X, middle.Y, middle.X, middle.Y), ring.Extents, 0.0)) continue;
+                if (!MayOverlap(new Box(middle.X, middle.Y, middle.X, middle.Y), ring.Extents, 0.0))
+                {
+                    stats.ContainsSkipped++;
+                    continue;
+                }
+                stats.ContainsTried++;
                 if (!RouteLengths.PolygonContains(ring.Ring, middle.X, middle.Y)) continue;
 
                 result.MetresByParcelId.TryGetValue(ring.Id, out double sum);

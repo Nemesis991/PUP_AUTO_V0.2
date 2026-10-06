@@ -278,7 +278,7 @@ namespace PUP_AUTO.UI.Windows
                 "Стъпките по стълбове и имоти, със собствениците от .cad.",
                 Requirement.Cad, Requirement.Poles, Requirement.Parcels);
 
-            _optTerritoryBalance = AddReport(list, "Баланси на територията",
+            _optTerritoryBalance = AddReport(list, "Баланси на територията и общата рекапитулация",
                 "Балансите по землища и общият баланс за общината (категория, собственост, територия, НТП).",
                 AllRequirements);
 
@@ -1851,6 +1851,14 @@ namespace PUP_AUTO.UI.Windows
         /// </summary>
         private Dictionary<string, decimal>? ComputeRouteMetres(Document doc)
         {
+            using (PerfTimer.Measure(_logger, "ComputeRouteMetres"))
+            {
+                return ComputeRouteMetresCore(doc);
+            }
+        }
+
+        private Dictionary<string, decimal>? ComputeRouteMetresCore(Document doc)
+        {
             if (_axisIds.Count == 0)
             {
                 AppendLog("Дължина на трасето: не е избрана ос — колоната е празна.");
@@ -1859,17 +1867,30 @@ namespace PUP_AUTO.UI.Windows
 
             RouteLengthResult? result = null;
             int axisCount = 0;
+            var stats = new RouteLengthStats();
+            using (PerfTimer.Measure(_logger, "ComputeRouteMetres transaction"))
             using (doc.LockDocument())
             using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
             {
                 var axes = new List<Curve>();
-                foreach (ObjectId id in _axisIds)
+                using (PerfTimer.Measure(_logger, "ComputeRouteMetres open axis"))
                 {
-                    if (id.IsNull || id.IsErased) continue;
-                    if (tr.GetObject(id, OpenMode.ForRead) is Curve curve) axes.Add(curve);
+                    foreach (ObjectId id in _axisIds)
+                    {
+                        if (id.IsNull || id.IsErased) continue;
+                        if (tr.GetObject(id, OpenMode.ForRead) is Curve curve) axes.Add(curve);
+                    }
                 }
                 axisCount = axes.Count;
-                if (axes.Count > 0) result = RouteLengthCalculator.Compute(axes, OpenParcels(tr));
+                if (axes.Count > 0)
+                {
+                    var parcels = OpenParcels(tr);
+                    using (PerfTimer.Measure(_logger, "RouteLengthCalculator.Compute"))
+                    {
+                        result = RouteLengthCalculator.Compute(axes, parcels, stats);
+                    }
+                    if (_logger != null) stats.Log(_logger);
+                }
                 tr.Commit();
             }
 
