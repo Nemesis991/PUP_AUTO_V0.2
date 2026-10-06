@@ -94,35 +94,13 @@ namespace PUP_AUTO.Geometry
     public static class RouteLengthCalculator
     {
         private const int ArcChords = 16;
-        private const double BoxMarginM = 0.01;
-
-        private readonly struct Box
-        {
-            public readonly double MinX, MinY, MaxX, MaxY;
-
-            public Box(double minX, double minY, double maxX, double maxY)
-            {
-                MinX = minX;
-                MinY = minY;
-                MaxX = maxX;
-                MaxY = maxY;
-            }
-        }
-
-        /// <summary>False only when both boxes are known and further apart than the margin; an unknown box may overlap anything.</summary>
-        private static bool MayOverlap(Box? a, Box? b, double margin)
-        {
-            if (!a.HasValue || !b.HasValue) return true;
-            Box x = a.Value, y = b.Value;
-            return x.MinX <= y.MaxX + margin && y.MinX <= x.MaxX + margin &&
-                   x.MinY <= y.MaxY + margin && y.MinY <= x.MaxY + margin;
-        }
+        private const double BoxMarginM = GeometryTolerances.BoundingBoxMarginM;
 
         private sealed class ParcelRing
         {
             public string Id = string.Empty;
             public Polyline Polyline = null!;
-            public Box? Extents;
+            public BoundingBox? Extents;
             public List<(double X, double Y)> Ring = new List<(double X, double Y)>();
         }
 
@@ -174,11 +152,11 @@ namespace PUP_AUTO.Geometry
 
         private static List<double> SplitParameters(Curve axis, List<ParcelRing> rings, RouteLengthStats stats)
         {
-            Box? axisBox = BoxOf(axis);
+            BoundingBox? axisBox = BoxOf(axis);
             var parameters = new List<double>();
             foreach (ParcelRing ring in rings)
             {
-                if (!MayOverlap(axisBox, ring.Extents, BoxMarginM))
+                if (!BoundingBox.MayOverlap(axisBox, ring.Extents, BoxMarginM))
                 {
                     stats.IntersectSkipped++;
                     continue;
@@ -251,9 +229,11 @@ namespace PUP_AUTO.Geometry
             }
 
             result.Pieces++;
+            // the piece goes where its midpoint is: a parcel whose box does not hold that point cannot contain it
+            var middleBox = new BoundingBox(middle.X, middle.Y, middle.X, middle.Y);
             foreach (ParcelRing ring in rings)
             {
-                if (!MayOverlap(new Box(middle.X, middle.Y, middle.X, middle.Y), ring.Extents, 0.0))
+                if (!BoundingBox.MayOverlap(middleBox, ring.Extents, 0.0))
                 {
                     stats.ContainsSkipped++;
                     continue;
@@ -286,12 +266,12 @@ namespace PUP_AUTO.Geometry
             return ring;
         }
 
-        private static Box? BoxOf(Entity entity)
+        private static BoundingBox? BoxOf(Entity entity)
         {
             try
             {
                 Extents3d e = entity.GeometricExtents;
-                return new Box(e.MinPoint.X, e.MinPoint.Y, e.MaxPoint.X, e.MaxPoint.Y);
+                return new BoundingBox(e.MinPoint.X, e.MinPoint.Y, e.MaxPoint.X, e.MaxPoint.Y);
             }
             catch
             {
