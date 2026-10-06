@@ -245,6 +245,7 @@ namespace PUP_AUTO.Geometry
                 Polyline parcelPline = parcelKvp.Value;
                 BoundingBox? parcelBox = BoxOf(parcelPline);
                 bool servitudeNear = BoundingBox.MayOverlap(parcelBox, servitudeBox, BoxMargin);
+                using var shifted = new ShiftedParcel(parcelPline);
                 string parcelId = XDataExtractor.GetParcelId(parcelPline);
                 
                 var pData = new ParcelData { ParcelId = parcelId };
@@ -252,7 +253,7 @@ namespace PUP_AUTO.Geometry
 
                 // 1. Gross Servitude Area
                 servitudeWatch.Start();
-                pData.ServitudeGrossAreaSqm = servitudeNear ? GetPreciseIntersectionArea(parcelPline, servitudePline) : 0.0;
+                pData.ServitudeGrossAreaSqm = servitudeNear ? shifted.IntersectionArea(servitudePline) : 0.0;
                 servitudeWatch.Stop();
 
                 // 2. Pole Area & Intersecting Poles
@@ -272,7 +273,7 @@ namespace PUP_AUTO.Geometry
                         continue;
                     }
 
-                    double intersectArea = perf.Pair(() => GetPreciseIntersectionArea(parcelPline, poleFootprintPoly));
+                    double intersectArea = perf.Pair(() => shifted.IntersectionArea(poleFootprintPoly));
                     
                     if (intersectArea > SliverTolerance)
                     {
@@ -333,6 +334,7 @@ namespace PUP_AUTO.Geometry
                 double parcelArea = parcelPline.Area;
 
                 BoundingBox? parcelBox = BoxOf(parcelPline);
+                using var shifted = new ShiftedParcel(parcelPline);
                 for (int poleIndex = 0; poleIndex < polePolylines.Count; poleIndex++)
                 {
                     var poleKvp = polePolylines[poleIndex];
@@ -341,7 +343,7 @@ namespace PUP_AUTO.Geometry
                         perf.Skipped++;
                         continue;
                     }
-                    double intersectArea = perf.Pair(() => GetPreciseIntersectionArea(parcelPline, poleKvp.Value));
+                    double intersectArea = perf.Pair(() => shifted.IntersectionArea(poleKvp.Value));
                     if (intersectArea > SliverTolerance)
                     {
                         result.Pieces.Add(new PoleStepPiece
@@ -396,6 +398,7 @@ namespace PUP_AUTO.Geometry
                 double parcelArea = parcelPline.Area;
 
                 BoundingBox? parcelBox = BoxOf(parcelPline);
+                using var shifted = new ShiftedParcel(parcelPline);
                 for (int poleIndex = 0; poleIndex < polePolylines.Count; poleIndex++)
                 {
                     var poleKvp = polePolylines[poleIndex];
@@ -404,7 +407,7 @@ namespace PUP_AUTO.Geometry
                         perf.Skipped++;
                         continue;
                     }
-                    double intersectArea = perf.Pair(() => GetPreciseIntersectionArea(parcelPline, poleKvp.Value));
+                    double intersectArea = perf.Pair(() => shifted.IntersectionArea(poleKvp.Value));
                     if (intersectArea > SliverTolerance)
                     {
                         result.Pieces.Add(new PoleStepPiece
@@ -419,7 +422,7 @@ namespace PUP_AUTO.Geometry
 
                 servitudeWatch.Start();
                 double servitudeArea = BoundingBox.MayOverlap(BoxOf(parcelPline), servitudeBox, BoxMargin)
-                    ? GetPreciseIntersectionArea(parcelPline, servitudePline)
+                    ? shifted.IntersectionArea(servitudePline)
                     : 0.0;
                 servitudeWatch.Stop();
                 result.Parcels.Add(new RegisterParcelAreas
@@ -488,7 +491,7 @@ namespace PUP_AUTO.Geometry
         /// <summary>The area (m²) where two polylines overlap; 0 when they only touch or are disjoint.</summary>
         public double IntersectionAreaSqm(Polyline a, Polyline b) => GetPreciseIntersectionArea(a, b);
 
-        private double GetPreciseIntersectionArea(Polyline parcelPoly, Polyline subjectPoly)
+        private static double GetPreciseIntersectionArea(Polyline parcelPoly, Polyline subjectPoly)
         {
             if (parcelPoly == null || subjectPoly == null) return 0.0;
             
@@ -513,6 +516,78 @@ namespace PUP_AUTO.Geometry
                     }
                     catch { return 0.0; }
                 }
+            }
+        }
+
+        /// <summary>
+        /// One parcel for many intersections: the origin shift is computed and the parcel region built once, on first use, and
+        /// every subject (pole footprint, servitude) is intersected with a clone of that region. Same shift rule, same operand
+        /// order (parcel ∩ subject) and same sliver rule as <see cref="GetPreciseIntersectionArea"/>, so the areas are the same.
+        /// Owns an unmanaged ACIS region: dispose it.
+        /// </summary>
+        private sealed class ShiftedParcel : IDisposable
+        {
+            private readonly Polyline _parcel;
+            private bool _built;
+            private Vector3d _shift;
+            private Region? _region;
+
+            public ShiftedParcel(Polyline parcel)
+            {
+                _parcel = parcel;
+            }
+
+            public double IntersectionArea(Polyline subject)
+            {
+                if (subject == null) return 0.0;
+                if (!_built) Build();
+                if (_region == null) return 0.0;
+
+                using (Polyline p2 = (Polyline)subject.Clone())
+                {
+                    p2.TransformBy(Matrix3d.Displacement(_shift));
+                    using (Region? r2 = SafeCreateRegion(p2))
+                    {
+                        if (r2 == null) return 0.0;
+
+                        Region work;
+                        try
+                        {
+                            work = (Region)_region.Clone();
+                        }
+                        catch
+                        {
+                            return GetPreciseIntersectionArea(_parcel, subject); // as before, region by region
+                        }
+                        using (work)
+                        {
+                            try
+                            {
+                                work.BooleanOperation(BooleanOperationType.BoolIntersect, r2);
+                                return work.Area > SliverTolerance ? work.Area : 0.0;
+                            }
+                            catch { return 0.0; }
+                        }
+                    }
+                }
+            }
+
+            private void Build()
+            {
+                _built = true;
+                using (Polyline p1 = (Polyline)_parcel.Clone())
+                {
+                    Point3d minPt = p1.GeometricExtents.MinPoint;
+                    _shift = minPt.GetVectorTo(Point3d.Origin);
+                    p1.TransformBy(Matrix3d.Displacement(_shift));
+                    _region = SafeCreateRegion(p1);
+                }
+            }
+
+            public void Dispose()
+            {
+                _region?.Dispose();
+                _region = null;
             }
         }
 
