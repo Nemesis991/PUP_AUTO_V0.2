@@ -389,6 +389,9 @@ namespace PUP_AUTO.Geometry
         //  Precise Math Helpers (Origin Shift)
         // -----------------------------------------------------------------
 
+        /// <summary>The area (m²) where two polylines overlap; 0 when they only touch or are disjoint.</summary>
+        public double IntersectionAreaSqm(Polyline a, Polyline b) => GetPreciseIntersectionArea(a, b);
+
         private double GetPreciseIntersectionArea(Polyline parcelPoly, Polyline subjectPoly)
         {
             if (parcelPoly == null || subjectPoly == null) return 0.0;

@@ -925,14 +925,37 @@ namespace PUP_AUTO.UI.Windows
                         // Extract now to validate the blocks; the footprints are in-memory only
                         // and are disposed here (each handler re-extracts what it needs).
                         var entries = new List<PoleFootprintEntry>();
+                        var seenFootprints = new List<(string PoleId, double Area, double[] Box, string Handle)>();
+                        var duplicatePoles = new List<DuplicateParcel>();
                         try
                         {
                             int index = 0;
                             foreach (var entry in PoleFootprintExtractor.ExtractAll(poleBlocks, tr))
                             {
                                 entries.Add(entry);
-                                if (entry.Result.FootprintPolyline != null)
+                                Polyline? footprint = entry.Result.FootprintPolyline;
+                                if (footprint != null)
                                 {
+                                    // The same pole drawn twice (same number, same footprint) is taken once
+                                    Extents3d ext = footprint.GeometricExtents;
+                                    double[] box = { ext.MinPoint.X, ext.MinPoint.Y, ext.MaxPoint.X, ext.MaxPoint.Y };
+                                    string handle = poleBlocks[index].Value.Handle.ToString();
+                                    var twin = seenFootprints.FirstOrDefault(s => s.PoleId == entry.PoleId &&
+                                        DuplicatePolylines.SameFootprint(s.Area, s.Box, footprint.Area, box));
+                                    if (twin.PoleId != null)
+                                    {
+                                        DuplicateParcel? known = duplicatePoles.FirstOrDefault(d => d.ParcelId == entry.PoleId);
+                                        if (known == null)
+                                        {
+                                            known = new DuplicateParcel { ParcelId = entry.PoleId, KeptHandle = twin.Handle };
+                                            duplicatePoles.Add(known);
+                                        }
+                                        known.DroppedHandles.Add(handle);
+                                        index++;
+                                        continue;
+                                    }
+                                    seenFootprints.Add((entry.PoleId, footprint.Area, box, handle));
+
                                     picks.Add(new PolePick
                                     {
                                         BlockId = poleBlocks[index].Value.ObjectId,
@@ -949,6 +972,12 @@ namespace PUP_AUTO.UI.Windows
                         finally
                         {
                             DisposeFootprints(entries);
+                        }
+                        if (duplicatePoles.Count > 0)
+                        {
+                            string text = DuplicatePolylines.FormatWarning(duplicatePoles).Replace("имота", "стълба");
+                            _logger!.LogWarning(text);
+                            AppendLog("ПРЕДУПРЕЖДЕНИЕ: " + DuplicatePolylines.FormatWarning(duplicatePoles, 20).Replace("имота", "стълба"));
                         }
                         tr.Commit();
                     }
@@ -992,9 +1021,29 @@ namespace PUP_AUTO.UI.Windows
                             tr, "\nSelect Parcel polylines: ", null,
                             _servitudeId, selStats);
 
+                        // A parcel drawn twice (identical copies) is taken once; separate parts of one parcel stay
+                        var topo = new TopologyProcessor(_logger!);
+                        var shapes = selected
+                            .Select(kvp => new ParcelShape<KeyValuePair<string, Polyline>>
+                            {
+                                ParcelId = kvp.Key,
+                                Handle = kvp.Value.Handle.ToString(),
+                                AreaSqm = kvp.Value.Area,
+                                Item = kvp
+                            })
+                            .ToList();
+                        DuplicateFilterResult<KeyValuePair<string, Polyline>> unique =
+                            DuplicatePolylines.Filter(shapes, (x, y) => topo.IntersectionAreaSqm(x.Item.Value, y.Item.Value));
+                        if (unique.Duplicates.Count > 0)
+                        {
+                            _logger!.LogWarning(DuplicatePolylines.FormatWarning(unique.Duplicates));
+                            AppendLog("ПРЕДУПРЕЖДЕНИЕ: " + DuplicatePolylines.FormatWarning(unique.Duplicates, 20));
+                        }
+                        foreach (string id in unique.OverlappingParts) LogWarning(DuplicatePolylines.FormatOverlapWarning(id));
+
                         // Keep the ID resolved now (XData / handle); it is never re-read
-                        _parcelPicks = selected
-                            .Select(kvp => new ParcelPick { Id = kvp.Value.ObjectId, ParcelId = kvp.Key })
+                        _parcelPicks = unique.Kept
+                            .Select(s => new ParcelPick { Id = s.Item.Value.ObjectId, ParcelId = s.ParcelId })
                             .ToList();
                         tr.Commit();
                     }
