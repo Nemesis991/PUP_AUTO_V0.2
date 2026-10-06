@@ -237,10 +237,14 @@ namespace PUP_AUTO.Geometry
             var perf = new PairStats();
             var servitudeWatch = new System.Diagnostics.Stopwatch();
             var total = System.Diagnostics.Stopwatch.StartNew();
+            BoundingBox?[] poleBoxes = polePolylines.Select(k => BoxOf(k.Value)).ToArray();
+            BoundingBox? servitudeBox = BoxOf(servitudePline);
 
             foreach (var parcelKvp in parcelPolylines)
             {
                 Polyline parcelPline = parcelKvp.Value;
+                BoundingBox? parcelBox = BoxOf(parcelPline);
+                bool servitudeNear = BoundingBox.MayOverlap(parcelBox, servitudeBox, BoxMargin);
                 string parcelId = XDataExtractor.GetParcelId(parcelPline);
                 
                 var pData = new ParcelData { ParcelId = parcelId };
@@ -248,7 +252,7 @@ namespace PUP_AUTO.Geometry
 
                 // 1. Gross Servitude Area
                 servitudeWatch.Start();
-                pData.ServitudeGrossAreaSqm = GetPreciseIntersectionArea(parcelPline, servitudePline);
+                pData.ServitudeGrossAreaSqm = servitudeNear ? GetPreciseIntersectionArea(parcelPline, servitudePline) : 0.0;
                 servitudeWatch.Stop();
 
                 // 2. Pole Area & Intersecting Poles
@@ -256,10 +260,17 @@ namespace PUP_AUTO.Geometry
                 List<string> assignedPoles = new List<string>();
                 List<Polyline> intersectingPolesList = new List<Polyline>();
 
-                foreach (var poleKvp in polePolylines)
+                for (int poleIndex = 0; poleIndex < polePolylines.Count; poleIndex++)
                 {
+                    var poleKvp = polePolylines[poleIndex];
                     string poleNumber = poleKvp.Key;
                     Polyline poleFootprintPoly = poleKvp.Value;
+
+                    if (!BoundingBox.MayOverlap(parcelBox, poleBoxes[poleIndex], BoxMargin))
+                    {
+                        perf.Skipped++;
+                        continue;
+                    }
 
                     double intersectArea = perf.Pair(() => GetPreciseIntersectionArea(parcelPline, poleFootprintPoly));
                     
@@ -276,7 +287,9 @@ namespace PUP_AUTO.Geometry
                 pData.AssignedPoleNumbers = assignedPoles;
 
                 // 3. Net Servitude Area
-                pData.ServitudeNetAreaSqm = GetPreciseSubtractedArea(parcelPline, servitudePline, intersectingPolesList);
+                pData.ServitudeNetAreaSqm = servitudeNear
+                    ? GetPreciseSubtractedArea(parcelPline, servitudePline, intersectingPolesList)
+                    : 0.0;
 
                 results.Add(pData);
             }
@@ -313,13 +326,21 @@ namespace PUP_AUTO.Geometry
 
             var perf = new PairStats();
             var total = System.Diagnostics.Stopwatch.StartNew();
+            BoundingBox?[] poleBoxes = polePolylines.Select(k => BoxOf(k.Value)).ToArray();
             foreach (var parcelKvp in parcelPolylines)
             {
                 Polyline parcelPline = parcelKvp.Value;
                 double parcelArea = parcelPline.Area;
 
-                foreach (var poleKvp in polePolylines)
+                BoundingBox? parcelBox = BoxOf(parcelPline);
+                for (int poleIndex = 0; poleIndex < polePolylines.Count; poleIndex++)
                 {
+                    var poleKvp = polePolylines[poleIndex];
+                    if (!BoundingBox.MayOverlap(parcelBox, poleBoxes[poleIndex], BoxMargin))
+                    {
+                        perf.Skipped++;
+                        continue;
+                    }
                     double intersectArea = perf.Pair(() => GetPreciseIntersectionArea(parcelPline, poleKvp.Value));
                     if (intersectArea > SliverTolerance)
                     {
@@ -367,13 +388,22 @@ namespace PUP_AUTO.Geometry
             var perf = new PairStats();
             var servitudeWatch = new System.Diagnostics.Stopwatch();
             var total = System.Diagnostics.Stopwatch.StartNew();
+            BoundingBox?[] poleBoxes = polePolylines.Select(k => BoxOf(k.Value)).ToArray();
+            BoundingBox? servitudeBox = BoxOf(servitudePline);
             foreach (var parcelKvp in parcelPolylines)
             {
                 Polyline parcelPline = parcelKvp.Value;
                 double parcelArea = parcelPline.Area;
 
-                foreach (var poleKvp in polePolylines)
+                BoundingBox? parcelBox = BoxOf(parcelPline);
+                for (int poleIndex = 0; poleIndex < polePolylines.Count; poleIndex++)
                 {
+                    var poleKvp = polePolylines[poleIndex];
+                    if (!BoundingBox.MayOverlap(parcelBox, poleBoxes[poleIndex], BoxMargin))
+                    {
+                        perf.Skipped++;
+                        continue;
+                    }
                     double intersectArea = perf.Pair(() => GetPreciseIntersectionArea(parcelPline, poleKvp.Value));
                     if (intersectArea > SliverTolerance)
                     {
@@ -388,7 +418,9 @@ namespace PUP_AUTO.Geometry
                 }
 
                 servitudeWatch.Start();
-                double servitudeArea = GetPreciseIntersectionArea(parcelPline, servitudePline);
+                double servitudeArea = BoundingBox.MayOverlap(BoxOf(parcelPline), servitudeBox, BoxMargin)
+                    ? GetPreciseIntersectionArea(parcelPline, servitudePline)
+                    : 0.0;
                 servitudeWatch.Stop();
                 result.Parcels.Add(new RegisterParcelAreas
                 {
@@ -433,6 +465,25 @@ namespace PUP_AUTO.Geometry
         // -----------------------------------------------------------------
         //  Precise Math Helpers (Origin Shift)
         // -----------------------------------------------------------------
+
+        private const double BoxMargin = GeometryTolerances.BoundingBoxMarginM;
+
+        /// <summary>
+        /// The 2D extents of a polyline, read once per polyline. Null when AutoCAD cannot give them: the pair is then
+        /// not skipped, so the boolean decides exactly as before.
+        /// </summary>
+        private static BoundingBox? BoxOf(Polyline pline)
+        {
+            try
+            {
+                Extents3d e = pline.GeometricExtents;
+                return new BoundingBox(e.MinPoint.X, e.MinPoint.Y, e.MaxPoint.X, e.MaxPoint.Y);
+            }
+            catch
+            {
+                return null;
+            }
+        }
 
         /// <summary>The area (m²) where two polylines overlap; 0 when they only touch or are disjoint.</summary>
         public double IntersectionAreaSqm(Polyline a, Polyline b) => GetPreciseIntersectionArea(a, b);
