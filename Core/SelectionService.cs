@@ -91,6 +91,33 @@ namespace PUP_AUTO.Core
         }
 
         /// <summary>
+        /// Prompts the user to select the route axis: one or more polylines, lines or arcs. Returns their ObjectIds
+        /// (empty when cancelled); nothing is opened.
+        /// </summary>
+        public List<ObjectId> SelectAxisCurves(string promptMessage)
+        {
+            var ids = new List<ObjectId>();
+            var opts = new PromptSelectionOptions { MessageForAdding = promptMessage };
+            var filter = new SelectionFilter(new[]
+            {
+                new TypedValue((int)DxfCode.Start, "LWPOLYLINE,LINE,ARC")
+            });
+
+            PromptSelectionResult selResult = GetEditor().GetSelection(opts, filter);
+            if (selResult.Status != PromptStatus.OK)
+            {
+                _logger.LogWarning("User cancelled route axis selection.");
+                return ids;
+            }
+
+            foreach (SelectedObject selObj in selResult.Value)
+            {
+                if (selObj != null) ids.Add(selObj.ObjectId);
+            }
+            return ids;
+        }
+
+        /// <summary>
         /// Prompts the user to select multiple entities filtered to Polylines.
         /// Returns a list of (entityName, Polyline) pairs opened ForRead
         /// inside <paramref name="transaction"/>.

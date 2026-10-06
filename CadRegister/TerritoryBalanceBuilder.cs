@@ -44,6 +44,11 @@ namespace PUP_AUTO.CadRegister
     {
         public string Title { get; set; } = string.Empty;
         public string Subtitle { get; set; } = string.Empty;
+
+        /// <summary>EKATTE code and the settlement name of the .cad; empty for a combined (municipality) balance.</summary>
+        public string Ekatte { get; set; } = string.Empty;
+        public string SettlementName { get; set; } = string.Empty;
+
         public BalanceTable[] Tables { get; set; } = new BalanceTable[0];
 
         /// <summary>Parcels of the section that are not in the .cad (they are in the "Няма данни в .cad" row of every table).</summary>
@@ -187,6 +192,8 @@ namespace PUP_AUTO.CadRegister
             {
                 Title = TitlePrefix + projectName.Trim(),
                 Subtitle = register.Subtitle,
+                Ekatte = register.Ekatte,
+                SettlementName = register.SettlementName,
                 Tables = tables,
                 NotFoundCount = notFound.Count,
                 DistinctPoles = distinctPoles

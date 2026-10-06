@@ -55,6 +55,7 @@ namespace PUP_AUTO.UI.Windows
         private PickTile _tileServitude = null!;
         private PickTile _tilePoles = null!;
         private PickTile _tileParcels = null!;
+        private PickTile _tileAxis = null!;
         private ReportOption _optMvpMathTest = null!;
         private ReportOption _optPoleSteps = null!;
         private ReportOption _optCadControl = null!;
@@ -78,6 +79,7 @@ namespace PUP_AUTO.UI.Windows
         private ObjectId _servitudeId = ObjectId.Null;
         private List<ParcelPick> _parcelPicks = new List<ParcelPick>();
         private List<PolePick> _polePicks = new List<PolePick>();
+        private List<ObjectId> _axisIds = new List<ObjectId>();
 
         private SelectionService? _selection;
         private Logger? _logger;
@@ -242,6 +244,10 @@ namespace PUP_AUTO.UI.Windows
             _tileParcels = MakePickTile(GlyphParcels, "Имоти", "Не са избрани");
             _tileParcels.Button.Click += BtnPickParcels_Click;
             tiles.Children.Add(_tileParcels.Button);
+
+            _tileAxis = MakePickTile(GlyphLayers, "Ос на трасето", "Не е избрана (по избор)");
+            _tileAxis.Button.Click += BtnPickAxis_Click;
+            tiles.Children.Add(_tileAxis.Button);
 
             return MakeCard(2, "Геометрии от чертежа",
                 "Натиснете и изберете обектите в чертежа. Изборът важи за текущия чертеж.", tiles);
@@ -727,14 +733,16 @@ namespace PUP_AUTO.UI.Windows
         }
 
         private bool HasAnyPick() =>
-            !_servitudeId.IsNull || _parcelPicks.Count > 0 || _polePicks.Count > 0;
+            !_servitudeId.IsNull || _parcelPicks.Count > 0 || _polePicks.Count > 0 || _axisIds.Count > 0;
 
         private void ClearPicks()
         {
             _servitudeId = ObjectId.Null;
             _parcelPicks = new List<ParcelPick>();
             _polePicks = new List<PolePick>();
+            _axisIds = new List<ObjectId>();
 
+            SetTile(_tileAxis, "Не е избрана (по избор)", SubtextBrush, false);
             SetTile(_tileServitude, "Не е избран", SubtextBrush, false);
             SetTile(_tilePoles, "Не са избрани", SubtextBrush, false);
             SetTile(_tileParcels, "Не са избрани", SubtextBrush, false);
@@ -1067,6 +1075,38 @@ namespace PUP_AUTO.UI.Windows
                     {
                         SetTile(_tileParcels, "Не са избрани", ErrorBrush, false);
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Имотите не бяха избрани.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"ГРЕШКА: {ex.Message}");
+                }
+            }
+            UpdateReadiness();
+        }
+
+        /// <summary>The route axis (optional): only the recapitulation uses it, for the route length per землище.</summary>
+        private void BtnPickAxis_Click(object sender, RoutedEventArgs e)
+        {
+            if (!BeginPick(out Document doc)) return;
+            Editor ed = doc.Editor;
+
+            using (EditorUserInteraction interaction = ed.StartUserInteraction(this))
+            {
+                try
+                {
+                    EnsureServices();
+                    _axisIds = _selection!.SelectAxisCurves("\nSelect the route axis (polylines, lines, arcs): ");
+
+                    if (_axisIds.Count > 0)
+                    {
+                        SetTile(_tileAxis, $"✓ {_axisIds.Count} обекта", SuccessBrush, true);
+                        AppendLog($"Избрана ос на трасето: {_axisIds.Count} обекта.");
+                    }
+                    else
+                    {
+                        SetTile(_tileAxis, "Не е избрана (по избор)", SubtextBrush, false);
+                        AppendLog("Осът на трасето не беше избрана — дължината на трасето няма да се изчисли.");
                     }
                 }
                 catch (Exception ex)
@@ -1599,12 +1639,100 @@ namespace PUP_AUTO.UI.Windows
                     string totalsPath = TerritoryBalanceExporter.ExportMunicipalities(totals, _projectDir);
                     AppendLog($"  Записан {Path.GetFileName(totalsPath)} в {_projectDir}.");
                 }
+
+                WriteRecapitulation(doc, municipalities, totals, project);
             }
             catch (Exception ex)
             {
                 AppendLog($"ГРЕШКА при балансите: {ex.Message}");
                 _logger?.LogError($"Territory balance failed: {ex.Message}\n{ex.StackTrace}");
             }
+        }
+
+        /// <summary>
+        /// Builds Обща_рекапитулация.xlsx from the territory balances just built (nothing is recomputed) and the route length
+        /// per землище. A failure here is logged and does not affect the balances already written.
+        /// </summary>
+        private void WriteRecapitulation(
+            Document doc,
+            List<(MunicipalityGroup Group, List<TerritoryBalance> Sections)> municipalities,
+            List<(string SheetName, TerritoryBalance Balance)> totals,
+            string project)
+        {
+            try
+            {
+                Dictionary<string, decimal>? routeMetres = ComputeRouteMetres(doc);
+                EkatteRegister ekatte = EkatteRegister.LoadWithDefaults(Path.Combine(TemplateDir, FileNames.EkatteRegisterFile));
+
+                List<RecapitulationSheet> sheets = RecapitulationBuilder.Build(municipalities, project, ekatte, routeMetres);
+                foreach (RecapitulationMunicipality municipality in sheets.SelectMany(sheet => sheet.Municipalities))
+                {
+                    (string SheetName, TerritoryBalance Balance) combined = totals.FirstOrDefault(t => t.SheetName == municipality.Key);
+                    if (combined.Balance != null && !RecapitulationBuilder.MatchesCombinedBalance(municipality, combined.Balance))
+                    {
+                        LogWarning($"Рекапитулация, общ. {municipality.Name}: общото за общината не съвпада с общия баланс.");
+                    }
+                }
+
+                if (sheets.Count == 0)
+                {
+                    AppendLog("Няма данни за рекапитулацията — файлът не е записан.");
+                    return;
+                }
+
+                string path = RecapitulationExporter.Export(sheets, _projectDir);
+                AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ГРЕШКА при рекапитулацията: {ex.Message}");
+                _logger?.LogError($"Recapitulation failed: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// The route length in metres per EKATTE: the picked axis split at the parcel boundaries, each piece in the parcel that
+        /// contains it. One short transaction under a document lock. Null (column stays empty) when no axis is picked or it is
+        /// gone from the drawing. Only counts and metres go to the log.
+        /// </summary>
+        private Dictionary<string, decimal>? ComputeRouteMetres(Document doc)
+        {
+            if (_axisIds.Count == 0)
+            {
+                AppendLog("Дължина на трасето: не е избрана ос — колоната е празна.");
+                return null;
+            }
+
+            RouteLengthResult? result = null;
+            int axisCount = 0;
+            using (doc.LockDocument())
+            using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                var axes = new List<Curve>();
+                foreach (ObjectId id in _axisIds)
+                {
+                    if (id.IsNull || id.IsErased) continue;
+                    if (tr.GetObject(id, OpenMode.ForRead) is Curve curve) axes.Add(curve);
+                }
+                axisCount = axes.Count;
+                if (axes.Count > 0) result = RouteLengthCalculator.Compute(axes, OpenParcels(tr));
+                tr.Commit();
+            }
+
+            if (result == null)
+            {
+                AppendLog("Дължина на трасето: избраната ос вече не е в чертежа — колоната е празна.");
+                return null;
+            }
+
+            Dictionary<string, decimal> byEkatte = RouteLengths.SumByEkatte(result.MetresByParcelId);
+            AppendLog($"  Дължина на трасето: {RouteLengths.ToKm(byEkatte.Values.Sum()):0.000} km в {byEkatte.Count} землища " +
+                      $"({axisCount} обекта на оста, {result.Pieces} части).");
+            if (result.OutsideMetres > 0.01)
+            {
+                LogWarning($"Дължина на трасето: {result.OutsideMetres:0.0} m от оста са извън избраните имоти.");
+            }
+            return byEkatte;
         }
 
         /// <summary>

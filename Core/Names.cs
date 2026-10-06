@@ -15,6 +15,7 @@ namespace PUP_AUTO.Core
         public const string PoleStepsRegisterFile = "Регистър_на_стъпките_на_стълбовете.xlsx";
         public const string TerritoryBalanceFile = "Баланси_на_територията.xlsx";
         public const string MunicipalityBalanceFile = "Общ_баланс_за_общината.xlsx";
+        public const string RecapitulationFile = "Обща_рекапитулация.xlsx";
         public const string NomenclaturesFolder = "Номенклатури";
         public const string EkatteRegisterFile = "EKATTE.csv";
     }

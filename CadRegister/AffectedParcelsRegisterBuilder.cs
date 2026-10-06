@@ -40,6 +40,10 @@ namespace PUP_AUTO.CadRegister
         /// <summary>Row 2: the EKATTE title.</summary>
         public string Subtitle { get; set; } = string.Empty;
 
+        /// <summary>EKATTE code and the settlement name of the .cad, for the reports built from this register (the recapitulation).</summary>
+        public string Ekatte { get; set; } = string.Empty;
+        public string SettlementName { get; set; } = string.Empty;
+
         public List<AffectedRegisterRow> Rows { get; } = new List<AffectedRegisterRow>();
 
         // ОБЩО: sums of the printed values, each parcel counted once
@@ -77,7 +81,9 @@ namespace PUP_AUTO.CadRegister
             var result = new AffectedRegister
             {
                 Title = TitlePrefix + projectName.Trim(),
-                Subtitle = ekatteTitle
+                Subtitle = ekatteTitle,
+                Ekatte = register.Ekatte,
+                SettlementName = register.SettlementName
             };
 
             // One ID drawn as several polylines is one parcel: the areas are summed
