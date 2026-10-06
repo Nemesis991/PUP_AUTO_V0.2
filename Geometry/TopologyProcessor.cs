@@ -234,6 +234,9 @@ namespace PUP_AUTO.Geometry
             List<KeyValuePair<string, Polyline>> parcelPolylines)
         {
             var results = new List<ParcelData>();
+            var perf = new PairStats();
+            var servitudeWatch = new System.Diagnostics.Stopwatch();
+            var total = System.Diagnostics.Stopwatch.StartNew();
 
             foreach (var parcelKvp in parcelPolylines)
             {
@@ -244,7 +247,9 @@ namespace PUP_AUTO.Geometry
                 pData.TotalAreaSqm = parcelPline.Area;
 
                 // 1. Gross Servitude Area
+                servitudeWatch.Start();
                 pData.ServitudeGrossAreaSqm = GetPreciseIntersectionArea(parcelPline, servitudePline);
+                servitudeWatch.Stop();
 
                 // 2. Pole Area & Intersecting Poles
                 double totalPoleArea = 0;
@@ -256,7 +261,7 @@ namespace PUP_AUTO.Geometry
                     string poleNumber = poleKvp.Key;
                     Polyline poleFootprintPoly = poleKvp.Value;
 
-                    double intersectArea = GetPreciseIntersectionArea(parcelPline, poleFootprintPoly);
+                    double intersectArea = perf.Pair(() => GetPreciseIntersectionArea(parcelPline, poleFootprintPoly));
                     
                     if (intersectArea > SliverTolerance)
                     {
@@ -275,6 +280,8 @@ namespace PUP_AUTO.Geometry
 
                 results.Add(pData);
             }
+            perf.Log(_logger, "RunMvpMathTest", parcelPolylines.Count, polePolylines.Count, total.ElapsedMilliseconds);
+            _logger.LogPerf($"RunMvpMathTest servitude x parcel (gross): {servitudeWatch.ElapsedMilliseconds} ms");
 
             return results;
         }
@@ -304,6 +311,8 @@ namespace PUP_AUTO.Geometry
                 });
             }
 
+            var perf = new PairStats();
+            var total = System.Diagnostics.Stopwatch.StartNew();
             foreach (var parcelKvp in parcelPolylines)
             {
                 Polyline parcelPline = parcelKvp.Value;
@@ -311,7 +320,7 @@ namespace PUP_AUTO.Geometry
 
                 foreach (var poleKvp in polePolylines)
                 {
-                    double intersectArea = GetPreciseIntersectionArea(parcelPline, poleKvp.Value);
+                    double intersectArea = perf.Pair(() => GetPreciseIntersectionArea(parcelPline, poleKvp.Value));
                     if (intersectArea > SliverTolerance)
                     {
                         result.Pieces.Add(new PoleStepPiece
@@ -324,6 +333,7 @@ namespace PUP_AUTO.Geometry
                     }
                 }
             }
+            perf.Log(_logger, "ComputePoleStepPieces", parcelPolylines.Count, polePolylines.Count, total.ElapsedMilliseconds);
 
             return result;
         }
@@ -354,6 +364,9 @@ namespace PUP_AUTO.Geometry
                 });
             }
 
+            var perf = new PairStats();
+            var servitudeWatch = new System.Diagnostics.Stopwatch();
+            var total = System.Diagnostics.Stopwatch.StartNew();
             foreach (var parcelKvp in parcelPolylines)
             {
                 Polyline parcelPline = parcelKvp.Value;
@@ -361,7 +374,7 @@ namespace PUP_AUTO.Geometry
 
                 foreach (var poleKvp in polePolylines)
                 {
-                    double intersectArea = GetPreciseIntersectionArea(parcelPline, poleKvp.Value);
+                    double intersectArea = perf.Pair(() => GetPreciseIntersectionArea(parcelPline, poleKvp.Value));
                     if (intersectArea > SliverTolerance)
                     {
                         result.Pieces.Add(new PoleStepPiece
@@ -374,15 +387,47 @@ namespace PUP_AUTO.Geometry
                     }
                 }
 
+                servitudeWatch.Start();
+                double servitudeArea = GetPreciseIntersectionArea(parcelPline, servitudePline);
+                servitudeWatch.Stop();
                 result.Parcels.Add(new RegisterParcelAreas
                 {
                     ParcelId = parcelKvp.Key,
                     DrawnAreaSqm = parcelArea,
-                    ServitudeGrossAreaSqm = GetPreciseIntersectionArea(parcelPline, servitudePline)
+                    ServitudeGrossAreaSqm = servitudeArea
                 });
             }
+            perf.Log(_logger, "ComputeRegisterGeometry", parcelPolylines.Count, polePolylines.Count, total.ElapsedMilliseconds);
+            _logger.LogPerf($"ComputeRegisterGeometry servitude x parcel: {parcelPolylines.Count} calls, {servitudeWatch.ElapsedMilliseconds} ms");
 
             return result;
+        }
+
+        /// <summary>Counts for the [PERF] lines: pairs tried and pairs that gave a piece above the sliver tolerance.</summary>
+        private sealed class PairStats
+        {
+            public int Tried;
+            public int WithArea;
+            public int Skipped;
+            public long BooleanMs;
+            private readonly System.Diagnostics.Stopwatch _watch = new System.Diagnostics.Stopwatch();
+
+            public double Pair(Func<double> compute)
+            {
+                Tried++;
+                _watch.Restart();
+                double area = compute();
+                _watch.Stop();
+                BooleanMs += _watch.ElapsedMilliseconds;
+                if (area > SliverTolerance) WithArea++;
+                return area;
+            }
+
+            public void Log(Logger logger, string name, int parcels, int poles, long totalMs)
+            {
+                logger.LogPerf($"{name} pole x parcel: {parcels} parcels, {poles} poles, {Tried} pairs tried, " +
+                               $"{WithArea} with area > sliver, {Skipped} skipped, pair loop {BooleanMs} ms, total {totalMs} ms");
+            }
         }
 
         // -----------------------------------------------------------------

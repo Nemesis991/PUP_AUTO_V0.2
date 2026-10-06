@@ -811,6 +811,14 @@ namespace PUP_AUTO.UI.Windows
 
         private List<KeyValuePair<string, Polyline>> OpenParcels(Transaction tr)
         {
+            using (PerfTimer.Measure(_logger, "OpenParcels"))
+            {
+                return OpenParcelsCore(tr);
+            }
+        }
+
+        private List<KeyValuePair<string, Polyline>> OpenParcelsCore(Transaction tr)
+        {
             var parcels = new List<KeyValuePair<string, Polyline>>();
             foreach (var pick in _parcelPicks)
             {
@@ -826,6 +834,14 @@ namespace PUP_AUTO.UI.Windows
         /// The caller must dispose them with <see cref="DisposeFootprints"/>.
         /// </summary>
         private List<PoleFootprintEntry> ExtractPoles(Transaction tr)
+        {
+            using (PerfTimer.Measure(_logger, "ExtractPoles"))
+            {
+                return ExtractPolesCore(tr);
+            }
+        }
+
+        private List<PoleFootprintEntry> ExtractPolesCore(Transaction tr)
         {
             var blocks = new List<KeyValuePair<string, BlockReference>>();
             foreach (var pick in _polePicks)
@@ -908,6 +924,7 @@ namespace PUP_AUTO.UI.Windows
         {
             if (!BeginPick(out Document doc)) return;
             Editor ed = doc.Editor;
+            var pickWatch = Stopwatch.StartNew();
 
             using (EditorUserInteraction interaction = ed.StartUserInteraction(this))
             {
@@ -927,6 +944,7 @@ namespace PUP_AUTO.UI.Windows
                         var entries = new List<PoleFootprintEntry>();
                         var seenFootprints = new List<(string PoleId, double Area, double[] Box, string Handle)>();
                         var duplicatePoles = new List<DuplicateParcel>();
+                        PerfTimer extractTimer = PerfTimer.Measure(_logger, "BtnPickPoles extract + duplicate check");
                         try
                         {
                             int index = 0;
@@ -971,6 +989,7 @@ namespace PUP_AUTO.UI.Windows
                         }
                         finally
                         {
+                            extractTimer.Dispose();
                             DisposeFootprints(entries);
                         }
                         if (duplicatePoles.Count > 0)
@@ -993,6 +1012,7 @@ namespace PUP_AUTO.UI.Windows
                         SetTile(_tilePoles, "Не са избрани", ErrorBrush, false);
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Не бяха извлечени валидни стълбове.");
                     }
+                    _logger?.LogPerf($"BtnPickPoles_Click: {pickWatch.ElapsedMilliseconds} ms (includes the time spent selecting)");
                 }
                 catch (Exception ex)
                 {
@@ -1006,6 +1026,7 @@ namespace PUP_AUTO.UI.Windows
         {
             if (!BeginPick(out Document doc)) return;
             Editor ed = doc.Editor;
+            var pickWatch = Stopwatch.StartNew();
 
             using (EditorUserInteraction interaction = ed.StartUserInteraction(this))
             {
@@ -1032,8 +1053,17 @@ namespace PUP_AUTO.UI.Windows
                                 Item = kvp
                             })
                             .ToList();
-                        DuplicateFilterResult<KeyValuePair<string, Polyline>> unique =
-                            DuplicatePolylines.Filter(shapes, (x, y) => topo.IntersectionAreaSqm(x.Item.Value, y.Item.Value));
+                        DuplicateFilterResult<KeyValuePair<string, Polyline>> unique;
+                        int overlapCalls = 0;
+                        using (PerfTimer.Measure(_logger, $"BtnPickParcels duplicate check ({shapes.Count} polylines)"))
+                        {
+                            unique = DuplicatePolylines.Filter(shapes, (x, y) =>
+                            {
+                                overlapCalls++;
+                                return topo.IntersectionAreaSqm(x.Item.Value, y.Item.Value);
+                            });
+                        }
+                        _logger!.LogPerf($"BtnPickParcels duplicate check: {overlapCalls} overlap booleans");
                         if (unique.Duplicates.Count > 0)
                         {
                             _logger!.LogWarning(DuplicatePolylines.FormatWarning(unique.Duplicates));
@@ -1068,6 +1098,7 @@ namespace PUP_AUTO.UI.Windows
                         SetTile(_tileParcels, "Не са избрани", ErrorBrush, false);
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Имотите не бяха избрани.");
                     }
+                    _logger?.LogPerf($"BtnPickParcels_Click: {pickWatch.ElapsedMilliseconds} ms (includes the time spent selecting)");
                 }
                 catch (Exception ex)
                 {
@@ -1098,7 +1129,10 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
 
+                EnsureServices();
+                PerfTimer.LogMemory(_logger, "at start of Generate");
                 bool ranAny = false;
+                using (PerfTimer.Measure(_logger, "BtnGenerate_Click"))
                 foreach (ReportOption option in ticked)
                 {
                     List<Requirement> missing = Missing(option);
@@ -1108,14 +1142,19 @@ namespace PUP_AUTO.UI.Windows
                         continue;
                     }
 
-                    if (option == _optMvpMathTest) RunMvpMathTest(doc);
-                    else if (option == _optPoleSteps) RunPoleStepsTable(doc);
-                    else if (option == _optCadControl) RunCadControlReport(doc, _cadSet!);
-                    else if (option == _optAffectedRegister) RunAffectedParcelsRegister(doc, _cadSet!);
-                    else if (option == _optPoleStepsRegister) RunPoleStepsRegister(doc, _cadSet!);
-                    else if (option == _optTerritoryBalance) RunTerritoryBalance(doc, _cadSet!);
+                    using (PerfTimer timer = PerfTimer.Measure(_logger, "Report: " + option.Title))
+                    {
+                        if (option == _optMvpMathTest) RunMvpMathTest(doc);
+                        else if (option == _optPoleSteps) RunPoleStepsTable(doc);
+                        else if (option == _optCadControl) RunCadControlReport(doc, _cadSet!);
+                        else if (option == _optAffectedRegister) RunAffectedParcelsRegister(doc, _cadSet!);
+                        else if (option == _optPoleStepsRegister) RunPoleStepsRegister(doc, _cadSet!);
+                        else if (option == _optTerritoryBalance) RunTerritoryBalance(doc, _cadSet!);
+                        AppendLog($"  Време: {timer.ElapsedText}");
+                    }
                     ranAny = true;
                 }
+                PerfTimer.LogMemory(_logger, "at end of Generate");
 
                 if (ranAny && Directory.Exists(_projectDir))
                 {
@@ -1165,6 +1204,7 @@ namespace PUP_AUTO.UI.Windows
                 var topo = new TopologyProcessor(_logger!);
 
                 List<ParcelData>? results = null;
+                using (PerfTimer.Measure(_logger, "RunMvpMathTest transaction (parcels, poles, topology)"))
                 using (doc.LockDocument())
                 using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                 {
@@ -1188,7 +1228,10 @@ namespace PUP_AUTO.UI.Windows
                     }
                 }
 
-                MvpMathTestExporter.ExportMathTest(results!, _projectDir);
+                using (PerfTimer.Measure(_logger, "MvpMathTestExporter.ExportMathTest"))
+                {
+                    MvpMathTestExporter.ExportMathTest(results!, _projectDir);
+                }
                 AppendLog($"  Записан {FileNames.MvpMathTestFile} в {_projectDir}");
             }
             catch (Exception ex)
@@ -1212,6 +1255,7 @@ namespace PUP_AUTO.UI.Windows
                 var topo = new TopologyProcessor(_logger!);
 
                 PoleStepsGeometry? geometry = null;
+                using (PerfTimer.Measure(_logger, "RunPoleStepsTable transaction (parcels, poles, topology)"))
                 using (doc.LockDocument())
                 using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                 {
@@ -1235,7 +1279,10 @@ namespace PUP_AUTO.UI.Windows
                 }
 
                 var table = PoleStepsTableBuilder.Build(geometry.Pieces);
-                PoleStepsExporter.Export(table, _projectDir);
+                using (PerfTimer.Measure(_logger, "PoleStepsExporter.Export"))
+                {
+                    PoleStepsExporter.Export(table, _projectDir);
+                }
                 AppendLog($"  Записан {FileNames.PoleStepsFile} в {_projectDir}");
             }
             catch (Exception ex)
@@ -1248,6 +1295,7 @@ namespace PUP_AUTO.UI.Windows
         /// <summary>The nomenclatures and the EKATTE register the .cad reports share; the warnings are logged by the caller.</summary>
         private void LoadReportReferenceData(out Nomenclatures nomenclatures, out EkatteRegister ekatte, List<string> warnings)
         {
+            using var timer = PerfTimer.Measure(_logger, "LoadReportReferenceData");
             string templateDir = TemplateDir;
             nomenclatures = Nomenclatures.Load(Path.Combine(templateDir, FileNames.NomenclaturesFolder), warnings.Add);
             ekatte = EkatteRegister.LoadWithDefaults(Path.Combine(templateDir, FileNames.EkatteRegisterFile), warnings.Add);
@@ -1260,7 +1308,11 @@ namespace PUP_AUTO.UI.Windows
         private MunicipalityGroupingResult GroupParcelsForReport(
             CadRegisterSet cadSet, IEnumerable<string> parcelIds, EkatteRegister ekatte, IReadOnlyDictionary<string, string>? lowestPoleByParcelId)
         {
-            MunicipalityGroupingResult grouping = MunicipalityGrouping.Group(parcelIds, cadSet, ekatte, lowestPoleByParcelId);
+            MunicipalityGroupingResult grouping;
+            using (PerfTimer.Measure(_logger, "MunicipalityGrouping.Group"))
+            {
+                grouping = MunicipalityGrouping.Group(parcelIds, cadSet, ekatte, lowestPoleByParcelId);
+            }
 
             if (grouping.IgnoredParcelIds.Count > 0)
             {
@@ -1308,6 +1360,7 @@ namespace PUP_AUTO.UI.Windows
                 MunicipalityGroupingResult grouping = GroupParcelsForReport(cadSet, drawn.Select(d => d.Key), ekatte, null);
 
                 var sheets = new List<(string SheetName, IReadOnlyList<CadControlReport> Sections)>();
+                using var buildTimer = PerfTimer.Measure(_logger, "RunCadControlReport builder loop");
                 var notFound = new List<string>();
                 var withoutRights = new List<string>();
                 foreach (MunicipalityGroup group in grouping.Groups)
@@ -1353,7 +1406,8 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
 
-                string path = CadControlReportExporter.Export(sheets, _projectDir);
+                string path;
+                using (PerfTimer.Measure(_logger, "CadControlReportExporter.Export")) path = CadControlReportExporter.Export(sheets, _projectDir);
                 AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
             }
             catch (Exception ex)
@@ -1395,6 +1449,7 @@ namespace PUP_AUTO.UI.Windows
             var topo = new TopologyProcessor(_logger!);
 
             RegisterGeometry? geometry = null;
+            using (PerfTimer.Measure(_logger, "BuildAffectedRegisters transaction (parcels, poles, topology)"))
             using (doc.LockDocument())
             using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
             {
@@ -1430,6 +1485,7 @@ namespace PUP_AUTO.UI.Windows
             MunicipalityGroupingResult grouping = GroupParcelsForReport(
                 cadSet, geometry.Parcels.Select(p => p.ParcelId), ekatte, MunicipalityGrouping.LowestPoleByParcel(geometry.Pieces));
 
+            using var buildTimer = PerfTimer.Measure(_logger, "BuildAffectedRegisters builder loop");
             foreach (MunicipalityGroup group in grouping.Groups)
             {
                 var reports = new List<AffectedRegister>();
@@ -1501,7 +1557,8 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
 
-                string path = AffectedParcelsRegisterExporter.Export(sheets, _projectDir);
+                string path;
+                using (PerfTimer.Measure(_logger, "AffectedParcelsRegisterExporter.Export")) path = AffectedParcelsRegisterExporter.Export(sheets, _projectDir);
                 AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
             }
             catch (Exception ex)
@@ -1527,6 +1584,7 @@ namespace PUP_AUTO.UI.Windows
                 if (run == null) return;
 
                 var sheets = new List<(string SheetName, IReadOnlyList<TerritoryBalance> Sections)>();
+                using var buildTimer = PerfTimer.Measure(_logger, "RunTerritoryBalance builder loop");
                 var municipalities = new List<(MunicipalityGroup Group, List<TerritoryBalance> Sections)>();
                 int notFoundCount = 0;
                 // One winning parcel per pole for the whole run, so a border pole is counted in one землище only
@@ -1575,7 +1633,8 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
 
-                string path = TerritoryBalanceExporter.Export(sheets, _projectDir);
+                string path;
+                using (PerfTimer.Measure(_logger, "TerritoryBalanceExporter.Export")) path = TerritoryBalanceExporter.Export(sheets, _projectDir);
                 AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
 
                 // Общ баланс за общината: the землища of each sheet combined, so it always equals the sum of the sections above
@@ -1596,7 +1655,8 @@ namespace PUP_AUTO.UI.Windows
                 }
                 if (totals.Count > 0)
                 {
-                    string totalsPath = TerritoryBalanceExporter.ExportMunicipalities(totals, _projectDir);
+                    string totalsPath;
+                using (PerfTimer.Measure(_logger, "TerritoryBalanceExporter.ExportMunicipalities")) totalsPath = TerritoryBalanceExporter.ExportMunicipalities(totals, _projectDir);
                     AppendLog($"  Записан {Path.GetFileName(totalsPath)} в {_projectDir}.");
                 }
             }
@@ -1623,6 +1683,7 @@ namespace PUP_AUTO.UI.Windows
 
                 PoleStepsGeometry? geometry = null;
                 var drawnAreaSqmById = new Dictionary<string, double>(StringComparer.Ordinal);
+                using (PerfTimer.Measure(_logger, "RunPoleStepsRegister transaction (parcels, poles, topology)"))
                 using (doc.LockDocument())
                 using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                 {
@@ -1666,6 +1727,7 @@ namespace PUP_AUTO.UI.Windows
                 var sheets = new List<(string SheetName, IReadOnlyList<PoleStepsRegister> Sections)>();
                 var notFound = new List<string>();
                 var withoutOwners = new List<string>();
+                using var buildTimer = PerfTimer.Measure(_logger, "RunPoleStepsRegister builder loop");
                 foreach (MunicipalityGroup group in grouping.Groups)
                 {
                     var reports = new List<PoleStepsRegister>();
@@ -1711,7 +1773,8 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
 
-                string path = PoleStepsRegisterExporter.Export(sheets, _projectDir);
+                string path;
+                using (PerfTimer.Measure(_logger, "PoleStepsRegisterExporter.Export")) path = PoleStepsRegisterExporter.Export(sheets, _projectDir);
                 AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
             }
             catch (Exception ex)
