@@ -239,6 +239,9 @@ namespace PUP_AUTO.Geometry
             var total = System.Diagnostics.Stopwatch.StartNew();
             BoundingBox?[] poleBoxes = polePolylines.Select(k => BoxOf(k.Value)).ToArray();
             BoundingBox? servitudeBox = BoxOf(servitudePline);
+            var servitudeTimes = new SubjectTimes();
+            int servitudeCalls = 0;
+            LogServitudeShape(_logger, servitudePline);
 
             foreach (var parcelKvp in parcelPolylines)
             {
@@ -253,7 +256,8 @@ namespace PUP_AUTO.Geometry
 
                 // 1. Gross Servitude Area
                 servitudeWatch.Start();
-                pData.ServitudeGrossAreaSqm = servitudeNear ? shifted.IntersectionArea(servitudePline) : 0.0;
+                if (servitudeNear) servitudeCalls++;
+                pData.ServitudeGrossAreaSqm = servitudeNear ? shifted.IntersectionArea(servitudePline, servitudeTimes) : 0.0;
                 servitudeWatch.Stop();
 
                 // 2. Pole Area & Intersecting Poles
@@ -296,6 +300,7 @@ namespace PUP_AUTO.Geometry
             }
             perf.Log(_logger, "RunMvpMathTest", parcelPolylines.Count, polePolylines.Count, total.ElapsedMilliseconds);
             _logger.LogPerf($"RunMvpMathTest servitude x parcel (gross): {servitudeWatch.ElapsedMilliseconds} ms");
+            servitudeTimes.Log(_logger, "RunMvpMathTest servitude x parcel (gross) split", servitudeCalls);
 
             return results;
         }
@@ -392,6 +397,9 @@ namespace PUP_AUTO.Geometry
             var total = System.Diagnostics.Stopwatch.StartNew();
             BoundingBox?[] poleBoxes = polePolylines.Select(k => BoxOf(k.Value)).ToArray();
             BoundingBox? servitudeBox = BoxOf(servitudePline);
+            var servitudeTimes = new SubjectTimes();
+            int servitudeCalls = 0;
+            LogServitudeShape(_logger, servitudePline);
             foreach (var parcelKvp in parcelPolylines)
             {
                 Polyline parcelPline = parcelKvp.Value;
@@ -421,8 +429,10 @@ namespace PUP_AUTO.Geometry
                 }
 
                 servitudeWatch.Start();
-                double servitudeArea = BoundingBox.MayOverlap(BoxOf(parcelPline), servitudeBox, BoxMargin)
-                    ? shifted.IntersectionArea(servitudePline)
+                bool servitudeNearParcel = BoundingBox.MayOverlap(BoxOf(parcelPline), servitudeBox, BoxMargin);
+                if (servitudeNearParcel) servitudeCalls++;
+                double servitudeArea = servitudeNearParcel
+                    ? shifted.IntersectionArea(servitudePline, servitudeTimes)
                     : 0.0;
                 servitudeWatch.Stop();
                 result.Parcels.Add(new RegisterParcelAreas
@@ -433,7 +443,8 @@ namespace PUP_AUTO.Geometry
                 });
             }
             perf.Log(_logger, "ComputeRegisterGeometry", parcelPolylines.Count, polePolylines.Count, total.ElapsedMilliseconds);
-            _logger.LogPerf($"ComputeRegisterGeometry servitude x parcel: {parcelPolylines.Count} calls, {servitudeWatch.ElapsedMilliseconds} ms");
+            _logger.LogPerf($"ComputeRegisterGeometry servitude x parcel: {parcelPolylines.Count} parcels, {servitudeWatch.ElapsedMilliseconds} ms");
+            servitudeTimes.Log(_logger, "ComputeRegisterGeometry servitude x parcel split", servitudeCalls);
 
             return result;
         }
@@ -519,6 +530,44 @@ namespace PUP_AUTO.Geometry
             }
         }
 
+        /// <summary>Stopwatch ticks spent in the three parts of one subject ∩ parcel call, summed over a loop ([PERF] only).</summary>
+        private sealed class SubjectTimes
+        {
+            public long ParcelRegion;   // the parcel's own region, when this call was its first use
+            public long CloneShift;
+            public long CreateRegion;
+            public long Boolean;
+
+            private static long Ms(long ticks) => ticks * 1000 / System.Diagnostics.Stopwatch.Frequency;
+
+            public void Log(Logger logger, string name, int calls)
+            {
+                logger.LogPerf($"{name}: {calls} calls, parcel region {Ms(ParcelRegion)} ms, clone+shift {Ms(CloneShift)} ms, region build {Ms(CreateRegion)} ms, boolean {Ms(Boolean)} ms");
+            }
+        }
+
+        /// <summary>One [PERF] line about the servitude: vertices, arc segments and extents (counts and metres only).</summary>
+        private static void LogServitudeShape(Logger logger, Polyline servitude)
+        {
+            try
+            {
+                int vertices = servitude.NumberOfVertices;
+                int segments = servitude.Closed ? vertices : vertices - 1;
+                int arcs = 0;
+                for (int i = 0; i < segments; i++)
+                {
+                    if (Math.Abs(servitude.GetBulgeAt(i)) > GeometryTolerances.BulgeEpsilon) arcs++;
+                }
+                Extents3d e = servitude.GeometricExtents;
+                logger.LogPerf($"Servitude shape: {vertices} vertices, {arcs} arc segments, " +
+                               $"extents {e.MaxPoint.X - e.MinPoint.X:F0} x {e.MaxPoint.Y - e.MinPoint.Y:F0} m");
+            }
+            catch (Exception ex)
+            {
+                logger.LogPerf($"Servitude shape: unavailable ({ex.GetType().Name})");
+            }
+        }
+
         /// <summary>
         /// One parcel for many intersections: the origin shift is computed and the parcel region built once, on first use, and
         /// every subject (pole footprint, servitude) is intersected with a clone of that region. Same shift rule, same operand
@@ -537,17 +586,26 @@ namespace PUP_AUTO.Geometry
                 _parcel = parcel;
             }
 
-            public double IntersectionArea(Polyline subject)
+            public double IntersectionArea(Polyline subject, SubjectTimes? times = null)
             {
                 if (subject == null) return 0.0;
-                if (!_built) Build();
+                if (!_built)
+                {
+                    long b0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    Build();
+                    if (times != null) times.ParcelRegion += System.Diagnostics.Stopwatch.GetTimestamp() - b0;
+                }
                 if (_region == null) return 0.0;
 
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 using (Polyline p2 = (Polyline)subject.Clone())
                 {
                     p2.TransformBy(Matrix3d.Displacement(_shift));
+                    long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                     using (Region? r2 = SafeCreateRegion(p2))
                     {
+                        long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        if (times != null) { times.CloneShift += t1 - t0; times.CreateRegion += t2 - t1; }
                         if (r2 == null) return 0.0;
 
                         Region work;
@@ -567,6 +625,10 @@ namespace PUP_AUTO.Geometry
                                 return work.Area > SliverTolerance ? work.Area : 0.0;
                             }
                             catch { return 0.0; }
+                            finally
+                            {
+                                if (times != null) times.Boolean += System.Diagnostics.Stopwatch.GetTimestamp() - t2;
+                            }
                         }
                     }
                 }
