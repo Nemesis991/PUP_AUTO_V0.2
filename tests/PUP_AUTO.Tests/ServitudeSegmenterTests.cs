@@ -219,5 +219,163 @@ namespace PUP_AUTO.Tests
 
             AssertOriginalsKept(pline, result);   // including the zero-length segment
         }
+
+        // --- Retraced ends ---
+
+        /// <summary>
+        /// <paramref name="forward"/> (last vertex = turnaround t) followed by m vertices running back over it: vertex t+k sits
+        /// on t-k (moved by <paramref name="noise"/>), and each segment back has the negated bulge of its mirror segment.
+        /// </summary>
+        private static List<PlineVertex> WithRetracedTail(IReadOnlyList<PlineVertex> forward, int m, double noise = 0)
+        {
+            int t = forward.Count - 1;
+            var result = forward.ToList();
+            result[t] = new PlineVertex(forward[t].X, forward[t].Y, -forward[t - 1].Bulge);
+            for (int k = 1; k <= m; k++)
+            {
+                double bulge = k < m ? -forward[t - k - 1].Bulge : 0;
+                double shift = k % 2 == 0 ? noise : -noise;
+                result.Add(new PlineVertex(forward[t - k].X + shift, forward[t - k].Y - shift, bulge));
+            }
+            return result;
+        }
+
+        /// <summary>The same open polyline drawn in the opposite direction.</summary>
+        private static List<PlineVertex> Reversed(IReadOnlyList<PlineVertex> v)
+        {
+            int n = v.Count;
+            var result = new List<PlineVertex>();
+            for (int i = 0; i < n; i++)
+            {
+                PlineVertex p = v[n - 1 - i];
+                result.Add(new PlineVertex(p.X, p.Y, i < n - 1 ? -v[n - 2 - i].Bulge : 0));
+            }
+            return result;
+        }
+
+        private static readonly List<PlineVertex> Abcd = new List<PlineVertex>
+        {
+            new PlineVertex(0, 0, 0.2), new PlineVertex(50, 10, 0), new PlineVertex(90, 60, -0.3), new PlineVertex(120, 140, 0)
+        };
+
+        [Fact]
+        public void RetracedTail_IsRemoved()
+        {
+            List<PlineVertex> line = WithRetracedTail(Abcd, 2);   // A B C D C' B'
+
+            var (vertices, atStart, atEnd) = ServitudeSegmenter.RemoveRetracedEnds(line, false);
+
+            Assert.Equal(Abcd, vertices);
+            Assert.Equal(0, atStart);
+            Assert.Equal(2, atEnd);
+        }
+
+        [Fact]
+        public void RetracedHead_IsRemoved()
+        {
+            List<PlineVertex> line = Reversed(WithRetracedTail(Abcd, 2));   // B' C' D C B A
+
+            var (vertices, atStart, atEnd) = ServitudeSegmenter.RemoveRetracedEnds(line, false);
+
+            Assert.Equal(Reversed(Abcd), vertices);
+            Assert.Equal(2, atStart);
+            Assert.Equal(0, atEnd);
+        }
+
+        [Fact]
+        public void FullRetraceBackToTheStart_LeavesTheOutwardPass()
+        {
+            List<PlineVertex> line = WithRetracedTail(Abcd, 3);   // A B C D C' B' A'
+
+            var (vertices, _, atEnd) = ServitudeSegmenter.RemoveRetracedEnds(line, false);
+
+            Assert.Equal(Abcd, vertices);
+            Assert.Equal(3, atEnd);
+        }
+
+        [Fact]
+        public void SamePointsBackOnADifferentArc_IsKept()
+        {
+            List<PlineVertex> line = WithRetracedTail(Abcd, 2);
+            line[3] = new PlineVertex(line[3].X, line[3].Y, -line[3].Bulge);   // D -> C' bulges the same way as C -> D
+
+            var (vertices, atStart, atEnd) = ServitudeSegmenter.RemoveRetracedEnds(line, false);
+
+            Assert.Equal(line, vertices);
+            Assert.Equal(0, atStart + atEnd);
+        }
+
+        [Fact]
+        public void ClosedPolyline_IsUnchanged()
+        {
+            List<PlineVertex> line = WithRetracedTail(Abcd, 2);
+
+            var (vertices, atStart, atEnd) = ServitudeSegmenter.RemoveRetracedEnds(line, true);
+
+            Assert.Equal(line, vertices);
+            Assert.Equal(0, atStart + atEnd);
+        }
+
+        [Fact]
+        public void SpurInTheMiddle_IsUnchanged()
+        {
+            // A B C D C' E F: out to D and back to C, then on to E
+            List<PlineVertex> line = WithRetracedTail(Abcd, 1);
+            line.Add(new PlineVertex(200, 60, 0.1));
+            line.Add(new PlineVertex(260, 0, 0));
+            line[line.Count - 3] = new PlineVertex(line[line.Count - 3].X, line[line.Count - 3].Y, 0);
+
+            var (vertices, atStart, atEnd) = ServitudeSegmenter.RemoveRetracedEnds(line, false);
+
+            Assert.Equal(line, vertices);
+            Assert.Equal(0, atStart + atEnd);
+        }
+
+        /// <summary>
+        /// Like vertices 530-561 of Simeon's servitude: 32 vertices running south along the right side from Y 4785715 to the
+        /// end cap at (362982.08, 4780333.12), with straight segments and arcs of both directions.
+        /// </summary>
+        private static List<PlineVertex> RightSide()
+        {
+            var v = new List<PlineVertex>();
+            double[] bulges = { 0.02, 0, -0.015, 0.004, 0, 0.03, -0.01 };
+            for (int i = 0; i < 32; i++)
+            {
+                double y = 4785715.0 - i * (4785715.0 - 4780333.12) / 31;
+                double x = i == 31 ? 362982.08 : 362982.08 + 15 * Math.Sin(i * 0.7);
+                v.Add(new PlineVertex(x, y, i == 31 ? 0 : bulges[i % bulges.Length]));
+            }
+            return v;
+        }
+
+        [Fact]
+        public void SimeonsRightSide_LosesItsRetracedTailOf31Vertices()
+        {
+            List<PlineVertex> side = RightSide();
+            List<PlineVertex> line = WithRetracedTail(side, 31, noise: 0.00004);   // 0.04 mm like the drawing; last = first
+
+            var (vertices, atStart, atEnd) = ServitudeSegmenter.RemoveRetracedEnds(line, false);
+
+            Assert.Equal(63, line.Count);
+            Assert.Equal(side, vertices);
+            Assert.Equal(0, atStart);
+            Assert.Equal(31, atEnd);
+        }
+
+        [Fact]
+        public void AfterTheCut_EachArcGetsOneSetOfVertices()
+        {
+            List<PlineVertex> side = RightSide();
+            List<PlineVertex> line = WithRetracedTail(side, 31, noise: 0.00004);
+
+            List<PlineVertex> raw = Inserted(ServitudeSegmenter.Segment(line, false, D));
+            List<PlineVertex> cut = Inserted(ServitudeSegmenter.Segment(ServitudeSegmenter.RemoveRetracedEnds(line, false).Vertices, false, D));
+
+            Assert.Equal(Inserted(ServitudeSegmenter.Segment(side, false, D)).Count, cut.Count);
+            Assert.True(raw.Count > cut.Count);   // as drawn, the right side was segmented twice
+            for (int i = 0; i < cut.Count; i++)
+                for (int j = i + 1; j < cut.Count; j++)
+                    Assert.True(Math.Abs(cut[i].X - cut[j].X) + Math.Abs(cut[i].Y - cut[j].Y) > 1, $"vertices {i} and {j} coincide");
+        }
     }
 }

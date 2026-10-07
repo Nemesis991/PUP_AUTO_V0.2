@@ -1,3 +1,4 @@
+using System.Globalization;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -103,24 +104,38 @@ namespace PUP_AUTO.UI
                         source.Add(new PlineVertex(pt.X, pt.Y, sourcePline.GetBulgeAt(i)));
                     }
 
-                    List<PlineVertex> segmented = ServitudeSegmenter.Segment(source, sourcePline.Closed, dist);
-
-                    Polyline newPline = new Polyline();
-                    newPline.Normal = sourcePline.Normal;
-                    newPline.Elevation = sourcePline.Elevation;
-                    for (int i = 0; i < segmented.Count; i++)
+                    // A line that runs back over itself at its start or end would get two different sets of vertices on
+                    // the same arcs; keep one pass only.
+                    var (cleaned, removedAtStart, removedAtEnd) = ServitudeSegmenter.RemoveRetracedEnds(source, sourcePline.Closed);
+                    if (removedAtStart + removedAtEnd > 0)
                     {
-                        newPline.AddVertexAt(i, new Point2d(segmented[i].X, segmented[i].Y), segmented[i].Bulge, 0, 0);
+                        ed.WriteMessage($"\nПремахнат е дублиран участък: {removedAtStart + removedAtEnd} възела (линията минава два пъти по едно и също място).");
                     }
-                    newPline.Closed = sourcePline.Closed;
+
+                    if (!sourcePline.Closed && cleaned.Count > 1)
+                    {
+                        PlineVertex first = cleaned[0], last = cleaned[cleaned.Count - 1];
+                        double gap = Math.Sqrt((last.X - first.X) * (last.X - first.X) + (last.Y - first.Y) * (last.Y - first.Y));
+                        if (gap > GeometryTolerances.ClosureDistanceM && gap < OpenServitudeGapNoteM)
+                        {
+                            ed.WriteMessage($"\n[ВНИМАНИЕ] Сервитутът не е затворен: разстояние {gap.ToString("F2", CultureInfo.InvariantCulture)} м между началото и края.");
+                        }
+                    }
+
+                    List<PlineVertex> segmented = ServitudeSegmenter.Segment(cleaned, sourcePline.Closed, dist);
+
+                    Polyline newPline = BuildPolyline(sourcePline, segmented);
                     newPline.Layer = sourcePline.Layer;
                     newPline.Color = sourcePline.Color;
                     newPline.Linetype = sourcePline.Linetype;
                     newPline.ConstantWidth = GeometryTolerances.SegmentedServitudeWidth;
 
-                    foreach (string warning in CheckSegmentedServitude(sourcePline, newPline, segmented, source.Count))
+                    using (Polyline cleanedPline = BuildPolyline(sourcePline, cleaned))
                     {
-                        ed.WriteMessage($"\n[ПРЕДУПРЕЖДЕНИЕ] PUP_SERV: {warning}");
+                        foreach (string warning in CheckSegmentedServitude(cleanedPline, newPline, segmented, cleaned.Count))
+                        {
+                            ed.WriteMessage($"\n[ПРЕДУПРЕЖДЕНИЕ] PUP_SERV: {warning}");
+                        }
                     }
 
                     DrawingWriter.EnsureLayer(db, tr, PluginLayers.SegmentedServitude, 3);
@@ -139,9 +154,26 @@ namespace PUP_AUTO.UI
             }
         }
 
+        /// <summary>PUP_SERV notes an open servitude whose start and end are closer than this but not touching.</summary>
+        private const double OpenServitudeGapNoteM = 2.0;
+
+        /// <summary>A new, not database-resident polyline in the OCS of <paramref name="template"/> (Normal, Elevation, Closed).</summary>
+        private static Polyline BuildPolyline(Polyline template, IReadOnlyList<PlineVertex> vertices)
+        {
+            var pline = new Polyline();
+            pline.Normal = template.Normal;
+            pline.Elevation = template.Elevation;
+            for (int i = 0; i < vertices.Count; i++)
+            {
+                pline.AddVertexAt(i, new Point2d(vertices[i].X, vertices[i].Y), vertices[i].Bulge, 0, 0);
+            }
+            pline.Closed = template.Closed;
+            return pline;
+        }
+
         /// <summary>
-        /// PUP_SERV self-check: same length as the source, every source vertex kept in order, and no vertex placed before
-        /// the previous one along the source. Returns the problems found (at most <c>MaxWarnings</c>).
+        /// PUP_SERV self-check against the cleaned source (retraced ends removed): same length, every cleaned vertex kept in
+        /// order, and no vertex placed before the previous one along it. Returns the problems found (at most <c>MaxWarnings</c>).
         /// </summary>
         private static List<string> CheckSegmentedServitude(Polyline source, Polyline result, IReadOnlyList<PlineVertex> segmented, int sourceCount)
         {

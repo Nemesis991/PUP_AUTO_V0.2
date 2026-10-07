@@ -30,6 +30,79 @@ namespace PUP_AUTO.Geometry
         /// <summary>An inserted vertex closer than this to the segment's end vertex is not added.</summary>
         private const double EndVertexToleranceM = 1e-6;
 
+        /// <summary>A retraced segment's bulge must be the negated bulge of its mirror segment within this.</summary>
+        private const double RetraceBulgeTolerance = 1e-6;
+
+        /// <summary>
+        /// Removes a retraced tail (and then head) of an open polyline: a run at the end that goes back over the previous
+        /// vertices exactly (same points within <see cref="GeometryTolerances.RetraceToleranceM"/>, negated bulges), or the
+        /// mirror case at the start. Only exact duplicates go, so nothing drawn once is lost. A retrace in the middle of the
+        /// line and a closed polyline are left as they are.
+        /// </summary>
+        public static (List<PlineVertex> Vertices, int RemovedAtStart, int RemovedAtEnd) RemoveRetracedEnds(IReadOnlyList<PlineVertex> vertices, bool closed)
+        {
+            var list = vertices.ToList();
+            if (closed || list.Count < 3) return (list, 0, 0);
+
+            int removedAtEnd = RetracedTail(list);
+            if (removedAtEnd > 0)
+            {
+                list.RemoveRange(list.Count - removedAtEnd, removedAtEnd);
+                PlineVertex last = list[list.Count - 1];
+                list[list.Count - 1] = new PlineVertex(last.X, last.Y, 0);   // no segment starts at the end of an open polyline
+            }
+
+            int removedAtStart = RetracedHead(list);
+            if (removedAtStart > 0) list.RemoveRange(0, removedAtStart);
+
+            return (list, removedAtStart, removedAtEnd);
+        }
+
+        /// <summary>The largest m such that vertex t+k mirrors t-k for k = 1..m, with t = n-1-m the turnaround (0 if none).</summary>
+        private static int RetracedTail(IReadOnlyList<PlineVertex> v)
+        {
+            int n = v.Count;
+            for (int m = (n - 1) / 2; m >= 1; m--)
+            {
+                int t = n - 1 - m;
+                bool retraced = true;
+                for (int k = 1; k <= m && retraced; k++)
+                    retraced = Mirrors(v[t + k], v[t - k], v[t + k - 1].Bulge, v[t - k].Bulge);
+                if (retraced) return m;
+            }
+            return 0;
+        }
+
+        /// <summary>The largest m such that vertex m-k mirrors m+k for k = 1..m, with m the turnaround (0 if none).</summary>
+        private static int RetracedHead(IReadOnlyList<PlineVertex> v)
+        {
+            int n = v.Count;
+            for (int m = (n - 1) / 2; m >= 1; m--)
+            {
+                bool retraced = true;
+                for (int k = 1; k <= m && retraced; k++)
+                    retraced = Mirrors(v[m - k], v[m + k], v[m - k].Bulge, v[m + k - 1].Bulge);
+                if (retraced) return m;
+            }
+            return 0;
+        }
+
+        private static bool Mirrors(PlineVertex a, PlineVertex b, double bulgeA, double bulgeB)
+        {
+            double dx = a.X - b.X, dy = a.Y - b.Y;
+            return Math.Sqrt(dx * dx + dy * dy) <= GeometryTolerances.RetraceToleranceM
+                && Math.Abs(bulgeA + bulgeB) < RetraceBulgeTolerance;
+        }
+
+        /// <summary>The total length of a polyline given as vertices (arc length for arcs).</summary>
+        public static double Length(IReadOnlyList<PlineVertex> vertices, bool closed)
+        {
+            double sum = 0;
+            int segments = closed ? vertices.Count : vertices.Count - 1;
+            for (int i = 0; i < segments; i++) sum += SegmentLength(vertices[i], vertices[(i + 1) % vertices.Count]);
+            return sum;
+        }
+
         /// <summary>
         /// The segmented vertex list. Straight segments are copied as they are. An arc of length L gets one vertex at L/2
         /// when L &lt;= <paramref name="distance"/>, otherwise vertices at D, 2D, ... from its start, dropping the last one
