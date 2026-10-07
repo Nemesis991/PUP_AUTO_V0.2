@@ -28,6 +28,8 @@ PUP_Report.xls
 scratch.ps1
 *.geojson
 *.dwg
+# Block definitions the plugin ships (no project data)
+!Resources/Blocks/*.dwg
 
 # AGKK .cad registers contain real owner names and ЕГН/БУЛСТАТ. Never commit them.
 # (_TestFiles/TemplateC.cad is an empty schema template with no personal data.)

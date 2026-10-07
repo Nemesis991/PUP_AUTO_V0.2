@@ -34,6 +34,11 @@
     <EmbeddedResource Include="_Templates\Номенклатури\*.csv" LogicalName="PUP_AUTO.Defaults.%(Filename)%(Extension)" />
   </ItemGroup>
 
+  <!-- Block definitions imported into a drawing that lacks them (GBP032 corner block), next to the plugin DLL -->
+  <ItemGroup>
+    <None Include="Resources\Blocks\*.dwg" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- WPF assemblies for the GUI (required on .NET Framework 4.8) -->
   <ItemGroup>
     <Reference Include="PresentationCore" />

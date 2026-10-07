@@ -16,8 +16,27 @@ namespace PUP_AUTO.Core
         public const string TerritoryBalanceFile = "Баланси_на_територията.xlsx";
         public const string MunicipalityBalanceFile = "Общ_баланс_за_общината.xlsx";
         public const string RecapitulationFile = "Обща_рекапитулация.xlsx";
+        public const string CoordinateRegisterFile = "Координатен_регистър_на_стъпките.xlsx";
         public const string NomenclaturesFolder = "Номенклатури";
         public const string EkatteRegisterFile = "EKATTE.csv";
+    }
+
+    /// <summary>The GBP032 corner blocks the coordinate register draws at every footprint corner.</summary>
+    public static class PoleCornerBlockNames
+    {
+        public const string BlockName = "GBP032";
+        public const string Layer = "S-Trass";
+        public const short LayerColor = 7;
+
+        /// <summary>Attribute with the corner label ("20-1").</summary>
+        public const string NumberTag = "NOMER";
+
+        /// <summary>Block file next to the plugin DLL, imported when the drawing has no GBP032.</summary>
+        public const string BlockFile = @"Resources\Blocks\GBP032.dwg";
+
+        /// <summary>XData on every insert the plugin creates, so a re-run can replace exactly those.</summary>
+        public const string XDataApp = "PUP_AUTO";
+        public const string XDataValue = "POLE_CORNER";
     }
 
     /// <summary>Parcel XData: registered application name and the ID sentinels returned when it cannot be read.</summary>

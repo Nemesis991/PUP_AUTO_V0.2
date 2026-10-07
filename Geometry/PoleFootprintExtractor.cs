@@ -16,6 +16,12 @@ namespace PUP_AUTO.Geometry
         public Point3d LabelPosition { get; set; }
         public double LabelRotation { get; set; }
         public string ErrorMessage { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The footprint corners in P-tag order (P1, P2, ...), as the block gives them. <see cref="FootprintPolyline"/> holds the
+        /// same points sorted counter-clockwise around their centre instead. Null when extraction failed.
+        /// </summary>
+        public List<Point2d>? CornerPoints { get; set; }
     }
 
     /// <summary>
@@ -171,6 +177,8 @@ namespace PUP_AUTO.Geometry
                     result.ErrorMessage = $"Failed to parse 4 valid coordinate points for block {blockName} (Pole: {poleNumber}).";
                     return result;
                 }
+
+                result.CornerPoints = new List<Point2d>(points);
 
                 // 6. Sort vertices counter-clockwise around centroid
                 double cx = points.Average(p => p.X);

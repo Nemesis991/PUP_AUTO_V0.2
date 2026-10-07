@@ -61,6 +61,7 @@ namespace PUP_AUTO.UI.Windows
         private ReportOption _optCadControl = null!;
         private ReportOption _optAffectedRegister = null!;
         private ReportOption _optPoleStepsRegister = null!;
+        private ReportOption _optCoordinateRegister = null!;
         private ReportOption _optTerritoryBalance = null!;
         private readonly List<ReportOption> _reports = new List<ReportOption>();
         private TextBox _txtRegisterProject = null!;
@@ -276,6 +277,10 @@ namespace PUP_AUTO.UI.Windows
 
             _optPoleStepsRegister = AddReport(list, "Регистър на стъпките на стълбовете",
                 "Стъпките по стълбове и имоти, със собствениците от .cad.",
+                Requirement.Cad, Requirement.Poles, Requirement.Parcels);
+
+            _optCoordinateRegister = AddReport(list, "Координатен регистър на стъпките",
+                "Координатите на центъра и чупките на всяка стъпка, по землища.",
                 Requirement.Cad, Requirement.Poles, Requirement.Parcels);
 
             _optTerritoryBalance = AddReport(list, "Баланси на територията и общата рекапитулация",
@@ -1191,6 +1196,7 @@ namespace PUP_AUTO.UI.Windows
                         else if (option == _optCadControl) RunCadControlReport(doc, _cadSet!);
                         else if (option == _optAffectedRegister) RunAffectedParcelsRegister(doc, _cadSet!);
                         else if (option == _optPoleStepsRegister) RunPoleStepsRegister(doc, _cadSet!);
+                        else if (option == _optCoordinateRegister) RunCoordinateRegister(doc, _cadSet!);
                         else if (option == _optTerritoryBalance) RunTerritoryBalance(doc, _cadSet!);
                         AppendLog($"  Време: {timer.ElapsedText}");
                     }
@@ -1388,6 +1394,12 @@ namespace PUP_AUTO.UI.Windows
             /// <summary>The "pole not entirely inside the parcels" warnings were already logged for this click.</summary>
             public bool UncoveredLogged;
 
+            /// <summary>Footprint corners in P-tag order and the label rotation, for the coordinate register.</summary>
+            public List<PoleCorners> PoleCorners = new List<PoleCorners>();
+
+            /// <summary>Picked poles whose footprint could not be extracted in this click.</summary>
+            public List<string> PolesWithoutFootprint = new List<string>();
+
             public PoleStepsGeometry AsPoleSteps()
             {
                 var geometry = new PoleStepsGeometry();
@@ -1418,6 +1430,21 @@ namespace PUP_AUTO.UI.Windows
                 var entries = ExtractPoles(tr);
                 try
                 {
+                    foreach (PoleFootprintEntry entry in entries)
+                    {
+                        if (entry.Result.CornerPoints == null)
+                        {
+                            shared.PolesWithoutFootprint.Add(entry.PoleId);
+                            continue;
+                        }
+                        shared.PoleCorners.Add(new PoleCorners
+                        {
+                            PoleNumber = entry.PoleId,
+                            Corners = entry.Result.CornerPoints.Select(p => (p.X, p.Y)).ToList(),
+                            LabelRotation = string.IsNullOrEmpty(entry.Result.PoleNumber) ? null : entry.Result.LabelRotation
+                        });
+                    }
+
                     if (servitude != null)
                     {
                         RegisterGeometry registerGeometry = topo.ComputeRegisterGeometry(servitude, PoleFootprints(entries), parcels);
@@ -1994,6 +2021,135 @@ namespace PUP_AUTO.UI.Windows
             {
                 AppendLog($"ГРЕШКА при регистъра на стъпките: {ex.Message}");
                 _logger?.LogError($"Pole steps register failed: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// Builds Координатен_регистър_на_стъпките.xlsx (official 07) from this click's footprints: one sheet per municipality,
+        /// one section per землище, a pole listed once, in the землище of the parcel with its largest piece. Then draws a GBP032
+        /// block at every corner of the listed poles (replacing the plugin's own blocks of a previous run). No owner data.
+        /// </summary>
+        private void RunCoordinateRegister(Document doc, CadRegisterSet cadSet)
+        {
+            try
+            {
+                AppendLog("── СТАРТИРАНЕ НА КООРДИНАТЕН РЕГИСТЪР НА СТЪПКИТЕ ──");
+                EnsureServices();
+                ClickGeometry shared = GetClickGeometry(doc);
+
+                foreach (string pole in shared.PolesWithoutFootprint)
+                {
+                    LogWarning($"Стълб {PoleLabels.StripPrefix(pole)}: стъпката не е извлечена — стълбът е пропуснат в координатния регистър.");
+                }
+                if (shared.Pieces.Count == 0)
+                {
+                    AppendLog("Няма стъпки на стълбове в избраните имоти — координатният регистър не е създаден.");
+                    return;
+                }
+
+                LoadReportReferenceData(out _, out EkatteRegister ekatte);
+                MunicipalityGroupingResult grouping = GroupParcelsForReport(
+                    cadSet, shared.DrawnAreaSqmById.Keys, ekatte, MunicipalityGrouping.LowestPoleByParcel(shared.Pieces));
+                Dictionary<string, string> winners = TerritoryBalanceBuilder.WinningParcels(shared.Pieces);
+
+                string project = string.IsNullOrWhiteSpace(_txtRegisterProject.Text) ? DefaultRegisterProject : _txtRegisterProject.Text;
+                var sheets = new List<(string SheetName, IReadOnlyList<CoordinateRegister> Sections)>();
+                var listed = new List<CoordinateRegisterBlock>();
+                int reversed = 0;
+                using (PerfTimer.Measure(_logger, "RunCoordinateRegister builder loop"))
+                {
+                    foreach (MunicipalityGroup group in grouping.Groups)
+                    {
+                        var reports = new List<CoordinateRegister>();
+                        foreach (SettlementSection section in group.Sections)
+                        {
+                            CoordinateRegister report = CoordinateRegisterBuilder.Build(
+                                shared.PoleCorners, winners, section.ParcelIds, project, section.EkatteTitle);
+                            if (report.Blocks.Count == 0) continue;
+
+                            reports.Add(report);
+                            listed.AddRange(report.Blocks);
+                            reversed += report.Reversed.Count;
+                        }
+
+                        if (reports.Count == 0) continue;
+                        sheets.Add((group.SheetName, reports));
+                        AppendLog($"  {group.SheetName}: {reports.Count} землища, {reports.Sum(r => r.Blocks.Count)} стълба.");
+                    }
+                }
+
+                foreach (CoordinateRegisterBlock block in listed.Where(b => b.Corners.Count != 4))
+                {
+                    LogWarning($"Стълб {block.PoleNumber}: стъпката има {block.Corners.Count} чупки вместо 4 — изписани са всички.");
+                }
+                if (reversed > 0)
+                {
+                    AppendLog($"  {reversed} стъпки бяха обратно на часовниковата стрелка — обърнати, с точка 1 първа.");
+                }
+                var listedNumbers = new HashSet<string>(listed.Select(b => b.PoleNumber), StringComparer.Ordinal);
+                List<string> unlisted = shared.PoleCorners.Select(p => PoleLabels.StripPrefix(p.PoleNumber))
+                    .Where(n => !listedNumbers.Contains(n)).Distinct().ToList();
+                if (unlisted.Count > 0)
+                {
+                    LogWarning($"{unlisted.Count} стълба не са в нито един избран имот с ЕКАТТЕ и не са в регистъра: " + JoinLimited(unlisted, 30));
+                }
+
+                if (sheets.Count == 0)
+                {
+                    AppendLog("Няма стълбове в избраните имоти — координатният регистър не е създаден.");
+                    return;
+                }
+
+                string path;
+                using (PerfTimer.Measure(_logger, "CoordinateRegisterExporter.Export")) path = CoordinateRegisterExporter.Export(sheets, _projectDir);
+                AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
+
+                DrawPoleCornerBlocks(doc, listed, shared.PoleCorners);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ГРЕШКА при координатния регистър: {ex.Message}");
+                _logger?.LogError($"Coordinate register failed: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        /// <summary>A GBP032 block at every corner of the listed poles; a failure here never loses the xlsx already written.</summary>
+        private void DrawPoleCornerBlocks(Document doc, List<CoordinateRegisterBlock> listed, List<PoleCorners> poleCorners)
+        {
+            try
+            {
+                var rotations = new Dictionary<string, double?>(StringComparer.Ordinal);
+                foreach (PoleCorners pole in poleCorners) rotations[PoleLabels.StripPrefix(pole.PoleNumber)] = pole.LabelRotation;
+
+                var sets = new List<PoleCornerSet>();
+                foreach (CoordinateRegisterBlock block in listed)
+                {
+                    var corners = block.Corners.Select(c => (c.East, c.North)).ToList();
+                    rotations.TryGetValue(block.PoleNumber, out double? rotation);
+                    List<CornerLabelPlacement> placements = PoleCornerPlacement.Place(block.PoleNumber, corners, rotation, out double theta);
+                    sets.Add(new PoleCornerSet { PoleNumber = block.PoleNumber, Theta = theta, Corners = placements });
+                }
+
+                string pluginDir = Path.GetDirectoryName(typeof(MainWindow).Assembly.Location) ?? string.Empty;
+                PoleCornerDrawResult result;
+                using (PerfTimer.Measure(_logger, "PoleCornerBlockWriter.Draw")) result = PoleCornerBlockWriter.Draw(doc, sets, pluginDir);
+
+                if (result.Warning != null)
+                {
+                    LogWarning(result.Warning);
+                    return;
+                }
+                FlushGraphics(doc);
+                AppendLog($"  Ъглови точки: {result.Drawn} блока {PoleCornerBlockNames.BlockName} начертани ({result.SkippedExisting} вече съществуващи пропуснати).");
+                if (result.Replaced > 0)
+                {
+                    _logger?.LogSuccess($"Pole corner blocks: {result.Replaced} plugin inserts of a previous run replaced.");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogWarning($"Ъгловите точки не са начертани: {ex.Message}");
+                _logger?.LogError($"Pole corner blocks failed: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
