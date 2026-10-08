@@ -31,6 +31,11 @@ namespace PUP_AUTO.Geometry
         /// <summary>How many of the corner values were read exactly from a field.</summary>
         public int FieldValues { get; set; }
 
+        /// <summary>True when the LUPREC fallback had to re-evaluate this block's P-tag fields.</summary>
+
+        public bool FallbackUsed { get; set; }
+
+
         /// <summary>The field code of the first P-tag field of the block (diagnostics), else null.</summary>
         public string? FieldCodeSample { get; set; }
     }
@@ -43,6 +48,9 @@ namespace PUP_AUTO.Geometry
     {
         /// <summary>Key the block was supplied with (its handle or attribute-derived ID).</summary>
         public string Key { get; set; } = string.Empty;
+
+        /// <summary>The pole block the entry was extracted from.</summary>
+        public ObjectId BlockId { get; set; }
 
         public PoleFootprintResult Result { get; set; } = new PoleFootprintResult();
 
@@ -70,9 +78,13 @@ namespace PUP_AUTO.Geometry
         {
             foreach (var kvp in poleBlocks)
             {
+                // The GBP032 corner blocks carry a NOMER tag but are never poles: skipped silently on every path
+                if (IsCornerBlock(kvp.Value, tr)) continue;
+
                 var entry = new PoleFootprintEntry
                 {
                     Key = kvp.Key,
+                    BlockId = kvp.Value.ObjectId,
                     Result = ExtractFootprint(kvp.Value, tr)
                 };
                 entry.PoleId = string.IsNullOrEmpty(entry.Result.PoleNumber) ? kvp.Key : entry.Result.PoleNumber;
@@ -124,10 +136,13 @@ namespace PUP_AUTO.Geometry
                         else if (tag.StartsWith("P"))
                         {
                             // A field gives the exact value; the text is rounded to the drawing's UNITS precision
-                            pTags[tag] = PoleAttributeValues.Read(attRef, tr, stats);
+                            pTags[tag] = PoleAttributeValues.Read(tag, attRef, tr, stats);
                         }
                     }
                 }
+                // Fields whose raw value could not be read: re-evaluated once with LUPREC 8 (restored afterwards)
+                foreach (var exact in PoleAttributeValues.ReadAtFullPrecision(blockRef.Database, tr, stats)) pTags[exact.Key] = exact.Value;
+                result.FallbackUsed = stats.FallbackUsed;
                 result.FieldCodeSample = stats.FieldCodeSample;
 
                 result.PoleNumber = poleNumber;

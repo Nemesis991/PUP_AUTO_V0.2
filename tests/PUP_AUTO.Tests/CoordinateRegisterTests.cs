@@ -206,6 +206,33 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
+        public void AnOutputFileOpenInAnotherProgram_GivesOneReadableMessage()
+        {
+            string path = Path.Combine(_dir, "Координатен_регистър_на_стъпките.xlsx");
+            File.WriteAllBytes(path, new byte[] { 0 });
+            var sheets = new List<(string SheetName, IReadOnlyList<CoordinateRegister> Sections)>
+            {
+                ("общ. Мездра", new[] { CoordinateFixture.Build78135() })
+            };
+
+            using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))   // like Excel holding it
+            {
+                var ex = Assert.Throws<PUP_AUTO.Core.FileInUseException>(() => CoordinateRegisterExporter.Export(sheets, _dir));
+                Assert.Equal("Файлът Координатен_регистър_на_стъпките.xlsx е отворен в друга програма — затворете го и пуснете отново.", ex.Message);
+            }
+        }
+
+        [Theory]
+        [InlineData(unchecked((int)0x80070020), true)]    // sharing violation
+        [InlineData(unchecked((int)0x80070021), true)]    // lock violation
+        [InlineData(unchecked((int)0x80070002), false)]   // file not found
+        [InlineData(unchecked((int)0x80070005), false)]   // access denied
+        public void OnlySharingAndLockViolations_CountAsFileInUse(int hresult, bool expected)
+        {
+            Assert.Equal(expected, PUP_AUTO.Core.FileInUseException.IsSharingViolation(hresult));
+        }
+
+        [Fact]
         public void OneSheetPerMunicipality_PortraitAndOnePageWide()
         {
             Book book = Export();

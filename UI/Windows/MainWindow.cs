@@ -614,7 +614,7 @@ namespace PUP_AUTO.UI.Windows
                 catch (Exception ex)
                 {
                     AppendLog($"ГРЕШКА при четене на папката: {ex.Message}");
-                    _logger?.LogError($"Reading the .cad folder failed: {ex.Message}\n{ex.StackTrace}");
+                    LogFailure("Reading the .cad folder", ex);
                 }
             }
         }
@@ -666,7 +666,7 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 AppendLog($"ГРЕШКА при зареждане на .cad: {ex.Message}");
-                _logger?.LogError($"Loading .cad failed: {ex.Message}\n{ex.StackTrace}");
+                LogFailure("Loading .cad", ex);
             }
             UpdateReadiness();
         }
@@ -946,9 +946,6 @@ namespace PUP_AUTO.UI.Windows
                         var poleBlocks = _selection!.SelectMultipleBlockReferences(
                             tr, "\nSelect Pole blocks: ");
 
-                        // The GBP032 corner blocks the coordinate register draws carry a NOMER tag too: not poles, skipped silently
-                        poleBlocks = poleBlocks.Where(b => !PoleFootprintExtractor.IsCornerBlock(b.Value, tr)).ToList();
-
                         // Extract now to validate the blocks; the footprints are in-memory only
                         // and are disposed here (each handler re-extracts what it needs).
                         var entries = new List<PoleFootprintEntry>();
@@ -957,7 +954,6 @@ namespace PUP_AUTO.UI.Windows
                         PerfTimer extractTimer = PerfTimer.Measure(_logger, "BtnPickPoles extract + duplicate check");
                         try
                         {
-                            int index = 0;
                             foreach (var entry in PoleFootprintExtractor.ExtractAll(poleBlocks, tr))
                             {
                                 entries.Add(entry);
@@ -967,7 +963,7 @@ namespace PUP_AUTO.UI.Windows
                                     // The same pole drawn twice (same number, same footprint) is taken once
                                     Extents3d ext = footprint.GeometricExtents;
                                     double[] box = { ext.MinPoint.X, ext.MinPoint.Y, ext.MaxPoint.X, ext.MaxPoint.Y };
-                                    string handle = poleBlocks[index].Value.Handle.ToString();
+                                    string handle = entry.BlockId.Handle.ToString();
                                     var twin = seenFootprints.FirstOrDefault(s => s.PoleId == entry.PoleId &&
                                         DuplicatePolylines.SameFootprint(s.Area, s.Box, footprint.Area, box));
                                     if (twin.PoleId != null)
@@ -979,22 +975,20 @@ namespace PUP_AUTO.UI.Windows
                                             duplicatePoles.Add(known);
                                         }
                                         known.DroppedHandles.Add(handle);
-                                        index++;
                                         continue;
                                     }
                                     seenFootprints.Add((entry.PoleId, footprint.Area, box, handle));
 
                                     picks.Add(new PolePick
                                     {
-                                        BlockId = poleBlocks[index].Value.ObjectId,
-                                        Key = poleBlocks[index].Key
+                                        BlockId = entry.BlockId,
+                                        Key = entry.Key
                                     });
                                 }
                                 else
                                 {
                                     AppendLog($"ПРЕДУПРЕЖДЕНИЕ: {entry.Result.ErrorMessage}");
                                 }
-                                index++;
                             }
                         }
                         finally
@@ -1211,7 +1205,7 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 AppendLog($"\nГРЕШКА: {ex.Message}\n{ex.StackTrace}");
-                _logger?.LogError($"Generate (GUI) failed: {ex.Message}\n{ex.StackTrace}");
+                LogFailure("Generate (GUI)", ex);
 
                 Document doc = Application.DocumentManager.MdiActiveDocument;
                 if (doc != null)
@@ -1288,7 +1282,7 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 AppendLog($"ГРЕШКА при MVP математическия тест: {ex.Message}");
-                _logger?.LogError($"MVP math test failed: {ex.Message}\n{ex.StackTrace}");
+                LogFailure("MVP math test", ex);
             }
         }
 
@@ -1325,7 +1319,7 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 AppendLog($"ГРЕШКА при таблицата със стъпки: {ex.Message}");
-                _logger?.LogError($"Pole steps table failed: {ex.Message}\n{ex.StackTrace}");
+                LogFailure("Pole steps table", ex);
             }
         }
 
@@ -1423,6 +1417,7 @@ namespace PUP_AUTO.UI.Windows
             var shared = new ClickGeometry();
             var roundedPoles = new List<string>();
             int polesFromFields = 0;
+            int polesWithFallback = 0;
             string? fieldCodeSample = null;
 
             using (PerfTimer.Measure(_logger, "ClickGeometry transaction (parcels, poles, topology)"))
@@ -1432,6 +1427,7 @@ namespace PUP_AUTO.UI.Windows
                 // The servitude region (~7 s) is only needed by the reports that work on the servitude areas; without it the
                 // poles are intersected with the parcels alone
                 Polyline? servitude = _clickNeedsServitude ? OpenPolyline(tr, _servitudeId) : null;
+                LogPoleFieldDiagnostic(tr);
                 var parcels = OpenParcels(tr);
                 var entries = ExtractPoles(tr);
                 try
@@ -1446,6 +1442,7 @@ namespace PUP_AUTO.UI.Windows
                         if (entry.Result.RoundedByUnits) roundedPoles.Add(PoleLabels.StripPrefix(entry.PoleId));
                         if (entry.Result.FieldValues > 0) polesFromFields++;
                         fieldCodeSample ??= entry.Result.FieldCodeSample;
+                        if (entry.Result.FallbackUsed) polesWithFallback++;
 
                         var corners = entry.Result.CornerPoints.Select(p => (p.X, p.Y)).ToList();
                         Polyline footprint = entry.Result.FootprintPolyline!;
@@ -1492,7 +1489,7 @@ namespace PUP_AUTO.UI.Windows
                 }
             }
 
-            LogCoordinatePrecision(doc, roundedPoles, polesFromFields, shared.PoleCorners.Count, fieldCodeSample);
+            LogCoordinatePrecision(doc, roundedPoles, polesFromFields, polesWithFallback, shared.PoleCorners.Count, fieldCodeSample);
 
             if (_clickWarnUncovered)
             {
@@ -1619,7 +1616,7 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 AppendLog($"ГРЕШКА при контролната справка: {ex.Message}");
-                _logger?.LogError($"Cad control report failed: {ex.Message}\n{ex.StackTrace}");
+                LogFailure("Cad control report", ex);
             }
         }
 
@@ -1747,7 +1744,7 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 AppendLog($"ГРЕШКА при регистъра на засегнатите имоти: {ex.Message}");
-                _logger?.LogError($"Affected parcels register failed: {ex.Message}\n{ex.StackTrace}");
+                LogFailure("Affected parcels register", ex);
             }
         }
 
@@ -1848,7 +1845,7 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 AppendLog($"ГРЕШКА при балансите: {ex.Message}");
-                _logger?.LogError($"Territory balance failed: {ex.Message}\n{ex.StackTrace}");
+                LogFailure("Territory balance", ex);
             }
         }
 
@@ -1889,7 +1886,7 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 AppendLog($"ГРЕШКА при рекапитулацията: {ex.Message}");
-                _logger?.LogError($"Recapitulation failed: {ex.Message}\n{ex.StackTrace}");
+                LogFailure("Recapitulation", ex);
             }
         }
 
@@ -2042,7 +2039,7 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 AppendLog($"ГРЕШКА при регистъра на стъпките: {ex.Message}");
-                _logger?.LogError($"Pole steps register failed: {ex.Message}\n{ex.StackTrace}");
+                LogFailure("Pole steps register", ex);
             }
         }
 
@@ -2131,7 +2128,7 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 AppendLog($"ГРЕШКА при координатния регистър: {ex.Message}");
-                _logger?.LogError($"Coordinate register failed: {ex.Message}\n{ex.StackTrace}");
+                LogFailure("Coordinate register", ex);
             }
         }
 
@@ -2180,7 +2177,7 @@ namespace PUP_AUTO.UI.Windows
             catch (Exception ex)
             {
                 LogWarning($"Ъгловите точки не са начертани: {ex.Message}");
-                _logger?.LogError($"Pole corner blocks failed: {ex.Message}\n{ex.StackTrace}");
+                LogFailure("Pole corner blocks", ex);
             }
         }
 
@@ -2189,16 +2186,23 @@ namespace PUP_AUTO.UI.Windows
         /// UNITS precision rounds), one example field code, one warning for the poles read from rounded text, and the
         /// drawing's LUPREC when it is below 3.
         /// </summary>
-        private void LogCoordinatePrecision(Document doc, List<string> roundedPoles, int polesFromFields, int poleCount, string? fieldCodeSample)
+        private void LogCoordinatePrecision(
+            Document doc, List<string> roundedPoles, int polesFromFields, int polesWithFallback, int poleCount, string? fieldCodeSample)
         {
+            // Window AND log file: the file is what gets sent back after a run
             if (poleCount > 0)
             {
-                AppendLog($"  Координати на стъпките: {polesFromFields} от {poleCount} стълба са прочетени точно от полета, " +
-                          $"{poleCount - polesFromFields} от текста.");
+                LogInfo($"  Координати на стъпките: {polesFromFields} от {poleCount} стълба са прочетени точно от полета, " +
+                        $"{poleCount - polesFromFields} от текста.");
+            }
+            if (polesWithFallback > 0)
+            {
+                LogInfo($"  {polesWithFallback} стълба: полетата на P-етикетите са преизчислени временно с LUPREC " +
+                        $"{PoleAttributeValues.FallbackPrecision}; LUPREC и текстовете са върнати както бяха.");
             }
             if (fieldCodeSample != null)
             {
-                AppendLog($"  Пример за поле на P-етикет: {fieldCodeSample}");
+                LogInfo($"  Пример за поле на P-етикет: {fieldCodeSample}");
             }
             if (roundedPoles.Count > 0)
             {
@@ -2212,10 +2216,47 @@ namespace PUP_AUTO.UI.Windows
             }
         }
 
+        /// <summary>
+        /// Once per click, first picked pole only, to the log file as DEBUG: what its P-tags really hold (text, field, child fields,
+        /// and for a dynamic block the attribute definitions). Read-only; it never fails the click.
+        /// </summary>
+        private void LogPoleFieldDiagnostic(Transaction tr)
+        {
+            try
+            {
+                PolePick? first = _polePicks.FirstOrDefault(p => !p.BlockId.IsNull && !p.BlockId.IsErased);
+                if (first == null || !(tr.GetObject(first.BlockId, OpenMode.ForRead) is BlockReference blockRef)) return;
+
+                _logger?.LogDebug($"P-tag diagnostic, pole {first.Key}, dynamic={blockRef.IsDynamicBlock}, LUPREC={blockRef.Database.Luprec}");
+                foreach (string line in PoleAttributeValues.Describe(blockRef, tr)) _logger?.LogDebug(line);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug($"P-tag diagnostic failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
         private const string DefaultRegisterProject = "НОВА ВЛ 110kV";
 
         /// <summary>The P-tag corners must be the footprint polyline's vertices to within this (m).</summary>
         private const double CornerMatchToleranceM = 0.001;
+
+        /// <summary>
+        /// Writes a failure to the log file: one line when an output file is open in another program (the window already shows
+        /// the message), otherwise the message with its stack trace.
+        /// </summary>
+        private void LogFailure(string what, Exception ex)
+        {
+            if (ex is FileInUseException) _logger?.LogError($"{what} failed: {ex.Message}");
+            else _logger?.LogError($"{what} failed: {ex.Message}\n{ex.StackTrace}");
+        }
+
+        /// <summary>Writes a line to the window log and, as INFO, to the log file.</summary>
+        private void LogInfo(string message)
+        {
+            AppendLog(message);
+            _logger?.LogInfo(message.Trim());
+        }
 
         /// <summary>Writes a warning to the window log and to the log file.</summary>
         private void LogWarning(string message)

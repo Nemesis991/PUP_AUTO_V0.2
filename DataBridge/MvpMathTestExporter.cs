@@ -12,7 +12,7 @@ namespace PUP_AUTO.DataBridge
         {
             string filePath = Path.Combine(outputDir, FileNames.MvpMathTestFile);
 
-            using (SpreadsheetDocument spreadsheetDocument = SpreadsheetDocument.Create(filePath, SpreadsheetDocumentType.Workbook))
+            using (SpreadsheetDocument spreadsheetDocument = WorkbookFile.Create(filePath))
             {
                 // Add a WorkbookPart to the document.
                 WorkbookPart workbookPart = spreadsheetDocument.AddWorkbookPart();

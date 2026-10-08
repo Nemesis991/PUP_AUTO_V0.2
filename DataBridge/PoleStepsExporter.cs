@@ -49,7 +49,7 @@ namespace PUP_AUTO.DataBridge
         {
             string filePath = Path.Combine(outputDir, FileNames.PoleStepsFile);
 
-            using (SpreadsheetDocument document = SpreadsheetDocument.Create(filePath, SpreadsheetDocumentType.Workbook))
+            using (SpreadsheetDocument document = WorkbookFile.Create(filePath))
             {
                 WorkbookPart workbookPart = document.AddWorkbookPart();
                 workbookPart.Workbook = new Workbook();

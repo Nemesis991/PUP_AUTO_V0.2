@@ -31,6 +31,17 @@ namespace PUP_AUTO.Core
             WriteLog("WARNING", message);
         }
 
+        public void LogInfo(string message)
+        {
+            WriteLog("INFO", message);
+        }
+
+        /// <summary>Diagnostic lines, "[DEBUG]"; they go to the log file only.</summary>
+        public void LogDebug(string message)
+        {
+            WriteLog("DEBUG", message);
+        }
+
         /// <summary>Timing and count lines, "[PERF]"; they go to the log file only.</summary>
         public void LogPerf(string message)
         {

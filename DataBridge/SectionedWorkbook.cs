@@ -39,7 +39,7 @@ namespace PUP_AUTO.DataBridge
             Func<SheetData, MergeCells, T, int, int> writeSection,
             OrientationValues orientation = OrientationValues.Landscape)
         {
-            using (SpreadsheetDocument document = SpreadsheetDocument.Create(filePath, SpreadsheetDocumentType.Workbook))
+            using (SpreadsheetDocument document = WorkbookFile.Create(filePath))
             {
                 WorkbookPart workbookPart = document.AddWorkbookPart();
                 workbookPart.Workbook = new Workbook();
