@@ -295,6 +295,65 @@ namespace PUP_AUTO.Tests
         }
     }
 
+    public class CoordinateTextTests
+    {
+        [Theory]
+        [InlineData("363604.08", 2)]
+        [InlineData("363604.082", 3)]
+        [InlineData("12", 0)]
+        [InlineData(" 4784635.7200 ", 4)]
+        [InlineData("-0.5", 1)]
+        public void DecimalCount_CountsTheDigitsAfterTheDot(string number, int expected)
+        {
+            Assert.Equal(expected, CoordinateText.DecimalCount(number));
+        }
+
+        [Theory]
+        [InlineData("363604.08, 4784635.72", true)]      // LUPREC 2
+        [InlineData("363604.082, 4784635.72", true)]     // one rounded coordinate is enough
+        [InlineData("363604.082, 4784635.716", false)]
+        [InlineData("363604.0820, 4784635.7160", false)]
+        [InlineData("363604.1, 4784635.7", true)]
+        [InlineData("363604, 4784635", true)]
+        public void HasFewerDecimals_FlagsTextRoundedByTheUnitsPrecision(string point, bool expected)
+        {
+            Assert.Equal(expected, CoordinateText.HasFewerDecimals(point));
+        }
+
+        [Fact]
+        public void ARawValue_IsConsistentWithItsRoundedText_OnlyWithinHalfAUnitOfTheLastDigit()
+        {
+            Assert.True(CoordinateText.IsConsistent(363604.082, 4784635.716, "363604.08, 4784635.72"));
+            Assert.True(CoordinateText.IsConsistent(363604.08, 4784635.7249, "363604.08, 4784635.72"));
+            Assert.False(CoordinateText.IsConsistent(363604.09, 4784635.716, "363604.08, 4784635.72"));   // another object
+            Assert.False(CoordinateText.IsConsistent(0, 0, "363604.08, 4784635.72"));
+            Assert.True(CoordinateText.IsConsistent(1, 2, "not a point"));
+        }
+
+        [Fact]
+        public void FormatPoint_RoundTripsThroughTheFootprintParser()
+        {
+            string text = CoordinateText.FormatPoint(363604.082, 4784635.716);
+
+            Assert.Equal("363604.082, 4784635.716", text);
+            Assert.Equal(new[] { (363604.082, 4784635.716) }, FootprintCorners.Parse(new[] { text }));
+        }
+
+        [Fact]
+        public void TheObjectAndPropertyAreTakenFromAFieldCode()
+        {
+            const string code = @"%<\AcObjProp Object(%<\_ObjId 2305843009213833000>%).InsertionPoint \f ""%lu2%pt2""   >%";
+
+            var parsed = CoordinateText.ParseObjectProperty(code);
+
+            Assert.NotNull(parsed);
+            Assert.Equal(2305843009213833000L, parsed!.Value.ObjectId);
+            Assert.Equal("InsertionPoint", parsed.Value.Property);
+            Assert.Null(CoordinateText.ParseObjectProperty(@"%<\AcVar Date \f ""yyyy"">%"));
+            Assert.Null(CoordinateText.ParseObjectProperty(string.Empty));
+        }
+    }
+
     public class PoleCornerPlacementTests
     {
         // Pole 20 of the official drawing: corners 20-1 .. 20-4 and the label rotation

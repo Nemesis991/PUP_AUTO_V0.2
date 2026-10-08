@@ -21,6 +21,18 @@ namespace PUP_AUTO.Geometry
         /// same points sorted counter-clockwise around their centre instead. Null when extraction failed.
         /// </summary>
         public List<Point2d>? CornerPoints { get; set; }
+
+        /// <summary>
+        /// True when a corner was read from plain text (or an unreadable field's text) with fewer than 3 decimals: the drawing's
+        /// UNITS precision rounded it and the true value is lost.
+        /// </summary>
+        public bool RoundedByUnits { get; set; }
+
+        /// <summary>How many of the corner values were read exactly from a field.</summary>
+        public int FieldValues { get; set; }
+
+        /// <summary>The field code of the first P-tag field of the block (diagnostics), else null.</summary>
+        public string? FieldCodeSample { get; set; }
     }
 
     /// <summary>
@@ -90,6 +102,7 @@ namespace PUP_AUTO.Geometry
                 // 3. Read attributes (Pole Number and Coordinates)
                 string poleNumber = string.Empty;
                 var pTags = new Dictionary<string, string>(); // Tag -> Value
+                var stats = new PoleValueStats();
 
                 foreach (ObjectId attId in blockRef.AttributeCollection)
                 {
@@ -97,20 +110,25 @@ namespace PUP_AUTO.Geometry
                     if (attRef != null)
                     {
                         string tag = PoleAttributeTags.Normalize(attRef.Tag);
-                        string val = attRef.TextString;
 
                         if (PoleAttributeTags.IsPoleNumberTag(tag))
                         {
-                            poleNumber = val;
+                            poleNumber = attRef.TextString;
                             result.LabelPosition = (attRef.Justify == AttachmentPoint.BaseLeft) ? attRef.Position : attRef.AlignmentPoint;
                             result.LabelRotation = attRef.Rotation;
                         }
-                        else if (tag.StartsWith("P") || tag.StartsWith("TP"))
+                        else if (tag.StartsWith("TP"))
                         {
-                            pTags[tag] = val;
+                            pTags[tag] = attRef.TextString;
+                        }
+                        else if (tag.StartsWith("P"))
+                        {
+                            // A field gives the exact value; the text is rounded to the drawing's UNITS precision
+                            pTags[tag] = PoleAttributeValues.Read(attRef, tr, stats);
                         }
                     }
                 }
+                result.FieldCodeSample = stats.FieldCodeSample;
 
                 result.PoleNumber = poleNumber;
 
@@ -169,6 +187,10 @@ namespace PUP_AUTO.Geometry
 
                 // The attribute VALUES as parsed, in P1..P4 order: no transform, no rounding
                 result.CornerPoints = parsed.Select(p => new Point2d(p.X, p.Y)).ToList();
+
+                // Values that did not come exactly from a field are the text as the drawing's UNITS precision wrote it
+                result.RoundedByUnits = pointStrings.Any(s => !stats.ExactValues.Contains(s) && CoordinateText.HasFewerDecimals(s));
+                result.FieldValues = pointStrings.Count(stats.ExactValues.Contains);
 
                 // 6. Sort vertices counter-clockwise around centroid
                 var sortedPoints = FootprintCorners.SortCounterClockwise(parsed).Select(p => new Point2d(p.X, p.Y)).ToList();

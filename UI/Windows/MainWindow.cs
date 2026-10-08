@@ -1421,6 +1421,9 @@ namespace PUP_AUTO.UI.Windows
             EnsureServices();
             var topo = new TopologyProcessor(_logger!);
             var shared = new ClickGeometry();
+            var roundedPoles = new List<string>();
+            int polesFromFields = 0;
+            string? fieldCodeSample = null;
 
             using (PerfTimer.Measure(_logger, "ClickGeometry transaction (parcels, poles, topology)"))
             using (doc.LockDocument())
@@ -1440,6 +1443,10 @@ namespace PUP_AUTO.UI.Windows
                             shared.PolesWithoutFootprint.Add(entry.PoleId);
                             continue;
                         }
+                        if (entry.Result.RoundedByUnits) roundedPoles.Add(PoleLabels.StripPrefix(entry.PoleId));
+                        if (entry.Result.FieldValues > 0) polesFromFields++;
+                        fieldCodeSample ??= entry.Result.FieldCodeSample;
+
                         var corners = entry.Result.CornerPoints.Select(p => (p.X, p.Y)).ToList();
                         Polyline footprint = entry.Result.FootprintPolyline!;
                         var vertices = Enumerable.Range(0, footprint.NumberOfVertices)
@@ -1484,6 +1491,8 @@ namespace PUP_AUTO.UI.Windows
                     DisposeFootprints(entries);
                 }
             }
+
+            LogCoordinatePrecision(doc, roundedPoles, polesFromFields, shared.PoleCorners.Count, fieldCodeSample);
 
             if (_clickWarnUncovered)
             {
@@ -2172,6 +2181,34 @@ namespace PUP_AUTO.UI.Windows
             {
                 LogWarning($"Ъгловите точки не са начертани: {ex.Message}");
                 _logger?.LogError($"Pole corner blocks failed: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// Once per click: where the pole corner coordinates came from (exact field values or the text, which the drawing's
+        /// UNITS precision rounds), one example field code, one warning for the poles read from rounded text, and the
+        /// drawing's LUPREC when it is below 3.
+        /// </summary>
+        private void LogCoordinatePrecision(Document doc, List<string> roundedPoles, int polesFromFields, int poleCount, string? fieldCodeSample)
+        {
+            if (poleCount > 0)
+            {
+                AppendLog($"  Координати на стъпките: {polesFromFields} от {poleCount} стълба са прочетени точно от полета, " +
+                          $"{poleCount - polesFromFields} от текста.");
+            }
+            if (fieldCodeSample != null)
+            {
+                AppendLog($"  Пример за поле на P-етикет: {fieldCodeSample}");
+            }
+            if (roundedPoles.Count > 0)
+            {
+                LogWarning($"{roundedPoles.Count} стълба имат координати с по-малко от {CoordinateText.FullPrecisionDecimals} знака след запетаята " +
+                           $"(напр. стълб {roundedPoles[0]}). Задайте UNITS → Precision 0.000, изпълнете REGEN/UPDATEFIELD и пуснете отново.");
+            }
+            int luprec = doc.Database.Luprec;
+            if (luprec < CoordinateText.FullPrecisionDecimals && poleCount > 0)
+            {
+                LogWarning($"Точността на единиците на чертежа (LUPREC) е {luprec}, по-малка от {CoordinateText.FullPrecisionDecimals}.");
             }
         }
 
