@@ -146,6 +146,22 @@ namespace PUP_AUTO.Geometry
 
         public int Count => _x.Length;
 
+        /// <summary>The distance from the point to the polygon's boundary (0 on it); inside or outside alike.</summary>
+        public double DistanceToBoundary(double x, double y)
+        {
+            double best = double.MaxValue;
+            for (int i = 0, j = _x.Length - 1; i < _x.Length; j = i++)
+            {
+                double dx = _x[i] - _x[j], dy = _y[i] - _y[j];
+                double length2 = dx * dx + dy * dy;
+                double t = length2 == 0 ? 0 : ((x - _x[j]) * dx + (y - _y[j]) * dy) / length2;
+                t = t < 0 ? 0 : t > 1 ? 1 : t;
+                double px = _x[j] + dx * t - x, py = _y[j] + dy * t - y;
+                best = Math.Min(best, Math.Sqrt(px * px + py * py));
+            }
+            return best;
+        }
+
         /// <summary>Even-odd ray casting; a point exactly on the boundary may go either way.</summary>
         public bool Contains(double x, double y)
         {

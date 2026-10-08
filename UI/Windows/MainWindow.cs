@@ -2232,11 +2232,6 @@ namespace PUP_AUTO.UI.Windows
                 {
                     AppendLog($"  Пропуснати {edges.DuplicatesDropped} повтарящи се възела на сервитута.");
                 }
-                if (edges.VerticesOutsideParcels > 0)
-                {
-                    LogWarning($"{edges.VerticesOutsideParcels} точки на сервитута не са в нито един избран имот — " +
-                               "взето е землището на предходната точка по същата страна.");
-                }
                 if (edges.GapsBetweenSettlements > 0)
                 {
                     LogWarning($"{edges.GapsBetweenSettlements} пресичания между землища минават през място без избран имот — " +
@@ -2245,6 +2240,8 @@ namespace PUP_AUTO.UI.Windows
 
                 List<NumberedServitudePoint> left = ServitudeRegisterBuilder.Number(edges.Left, leftStart, true);
                 List<NumberedServitudePoint> right = ServitudeRegisterBuilder.Number(edges.Right, rightStart, false);
+                LogPointsLeftOut("ляво", left);
+                LogPointsLeftOut("дясно", right);
 
                 LoadReportReferenceData(out _, out EkatteRegister ekatte);
                 MunicipalityGroupingResult grouping = GroupParcelsForReport(
@@ -2303,6 +2300,18 @@ namespace PUP_AUTO.UI.Windows
                 AppendLog($"ГРЕШКА при регистъра на сервитута: {ex.Message}");
                 LogFailure("Servitude register", ex);
             }
+        }
+
+        /// <summary>
+        /// One line per edge for the points that are in no picked parcel: they keep their numbers (the numbering stays
+        /// continuous over the whole servitude) but are not in the register.
+        /// </summary>
+        private void LogPointsLeftOut(string side, List<NumberedServitudePoint> points)
+        {
+            List<NumberedServitudePoint> outside = points.Where(p => p.Ekattes.Count == 0).ToList();
+            if (outside.Count == 0) return;
+            LogWarning($"{side}: {outside.Count} точки извън избраните имоти " +
+                       $"(номера {string.Join(", ", ServitudeRegisterBuilder.NumberRanges(outside))}) не са включени.");
         }
 
         /// <summary>The first number of one edge, from its box on the card; a value that is not a positive number falls back.</summary>

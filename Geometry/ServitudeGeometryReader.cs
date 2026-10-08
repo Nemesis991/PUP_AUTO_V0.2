@@ -16,7 +16,7 @@ namespace PUP_AUTO.Geometry
         public bool AxisReversed { get; set; }
         public int DuplicatesDropped { get; set; }
 
-        /// <summary>Vertices that fell in no picked parcel and took the EKATTE of the point before them.</summary>
+        /// <summary>Vertices in no picked parcel and not just off one of the previous point's землище: numbered, but left out.</summary>
         public int VerticesOutsideParcels { get; set; }
 
         /// <summary>Boundary points inserted where an edge crosses from one землище into another.</summary>
@@ -98,8 +98,9 @@ namespace PUP_AUTO.Geometry
                 })
                 .ToList();
 
-            result.Left.AddRange(Walk(split.Left!, picked, result));
-            result.Right.AddRange(Walk(split.Right!, picked, result));
+            var resolver = new ServitudeEkatteResolver(picked.Select(p => (p.Ekatte, p.Outline)).ToList());
+            result.Left.AddRange(Walk(split.Left!, picked, resolver, result));
+            result.Right.AddRange(Walk(split.Right!, picked, resolver, result));
             return result;
         }
 
@@ -215,7 +216,8 @@ namespace PUP_AUTO.Geometry
         /// The edge's points in order: every vertex, plus a point wherever the edge crosses into another землище. Each
         /// point carries the землища it is listed under (two on a boundary) and the direction of the edge there.
         /// </summary>
-        private static List<ServitudeEdgePointInput> Walk(ServitudeEdge edge, List<Parcel> parcels, ServitudeEdgePoints result)
+        private static List<ServitudeEdgePointInput> Walk(
+            ServitudeEdge edge, List<Parcel> parcels, ServitudeEkatteResolver resolver, ServitudeEdgePoints result)
         {
             var points = new List<ServitudeEdgePointInput>();
             IReadOnlyList<EdgeVertex> vertices = edge.Vertices;
@@ -230,12 +232,9 @@ namespace PUP_AUTO.Geometry
                 double incoming = i > 0 ? Direction(vertices[i - 1], vertices[i], 1) : double.NaN;
                 double outgoing = i + 1 < vertices.Count ? Direction(vertices[i], vertices[i + 1], 0) : double.NaN;
 
-                string? ekatte = EkatteAt(parcels, vertex.X, vertex.Y);
-                if (ekatte == null)
-                {
-                    ekatte = previousEkatte;
-                    result.VerticesOutsideParcels++;
-                }
+                // In a picked parcel, or just off one of the previous point's землище; anything else is left out of the register
+                string? ekatte = resolver.Resolve(vertex.X, vertex.Y, previousEkatte ?? pendingEkatte, out _);
+                if (ekatte == null) result.VerticesOutsideParcels++;
 
                 var point = new ServitudeEdgePointInput
                 {

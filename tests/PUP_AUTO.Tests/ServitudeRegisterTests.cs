@@ -815,6 +815,104 @@ namespace PUP_AUTO.Tests
         }
     }
 
+    public class ServitudeEkatteResolverTests
+    {
+        private static PlanarPolygon Square(double x, double y, double size) => new PlanarPolygon(new List<(double X, double Y)>
+        {
+            (x, y), (x + size, y), (x + size, y + size), (x, y + size)
+        });
+
+        /// <summary>Мездра's parcels only: one Царевец square at 0..100 and one Цаконица square at 200..300.</summary>
+        private static ServitudeEkatteResolver Resolver() => new ServitudeEkatteResolver(new List<(string, PlanarPolygon)>
+        {
+            ("78135", Square(0, 0, 100)),
+            ("78015", Square(200, 0, 100))
+        });
+
+        [Fact]
+        public void APointInAPickedParcel_TakesThatParcelsEkatte()
+        {
+            Assert.Equal("78135", Resolver().Resolve(50, 50, null, out bool inherited));
+            Assert.False(inherited);
+        }
+
+        [Fact]
+        public void APointJustOffTheParcelsEdge_InheritsThePreviousEkatte()
+        {
+            // 1.5 m outside the Царевец square, within the 2 m tolerance
+            string? ekatte = Resolver().Resolve(101.5, 50, "78135", out bool inherited);
+
+            Assert.Equal("78135", ekatte);
+            Assert.True(inherited);
+        }
+
+        [Fact]
+        public void APointFarFromThePickedParcels_HasNoЗемлище_SoItIsLeftOut()
+        {
+            // 20 km further along the servitude: Бяла Слатина, no parcel of it picked
+            string? ekatte = Resolver().Resolve(20000, 50, "78015", out bool inherited);
+
+            Assert.Null(ekatte);
+            Assert.False(inherited);
+        }
+
+        [Fact]
+        public void TheGapTolerance_IsTwoMetres()
+        {
+            Assert.Equal("78135", Resolver().Resolve(101.9, 50, "78135", out _));
+            Assert.Null(Resolver().Resolve(102.1, 50, "78135", out _));
+        }
+
+        [Fact]
+        public void APointNearAParcelOfAnotherЗемлище_DoesNotInheritThePreviousOne()
+        {
+            // near the Цаконица square, but the previous point was Царевец
+            Assert.Null(Resolver().Resolve(199, 50, "78135", out _));
+        }
+
+        [Fact]
+        public void WithoutAPreviousPoint_NothingIsInherited()
+        {
+            Assert.Null(Resolver().Resolve(101, 50, null, out _));
+        }
+
+        [Fact]
+        public void TheDistanceToTheBoundary_IsZeroOnItAndMeasuredFromInsideToo()
+        {
+            PlanarPolygon square = Square(0, 0, 100);
+
+            Assert.Equal(0, square.DistanceToBoundary(100, 40), 9);
+            Assert.Equal(3, square.DistanceToBoundary(103, 40), 9);
+            Assert.Equal(10, square.DistanceToBoundary(50, 10), 9);
+            Assert.Equal(5, square.DistanceToBoundary(-3, -4), 9);     // off a corner
+        }
+
+        [Fact]
+        public void APointLeftOut_KeepsItsNumber_ButIsInNoSection()
+        {
+            var points = new List<ServitudeEdgePointInput>
+            {
+                ServitudeFixture.Point(0, 10, "78135"),
+                new ServitudeEdgePointInput { X = 20000, Y = 10 },      // outside every picked parcel
+                new ServitudeEdgePointInput { X = 20010, Y = 10 },
+                ServitudeFixture.Point(250, 10, "78015")
+            };
+            List<NumberedServitudePoint> left = ServitudeRegisterBuilder.Number(points, 5001, true);
+
+            // the numbering stays continuous over the whole servitude
+            Assert.Equal(new[] { 5001, 5002, 5003, 5004 }, left.Select(p => p.Number));
+
+            ServitudeRegister first = ServitudeRegisterBuilder.Build(left, new List<NumberedServitudePoint>(), "78135", "ВЛ", "с. Царевец");
+            ServitudeRegister second = ServitudeRegisterBuilder.Build(left, new List<NumberedServitudePoint>(), "78015", "ВЛ", "с. Цаконица");
+
+            Assert.Equal(new[] { 5001 }, first.Rows.Select(r => r.Left!.Number));
+            Assert.Equal(new[] { 5004 }, second.Rows.Select(r => r.Left!.Number));
+            // and the log line names the left-out run
+            Assert.Equal(new[] { "5002–5003" },
+                ServitudeRegisterBuilder.NumberRanges(left.Where(p => p.Ekattes.Count == 0)));
+        }
+    }
+
     public class PlanarPolygonTests
     {
         private static readonly PlanarPolygon Square = new PlanarPolygon(new List<(double X, double Y)>
