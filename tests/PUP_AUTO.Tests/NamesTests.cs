@@ -22,6 +22,40 @@ namespace PUP_AUTO.Tests
             Assert.Equal("Общ_баланс_за_общината.xlsx", FileNames.MunicipalityBalanceFile);
             Assert.Equal("Номенклатури", FileNames.NomenclaturesFolder);
             Assert.Equal("EKATTE.csv", FileNames.EkatteRegisterFile);
+            Assert.Equal("Координатен_регистър_на_стъпките.xlsx", FileNames.CoordinateRegisterFile);
+            Assert.Equal("Координатен_регистър_на_сервитута.xlsx", FileNames.ServitudeRegisterFile);
+        }
+
+        [Fact]
+        public void ServitudePointBlockNames_AreByteIdentical()
+        {
+            Assert.Equal("SERV_TOCHKA", ServitudePointBlockNames.BlockName);
+            Assert.Equal("S-Trass-сервитут", ServitudePointBlockNames.Layer);
+            Assert.Equal("NOMER", ServitudePointBlockNames.NumberTag);
+            Assert.Equal("Номер на точка", ServitudePointBlockNames.NumberPrompt);
+            Assert.Equal("NUM_Align", ServitudePointBlockNames.TextStyle);
+            Assert.Equal("simplex.shx", ServitudePointBlockNames.TextStyleFont);
+            Assert.Equal(0.65, ServitudePointBlockNames.TextStyleWidthFactor);
+            Assert.Equal(3.0, ServitudePointBlockNames.TextHeight);
+            Assert.Equal("PUP_AUTO", ServitudePointBlockNames.XDataApp);
+            Assert.Equal("SERV_POINT", ServitudePointBlockNames.XDataValue);
+        }
+
+        [Theory]
+        [InlineData("SERV_TOCHKA", true)]
+        [InlineData("serv_tochka", true)]
+        [InlineData("  SERV_TOCHKA  ", true)]
+        [InlineData("GBP032", false)]
+        [InlineData("SERV_TOCHKA_2", false)]
+        [InlineData("", false)]
+        public void AServitudePointBlock_IsRecognisedWhateverItsCaseOrPadding(string name, bool expected) =>
+            Assert.Equal(expected, ServitudePointBlockNames.IsServitudePointBlock(name));
+
+        [Fact]
+        public void TheTwoMarkerBlocks_DoNotRecogniseEachOther()
+        {
+            Assert.False(PoleCornerBlockNames.IsCornerBlock(ServitudePointBlockNames.BlockName));
+            Assert.False(ServitudePointBlockNames.IsServitudePointBlock(PoleCornerBlockNames.BlockName));
         }
 
         [Fact]

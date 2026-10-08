@@ -78,8 +78,8 @@ namespace PUP_AUTO.Geometry
         {
             foreach (var kvp in poleBlocks)
             {
-                // The GBP032 corner blocks carry a NOMER tag but are never poles: skipped silently on every path
-                if (IsCornerBlock(kvp.Value, tr)) continue;
+                // The plugin's own marker blocks carry a NOMER tag but are never poles: skipped silently on every path
+                if (IsPluginMarkerBlock(kvp.Value, tr)) continue;
 
                 var entry = new PoleFootprintEntry
                 {
@@ -229,9 +229,38 @@ namespace PUP_AUTO.Geometry
             }
         }
 
+        /// <summary>
+        /// Just the pole number (from the number attribute; empty when the block has none) and the insert's position, without
+        /// extracting the footprint. Used where the poles only order something, e.g. orienting the route axis.
+        /// </summary>
+        public static (string Number, double X, double Y) ReadNumberAndPosition(BlockReference blockRef, Transaction tr)
+        {
+            string number = string.Empty;
+            foreach (ObjectId attId in blockRef.AttributeCollection)
+            {
+                if (tr.GetObject(attId, OpenMode.ForRead) is AttributeReference attRef &&
+                    PoleAttributeTags.IsPoleNumberTag(PoleAttributeTags.Normalize(attRef.Tag)))
+                {
+                    number = attRef.TextString;
+                    break;
+                }
+            }
+            return (number, blockRef.Position.X, blockRef.Position.Y);
+        }
+
         /// <summary>True for a GBP032 corner block (the plugin's own marker, never a pole), whatever its attributes say.</summary>
         public static bool IsCornerBlock(BlockReference blockRef, Transaction tr) =>
             PoleCornerBlockNames.IsCornerBlock(GetEffectiveName(blockRef, tr));
+
+        /// <summary>
+        /// True for any block the plugin itself draws (the GBP032 footprint corners, the SERV_TOCHKA servitude points).
+        /// They carry a NOMER tag, so without this they would look like poles to every pick and command.
+        /// </summary>
+        public static bool IsPluginMarkerBlock(BlockReference blockRef, Transaction tr)
+        {
+            string name = GetEffectiveName(blockRef, tr);
+            return PoleCornerBlockNames.IsCornerBlock(name) || ServitudePointBlockNames.IsServitudePointBlock(name);
+        }
 
         private static string GetEffectiveName(BlockReference blockRef, Transaction tr)
         {

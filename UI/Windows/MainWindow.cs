@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -24,7 +25,7 @@ namespace PUP_AUTO.UI.Windows
     public class MainWindow : Window
     {
         /// <summary>An input a report needs.</summary>
-        private enum Requirement { Cad, Servitude, Poles, Parcels }
+        private enum Requirement { Cad, Servitude, Poles, Parcels, Axis }
 
         private static readonly Requirement[] AllRequirements =
             { Requirement.Cad, Requirement.Servitude, Requirement.Poles, Requirement.Parcels };
@@ -62,9 +63,13 @@ namespace PUP_AUTO.UI.Windows
         private ReportOption _optAffectedRegister = null!;
         private ReportOption _optPoleStepsRegister = null!;
         private ReportOption _optCoordinateRegister = null!;
+        private ReportOption _optServitudeRegister = null!;
         private ReportOption _optTerritoryBalance = null!;
         private readonly List<ReportOption> _reports = new List<ReportOption>();
         private TextBox _txtRegisterProject = null!;
+        private TextBox _txtServitudeLeftStart = null!;
+        private TextBox _txtServitudeRightStart = null!;
+        private CheckBox _chkDrawServitudePoints = null!;
         private TextBox _txtLog = null!;
         private Button _btnGenerate = null!;
         private Button _btnOpenFolder = null!;
@@ -283,6 +288,11 @@ namespace PUP_AUTO.UI.Windows
                 "Координатите на центъра и чупките на всяка стъпка, по землища.",
                 Requirement.Cad, Requirement.Poles, Requirement.Parcels);
 
+            _optServitudeRegister = AddReport(list, "Координатен регистър на сервитута",
+                "Координатите на точките на сервитута — ляво и дясно, по землища.",
+                Requirement.Cad, Requirement.Servitude, Requirement.Axis, Requirement.Parcels);
+            AddCardExtra(_optServitudeRegister, BuildServitudeOptions());
+
             _optTerritoryBalance = AddReport(list, "Баланси на територията и общата рекапитулация",
                 "Балансите по землища и общият баланс за общината (категория, собственост, територия, НТП).",
                 AllRequirements);
@@ -490,6 +500,57 @@ namespace PUP_AUTO.UI.Windows
             return option;
         }
 
+        /// <summary>Adds extra controls (number boxes, a tick) under a report's checkbox, inside its own card.</summary>
+        private static void AddCardExtra(ReportOption option, UIElement extra)
+        {
+            ((StackPanel)option.Card.Child).Children.Add(extra);
+        }
+
+        /// <summary>
+        /// The servitude register's own settings: the first number of each edge and whether the same click also draws the
+        /// numbered point blocks in the drawing.
+        /// </summary>
+        private UIElement BuildServitudeOptions()
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(28, 0, 0, 0) };
+
+            _txtServitudeLeftStart = NumberBox(ServitudeRegisterBuilder.DefaultLeftStart);
+            _txtServitudeRightStart = NumberBox(ServitudeRegisterBuilder.DefaultRightStart);
+
+            row.Children.Add(new TextBlock
+            {
+                Text = "Ляво от", Foreground = SubtextBrush, FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0)
+            });
+            row.Children.Add(_txtServitudeLeftStart);
+            row.Children.Add(new TextBlock
+            {
+                Text = "Дясно от", Foreground = SubtextBrush, FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0, 6, 0)
+            });
+            row.Children.Add(_txtServitudeRightStart);
+
+            _chkDrawServitudePoints = new CheckBox
+            {
+                Content = new TextBlock { Text = "Начертай точките в чертежа", FontSize = 12 },
+                IsChecked = false,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(18, 0, 0, 0),
+                ToolTip = $"Вмъква блок {ServitudePointBlockNames.BlockName} с номера на всяка точка " +
+                          $"в слой {ServitudePointBlockNames.Layer}"
+            };
+            row.Children.Add(_chkDrawServitudePoints);
+
+            return row;
+        }
+
+        private static TextBox NumberBox(int value) => new TextBox
+        {
+            Text = value.ToString(CultureInfo.InvariantCulture),
+            Width = 64, FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Right
+        };
+
         private static string RequirementName(Requirement need)
         {
             switch (need)
@@ -497,6 +558,7 @@ namespace PUP_AUTO.UI.Windows
                 case Requirement.Cad:       return ".cad";
                 case Requirement.Servitude: return "Сервитут";
                 case Requirement.Poles:     return "Стълбове";
+                case Requirement.Axis:      return "Ос на трасето";
                 default:                    return "Имоти";
             }
         }
@@ -514,6 +576,7 @@ namespace PUP_AUTO.UI.Windows
                 case Requirement.Cad:       return _cadSet != null && _cadSet.Count > 0;
                 case Requirement.Servitude: return !_servitudeId.IsNull;
                 case Requirement.Poles:     return _polePicks.Count > 0;
+                case Requirement.Axis:      return _axisIds.Count > 0;
                 default:                    return _parcelPicks.Count > 0;
             }
         }
@@ -1190,6 +1253,7 @@ namespace PUP_AUTO.UI.Windows
                         else if (option == _optAffectedRegister) RunAffectedParcelsRegister(doc, _cadSet!);
                         else if (option == _optPoleStepsRegister) RunPoleStepsRegister(doc, _cadSet!);
                         else if (option == _optCoordinateRegister) RunCoordinateRegister(doc, _cadSet!);
+                        else if (option == _optServitudeRegister) RunServitudeRegister(doc, _cadSet!);
                         else if (option == _optTerritoryBalance) RunTerritoryBalance(doc, _cadSet!);
                         AppendLog($"  Време: {timer.ElapsedText}");
                     }
@@ -2129,6 +2193,210 @@ namespace PUP_AUTO.UI.Windows
             {
                 AppendLog($"ГРЕШКА при координатния регистър: {ex.Message}");
                 LogFailure("Coordinate register", ex);
+            }
+        }
+
+        /// <summary>
+        /// Builds Координатен_регистър_на_сервитута.xlsx (official 08): the servitude outline split into its left and right
+        /// edge along the route axis, every point numbered along the route and listed under the землище it falls in, with a
+        /// point added wherever an edge crosses a землище boundary. One short transaction under a document lock reads the
+        /// servitude, the axis, the poles and the parcels; nothing is written to the drawing unless the tick asks for it.
+        /// No owner data.
+        /// </summary>
+        private void RunServitudeRegister(Document doc, CadRegisterSet cadSet)
+        {
+            try
+            {
+                AppendLog("── СТАРТИРАНЕ НА КООРДИНАТЕН РЕГИСТЪР НА СЕРВИТУТА ──");
+                EnsureServices();
+
+                int leftStart = ReadStartNumber(_txtServitudeLeftStart, ServitudeRegisterBuilder.DefaultLeftStart, "Ляво от");
+                int rightStart = ReadStartNumber(_txtServitudeRightStart, ServitudeRegisterBuilder.DefaultRightStart, "Дясно от");
+
+                ServitudeEdgePoints? edges = ReadServitudeEdgePoints(doc);
+                if (edges == null) return;
+                if (!edges.Ok)
+                {
+                    LogWarning($"Координатен регистър на сервитута: {edges.Error}. Справката не е създадена.");
+                    return;
+                }
+                if (_polePicks.Count == 0)
+                {
+                    AppendLog("  Няма избрани стълбове — посоката на оста е както е начертана.");
+                }
+                else if (edges.AxisReversed)
+                {
+                    AppendLog("  Осът на трасето е обърнат, за да върви от най-малкия към най-големия номер стълб.");
+                }
+                if (edges.DuplicatesDropped > 0)
+                {
+                    AppendLog($"  Пропуснати {edges.DuplicatesDropped} повтарящи се възела на сервитута.");
+                }
+                if (edges.VerticesOutsideParcels > 0)
+                {
+                    LogWarning($"{edges.VerticesOutsideParcels} точки на сервитута не са в нито един избран имот — " +
+                               "взето е землището на предходната точка по същата страна.");
+                }
+                if (edges.GapsBetweenSettlements > 0)
+                {
+                    LogWarning($"{edges.GapsBetweenSettlements} пресичания между землища минават през място без избран имот — " +
+                               "точката е сложена там, където свършва предишното землище.");
+                }
+
+                List<NumberedServitudePoint> left = ServitudeRegisterBuilder.Number(edges.Left, leftStart, true);
+                List<NumberedServitudePoint> right = ServitudeRegisterBuilder.Number(edges.Right, rightStart, false);
+
+                LoadReportReferenceData(out _, out EkatteRegister ekatte);
+                MunicipalityGroupingResult grouping = GroupParcelsForReport(
+                    cadSet, _parcelPicks.Select(p => p.ParcelId), ekatte, null);
+
+                // This report has no poles to order the sections by, so they follow the route: where each землище is first met
+                Dictionary<string, double> routeOrder = ServitudeRegisterBuilder.RouteOrder(left, right);
+                double Position(string code) => routeOrder.TryGetValue(code, out double at) ? at : double.MaxValue;
+                foreach (MunicipalityGroup group in grouping.Groups)
+                {
+                    group.Sections.Sort((a, b) => Position(a.Ekatte).CompareTo(Position(b.Ekatte)));
+                }
+                grouping.Groups.Sort((a, b) => Position(a.Sections[0].Ekatte).CompareTo(Position(b.Sections[0].Ekatte)));
+
+                string project = string.IsNullOrWhiteSpace(_txtRegisterProject.Text) ? DefaultRegisterProject : _txtRegisterProject.Text;
+                var sheets = new List<(string SheetName, IReadOnlyList<ServitudeRegister> Sections)>();
+                using (PerfTimer.Measure(_logger, "RunServitudeRegister builder loop"))
+                {
+                    foreach (MunicipalityGroup group in grouping.Groups)
+                    {
+                        var reports = new List<ServitudeRegister>();
+                        foreach (SettlementSection section in group.Sections)
+                        {
+                            ServitudeRegister report = ServitudeRegisterBuilder.Build(
+                                left, right, section.Ekatte, project, section.EkatteTitle);
+                            if (report.Rows.Count == 0) continue;
+
+                            reports.Add(report);
+                            AppendLog($"  {section.DisplayName}: ляво {string.Join(", ", ServitudeRegisterBuilder.NumberRanges(report.Rows.Where(r => r.Left != null).Select(r => r.Left!)))}" +
+                                      $"; дясно {string.Join(", ", ServitudeRegisterBuilder.NumberRanges(report.Rows.Where(r => r.Right != null).Select(r => r.Right!)))}.");
+                        }
+
+                        if (reports.Count == 0) continue;
+                        sheets.Add((group.SheetName, reports));
+                    }
+                }
+
+                if (sheets.Count == 0)
+                {
+                    AppendLog("Няма точки на сервитута в избраните имоти — регистърът на сервитута не е създаден.");
+                    return;
+                }
+
+                AppendLog($"  Точки на сервитута: ляво {left.Count} ({leftStart}–{leftStart + left.Count - 1}), " +
+                          $"дясно {right.Count} ({rightStart}–{rightStart + right.Count - 1}), " +
+                          $"от които {edges.BoundaryPointsInserted} на граница между землища.");
+
+                string path;
+                using (PerfTimer.Measure(_logger, "ServitudeRegisterExporter.Export")) path = ServitudeRegisterExporter.Export(sheets, _projectDir);
+                AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
+
+                if (_chkDrawServitudePoints.IsChecked == true) DrawServitudePoints(doc, left, right, edges.Box);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ГРЕШКА при регистъра на сервитута: {ex.Message}");
+                LogFailure("Servitude register", ex);
+            }
+        }
+
+        /// <summary>The first number of one edge, from its box on the card; a value that is not a positive number falls back.</summary>
+        private int ReadStartNumber(TextBox box, int fallback, string label)
+        {
+            if (int.TryParse(box.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value) && value > 0)
+            {
+                return value;
+            }
+            LogWarning($"\"{label}\" не е цяло положително число — използва се {fallback}.");
+            box.Text = fallback.ToString(CultureInfo.InvariantCulture);
+            return fallback;
+        }
+
+        /// <summary>
+        /// Reads the servitude outline, the route axis, the pole positions and the parcels in one short transaction and
+        /// splits the outline into its two edges. Null when the servitude or the axis is no longer in the drawing.
+        /// </summary>
+        private ServitudeEdgePoints? ReadServitudeEdgePoints(Document doc)
+        {
+            using (PerfTimer.Measure(_logger, "ServitudeGeometryReader.Read"))
+            using (doc.LockDocument())
+            using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                Polyline? servitude = OpenPolyline(tr, _servitudeId);
+                if (servitude == null)
+                {
+                    AppendLog("Избраният сервитут вече не е в чертежа — изберете го отново.");
+                    tr.Commit();
+                    return null;
+                }
+
+                var axis = new List<Curve>();
+                foreach (ObjectId id in _axisIds)
+                {
+                    if (id.IsNull || id.IsErased) continue;
+                    if (tr.GetObject(id, OpenMode.ForRead) is Curve curve) axis.Add(curve);
+                }
+                if (axis.Count == 0)
+                {
+                    AppendLog("Избраната ос на трасето вече не е в чертежа — изберете я отново.");
+                    tr.Commit();
+                    return null;
+                }
+
+                var poles = new List<(string Number, double X, double Y)>();
+                foreach (PolePick pick in _polePicks)
+                {
+                    if (pick.BlockId.IsNull || pick.BlockId.IsErased) continue;
+                    if (!(tr.GetObject(pick.BlockId, OpenMode.ForRead) is BlockReference blockRef)) continue;
+                    (string number, double x, double y) = PoleFootprintExtractor.ReadNumberAndPosition(blockRef, tr);
+                    poles.Add((PoleLabels.StripPrefix(string.IsNullOrEmpty(number) ? pick.Key : number), x, y));
+                }
+
+                ServitudeEdgePoints result = ServitudeGeometryReader.Read(servitude, axis, poles, OpenParcels(tr));
+                tr.Commit();
+                return result;
+            }
+        }
+
+        /// <summary>A SERV_TOCHKA block at every numbered point; a failure here never loses the xlsx already written.</summary>
+        private void DrawServitudePoints(
+            Document doc, List<NumberedServitudePoint> left, List<NumberedServitudePoint> right, BoundingBox box)
+        {
+            try
+            {
+                var placements = new List<ServitudeLabelPlacement>();
+                var sides = new List<bool>();
+                foreach (NumberedServitudePoint point in left.Concat(right))
+                {
+                    placements.Add(ServitudePointPlacement.Place(point.Number, point.X, point.Y, point.Direction, point.IsLeft));
+                    sides.Add(point.IsLeft);
+                }
+
+                ServitudePointDrawResult result;
+                using (PerfTimer.Measure(_logger, "ServitudePointBlockWriter.Draw"))
+                {
+                    result = ServitudePointBlockWriter.Draw(doc, placements, sides, box);
+                }
+
+                foreach (string failure in result.Failures) LogWarning($"Точка на сервитута не е начертана — {failure}");
+                AppendLog($"  Точки на сервитута: {result.Drawn} блока {ServitudePointBlockNames.BlockName} начертани " +
+                          $"(ляво {result.Left}, дясно {result.Right}).");
+                if (result.Replaced > 0)
+                {
+                    _logger?.LogSuccess($"Servitude points: {result.Replaced} plugin inserts of a previous run replaced.");
+                }
+                // The screen refresh runs inside the writer's document lock; if it fails the blocks are still drawn
+                if (result.RefreshWarning != null) LogWarning(result.RefreshWarning);
+            }
+            catch (Exception ex)
+            {
+                LogWarning($"Точките на сервитута не са начертани: {ex.Message}");
+                LogFailure("Servitude points", ex);
             }
         }
 

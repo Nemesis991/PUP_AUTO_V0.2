@@ -17,6 +17,7 @@ namespace PUP_AUTO.Core
         public const string MunicipalityBalanceFile = "Общ_баланс_за_общината.xlsx";
         public const string RecapitulationFile = "Обща_рекапитулация.xlsx";
         public const string CoordinateRegisterFile = "Координатен_регистър_на_стъпките.xlsx";
+        public const string ServitudeRegisterFile = "Координатен_регистър_на_сервитута.xlsx";
         public const string NomenclaturesFolder = "Номенклатури";
         public const string EkatteRegisterFile = "EKATTE.csv";
     }
@@ -41,6 +42,34 @@ namespace PUP_AUTO.Core
         /// <summary>XData on every insert the plugin creates, so a re-run can replace exactly those.</summary>
         public const string XDataApp = "PUP_AUTO";
         public const string XDataValue = "POLE_CORNER";
+    }
+
+    /// <summary>The numbered point blocks the servitude register draws at every edge point.</summary>
+    public static class ServitudePointBlockNames
+    {
+        public const string BlockName = "SERV_TOCHKA";
+        public const string Layer = "S-Trass-сервитут";
+        public const short LayerColor = 7;
+
+        /// <summary>Attribute with the point number ("5349").</summary>
+        public const string NumberTag = "NOMER";
+        public const string NumberPrompt = "Номер на точка";
+
+        /// <summary>Text style of the number attribute, created in the drawing when missing.</summary>
+        public const string TextStyle = "NUM_Align";
+        public const string TextStyleFont = "simplex.shx";
+        public const double TextStyleWidthFactor = 0.65;
+
+        /// <summary>Height of the number attribute (drawing units).</summary>
+        public const double TextHeight = 3.0;
+
+        /// <summary>True when the block name is the servitude point block's (case-insensitive); such inserts are never poles.</summary>
+        public static bool IsServitudePointBlock(string blockName) =>
+            string.Equals(blockName?.Trim(), BlockName, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>XData on every insert the plugin creates, so a re-run can replace exactly those.</summary>
+        public const string XDataApp = "PUP_AUTO";
+        public const string XDataValue = "SERV_POINT";
     }
 
     /// <summary>Parcel XData: registered application name and the ID sentinels returned when it cannot be read.</summary>
