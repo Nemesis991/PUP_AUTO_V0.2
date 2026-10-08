@@ -219,6 +219,130 @@ namespace PUP_AUTO.Tests
     }
 
     /// <summary>The label must always sit OUTSIDE the servitude, whatever the corner, arc or boundary point it belongs to.</summary>
+    /// <summary>
+    /// A crossing near a vertex must give exactly ONE shared point, whichever way the edge is walked. Swept over many small gaps,
+    /// overlaps and vertex positions around the boundary (seeded, so it is repeatable).
+    /// </summary>
+    public class SharedVertexDirectionTests
+    {
+        private static int Shared(List<ServitudeEdgePointInput> points) => points.Count(p => p.Ekattes.Count > 1);
+
+        [Theory]
+        [InlineData(0, 100.03, 200)]
+        [InlineData(0, 99.97, 200)]
+        [InlineData(0, 100.0, 200)]
+        public void ACrossingNearAVertex_GivesOneSharedPoint_InBothDirections(double a, double b, double c)
+        {
+            (string, PlanarPolygon)[] parcels =
+            {
+                (BoundaryFixture.A, BoundaryFixture.Strip(-1, 100)), (BoundaryFixture.B, BoundaryFixture.Strip(100, 201))
+            };
+
+            List<ServitudeEdgePointInput> forward = BoundaryFixture.Walk(BoundaryFixture.Edge(a, b, c), out _, parcels);
+            List<ServitudeEdgePointInput> reversed = BoundaryFixture.Walk(BoundaryFixture.Edge(c, b, a), out _, parcels);
+
+            Assert.Equal(1, Shared(forward));
+            Assert.Equal(1, Shared(reversed));
+        }
+
+        [Fact]
+        public void AVertexExactlyOnTheBoundary_IsListedInBothЗемлища()
+        {
+            (string, PlanarPolygon)[] parcels =
+            {
+                (BoundaryFixture.A, BoundaryFixture.Strip(-1, 100)), (BoundaryFixture.B, BoundaryFixture.Strip(100, 201))
+            };
+
+            List<ServitudeEdgePointInput> forward = BoundaryFixture.Walk(BoundaryFixture.Edge(0, 100, 200), out EdgeWalkStats stats, parcels);
+
+            Assert.Contains(BoundaryFixture.A, forward[1].Ekattes);
+            Assert.Contains(BoundaryFixture.B, forward[1].Ekattes);
+            Assert.Equal(1, stats.Bridged + stats.SnappedCrossings);
+        }
+
+        [Fact]
+        public void TwoVerticesStraddlingTheBoundary_GiveExactlyOneSharedPoint_WhateverTheGapOrOverlap()
+        {
+            var random = new Random(7);
+            int checkedCases = 0;
+            for (int n = 0; n < 4000; n++)
+            {
+                double gapA = Math.Round((random.NextDouble() - 0.5) * 0.2, 3);     // A ends 100 + gapA
+                double gapB = Math.Round((random.NextDouble() - 0.5) * 0.2, 3);     // B starts 100 + gapB
+                double v1 = Math.Round(100 + (random.NextDouble() - 0.5) * 0.4, 3);
+                double v2 = Math.Round(100 + (random.NextDouble() - 0.5) * 0.4, 3);
+                if (v2 <= v1) continue;
+
+                (string, PlanarPolygon)[] parcels =
+                {
+                    (BoundaryFixture.A, BoundaryFixture.Strip(-1, 100 + gapA)), (BoundaryFixture.B, BoundaryFixture.Strip(100 + gapB, 201))
+                };
+                List<ServitudeEdgePointInput> forward = BoundaryFixture.Walk(BoundaryFixture.Edge(1, v1, v2, 199), out _, parcels);
+                List<ServitudeEdgePointInput> reversed = BoundaryFixture.Walk(BoundaryFixture.Edge(199, v2, v1, 1), out _, parcels);
+
+                Assert.True(Shared(forward) == 1, $"forward: {Shared(forward)} shared, gapA {gapA}, gapB {gapB}, v {v1} {v2}");
+                Assert.True(Shared(reversed) == 1, $"reversed: {Shared(reversed)} shared, gapA {gapA}, gapB {gapB}, v {v1} {v2}");
+                checkedCases++;
+            }
+            Assert.True(checkedCases > 1000);
+        }
+
+        [Fact]
+        public void TheSharedPoint_IsTheSameCrossingBothWays()
+        {
+            (string, PlanarPolygon)[] parcels =
+            {
+                (BoundaryFixture.A, BoundaryFixture.Strip(-1, 100)), (BoundaryFixture.B, BoundaryFixture.Strip(100, 201))
+            };
+
+            ServitudeEdgePointInput forward = BoundaryFixture.Walk(BoundaryFixture.Edge(1, 99.98, 100.03, 199), out _, parcels).Single(p => p.Ekattes.Count > 1);
+            ServitudeEdgePointInput reversed = BoundaryFixture.Walk(BoundaryFixture.Edge(199, 100.03, 99.98, 1), out _, parcels).Single(p => p.Ekattes.Count > 1);
+
+            // the vertex nearer the crossing is shared, in both directions (here 99.98 is 2 cm from it, 100.03 is 3 cm)
+            Assert.Equal(forward.X, reversed.X, 6);
+        }
+    }
+
+    public class ServitudePointsToDrawTests
+    {
+        private static ServitudeEdgePointInput Input(double x, params string[] ekatte)
+        {
+            var point = new ServitudeEdgePointInput { X = x, Y = 0 };
+            point.Ekattes.AddRange(ekatte);
+            return point;
+        }
+
+        [Fact]
+        public void TheBlocksAreExactlyThePointsListedInTheRegister_InBothDirections()
+        {
+            // a servitude of 8 points a side: 2 before, 3 inside (the last one shared), 1 outside in the middle, 2 inside, ... after
+            List<ServitudeEdgePointInput> route = new List<ServitudeEdgePointInput>
+            {
+                Input(0), Input(1), Input(2, "A"), Input(3, "A"), Input(4, "A", "B"), Input(5), Input(6, "B"), Input(7, "B"), Input(8)
+            };
+            List<ServitudeEdgePointInput> backwards = route.AsEnumerable().Reverse().ToList();
+
+            foreach (List<ServitudeEdgePointInput> direction in new[] { route, backwards })
+            {
+                List<NumberedServitudePoint> left = ServitudeRegisterBuilder.NumberInsidePickedParcels(direction, 5001, true, out _, out _);
+                List<NumberedServitudePoint> right = ServitudeRegisterBuilder.NumberInsidePickedParcels(direction, 1, false, out _, out _);
+
+                List<NumberedServitudePoint> toDraw = ServitudeRegisterBuilder.PointsToDraw(left, right);
+
+                // listed in the register = in at least one section, a shared point once
+                int listed = new[] { "A", "B" }
+                    .SelectMany(e => ServitudeRegisterBuilder.Build(left, right, e, "ВЛ", e).Rows)
+                    .SelectMany(r => new[] { r.Left, r.Right })
+                    .Where(p => p != null).Select(p => p!).Distinct().Count();
+                Assert.Equal(listed, toDraw.Count);
+                Assert.Equal(10, toDraw.Count);                                     // 5 listed points a side
+                Assert.All(toDraw, p => Assert.NotEmpty(p.Ekattes));
+                Assert.Single(left, p => p.Ekattes.Count == 0);                       // the middle gap uses its number...
+                Assert.DoesNotContain(toDraw, p => p.Ekattes.Count == 0);             // ...but gets no block
+            }
+        }
+    }
+
     public class ServitudeLabelOutsideTests
     {
         private static List<(string Number, double X, double Y)> Poles(double x1, double y1, double x2, double y2) =>

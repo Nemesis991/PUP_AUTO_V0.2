@@ -2365,7 +2365,8 @@ namespace PUP_AUTO.UI.Windows
                         $"до най-близкия възел {point.NearestVertexM:0.000} м, обединени попадения {point.MergedHits}, {between}.");
             }
             LogInfo($"  {side}: възли {stats.Vertices}, гранични точки {stats.BoundaryPoints}, обединени попадения {stats.MergedHits}, " +
-                    $"закачени към възел пресичания {stats.SnappedCrossings}, слети съседни точки {mergedNeighbours}.");
+                    $"закачени към възел пресичания {stats.SnappedCrossings}, слети общи възли {stats.SharedMerged}, " +
+                    $"свързани без пресичане {stats.Bridged}, слети съседни точки {mergedNeighbours}.");
         }
 
         /// <summary>
@@ -2456,7 +2457,7 @@ namespace PUP_AUTO.UI.Windows
                 var sides = new List<bool>();
                 int movedToOtherSide = 0;
                 // Only the points listed in the xlsx get a block: inside the picked parcels, with their final numbers
-                foreach (NumberedServitudePoint point in left.Concat(right).Where(p => p.Ekattes.Count > 0))
+                foreach (NumberedServitudePoint point in ServitudeRegisterBuilder.PointsToDraw(left, right))
                 {
                     // The label must sit OUTSIDE the servitude; one whose anchor would fall inside goes to the other side
                     placements.Add(ServitudePointPlacement.PlaceOutside(
@@ -2475,6 +2476,24 @@ namespace PUP_AUTO.UI.Windows
                 AppendLog($"  Точки на сервитута: {result.Drawn} блока {ServitudePointBlockNames.BlockName} начертани " +
                           $"(ляво {result.Left}, дясно {result.Right}); заменени {result.Replaced} от предишен пуск.");
                 _logger?.LogInfo($"Servitude points: {result.Drawn} blocks drawn (left {result.Left}, right {result.Right}), {result.Replaced} replaced.");
+                // The writer counted what is really in model space after the commit: the two numbers must agree
+                AppendLog($"  Проверка: в моделното пространство има {result.FoundInModelSpace} блока {ServitudePointBlockNames.BlockName} " +
+                          $"с етикет на плъгина (начертани {result.Drawn}). Активен лист: {(result.OnModelTab ? "Model" : result.ActiveLayout)}.");
+                _logger?.LogInfo($"Servitude points verify: drawn {result.Drawn}, found in model space {result.FoundInModelSpace}, " +
+                                 $"model tab {result.OnModelTab}, layout {result.ActiveLayout}.");
+                if (result.VerifyNote != null) LogWarning(result.VerifyNote);
+                else if (result.FoundInModelSpace != result.Drawn)
+                {
+                    LogWarning($"Начертани са {result.Drawn} блока, но в моделното пространство са намерени {result.FoundInModelSpace} — " +
+                               "блоковете не са се запазили или не са в моделното пространство.");
+                }
+                if (result.LayerRestored != null) LogWarning(result.LayerRestored + ".");
+                if (result.FrozenInViewports > 0)
+                {
+                    LogWarning($"Слоят {ServitudePointBlockNames.Layer} е замразен във {result.FrozenInViewports} изгледа (viewport) на лист " +
+                               $"{result.ActiveLayout} — блоковете са в моделното пространство, но не се виждат там. " +
+                               "Размразете слоя в изгледа (VPLAYER или Layer Properties) или отворете листа Model.");
+                }
                 if (movedToOtherSide > 0)
                 {
                     AppendLog($"  {movedToOtherSide} етикета щяха да попаднат вътре в сервитута и са преместени от другата страна.");

@@ -22,6 +22,28 @@ namespace PUP_AUTO.Geometry
         /// <summary>One entry per point that failed: its number and the call that threw. The other points are still drawn.</summary>
         public List<string> Failures { get; } = new List<string>();
 
+        /// <summary>
+        /// After the commit, the tagged SERV_TOCHKA inserts found in model space: it must equal <see cref="Drawn"/> (plus nothing
+        /// else, since the previous run's were erased first). A difference means the blocks did not persist or are not in model space.
+        /// </summary>
+        public int FoundInModelSpace { get; set; }
+
+        /// <summary>
+        /// On a layout tab: in how many of the layout's viewports the layer is frozen (a viewport freeze hides the blocks there even
+        /// though they are in model space). 0 on the Model tab.
+        /// </summary>
+        public int FrozenInViewports { get; set; }
+
+        /// <summary>The block count could not be checked (the verification itself threw).</summary>
+        public string? VerifyNote { get; set; }
+
+        /// <summary>The layer was off or frozen and was switched on / thawed, so the blocks show.</summary>
+        public string? LayerRestored { get; set; }
+
+        /// <summary>The layout the drawing is showing, and whether that is the Model tab: for the log, since a block is always written to model space.</summary>
+        public string ActiveLayout { get; set; } = string.Empty;
+        public bool OnModelTab { get; set; }
+
         /// <summary>Set when the blocks were drawn but the screen refresh failed (low-level, not a drawing failure).</summary>
         public string? RefreshWarning { get; set; }
     }
@@ -65,6 +87,7 @@ namespace PUP_AUTO.Geometry
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
                     DrawingWriter.EnsureLayer(db, tr, ServitudePointBlockNames.Layer, ServitudePointBlockNames.LayerColor);
+                    result.LayerRestored = MakeLayerVisible(db, tr);
                     EnsureRegApp(db, tr);
                     ObjectId styleId = EnsureTextStyle(db, tr);
                     ObjectId blockId = EnsureBlock(db, tr, styleId);
@@ -115,6 +138,8 @@ namespace PUP_AUTO.Geometry
                     tr.Commit();
                 }
 
+                Verify(db, result);
+
                 // The refresh needs the document lock too (eLockViolation outside it); never let it turn a drawn result into a failure
                 try
                 {
@@ -125,6 +150,77 @@ namespace PUP_AUTO.Geometry
                 {
                     result.RefreshWarning = $"екранът не е опреснен ({ex.ErrorStatus}) — блоковете са начертани, опреснете с REGEN.";
                 }
+            }
+        }
+
+        /// <summary>The layer on and thawed (a layer left off or frozen by an earlier run hides every block); a note when it was changed.</summary>
+        private static string? MakeLayerVisible(Database db, Transaction tr)
+        {
+            var layers = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+            var layer = (LayerTableRecord)tr.GetObject(layers[ServitudePointBlockNames.Layer], OpenMode.ForRead);
+            if (!layer.IsOff && !layer.IsFrozen) return null;
+
+            string was = layer.IsOff && layer.IsFrozen ? "изключен и замразен" : layer.IsOff ? "изключен" : "замразен";
+            try
+            {
+                layer.UpgradeOpen();
+                layer.IsOff = false;
+                if (layer.IsFrozen && db.Clayer != layer.ObjectId) layer.IsFrozen = false;
+                return $"слой {ServitudePointBlockNames.Layer} беше {was}" + (layer.IsFrozen ? " (текущият слой не може да се размрази)" : " — включен е");
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception ex)
+            {
+                return $"слой {ServitudePointBlockNames.Layer} е {was} и не можа да се включи ({ex.ErrorStatus})";
+            }
+        }
+
+        /// <summary>
+        /// After the commit, in a transaction of its own: how many tagged SERV_TOCHKA inserts are really in model space, which
+        /// layout is showing, and whether that is the Model tab. Never throws; a failure is a note.
+        /// </summary>
+        private static void Verify(Database db, ServitudePointDrawResult result)
+        {
+            try
+            {
+                result.OnModelTab = db.TileMode;
+                result.ActiveLayout = LayoutManager.Current.CurrentLayout;
+
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                    if (!bt.Has(ServitudePointBlockNames.BlockName)) { tr.Commit(); return; }
+                    ObjectId modelSpace = bt[BlockTableRecord.ModelSpace];
+                    var block = (BlockTableRecord)tr.GetObject(bt[ServitudePointBlockNames.BlockName], OpenMode.ForRead);
+
+                    int found = 0;
+                    foreach (ObjectId id in block.GetBlockReferenceIds(true, false))
+                    {
+                        if (!(tr.GetObject(id, OpenMode.ForRead) is BlockReference br) || br.IsErased) continue;
+                        if (br.OwnerId == modelSpace && IsTagged(br)) found++;
+                    }
+                    result.FoundInModelSpace = found;
+
+                    // On a layout tab the viewports have their own layer freeze, which hides a layer in that viewport only
+                    if (!db.TileMode)
+                    {
+                        var layers = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+                        ObjectId layerId = layers[ServitudePointBlockNames.Layer];
+                        var layout = (Layout)tr.GetObject(LayoutManager.Current.GetLayoutId(result.ActiveLayout), OpenMode.ForRead);
+                        foreach (ObjectId viewportId in layout.GetViewports())
+                        {
+                            if (tr.GetObject(viewportId, OpenMode.ForRead) is Viewport viewport && viewport.Number != 1 &&
+                                viewport.IsLayerFrozenInViewport(layerId))
+                            {
+                                result.FrozenInViewports++;
+                            }
+                        }
+                    }
+                    tr.Commit();
+                }
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception ex)
+            {
+                result.VerifyNote = $"броят на блоковете в чертежа не можа да се провери ({ex.ErrorStatus})";
             }
         }
 

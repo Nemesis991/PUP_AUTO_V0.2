@@ -32,6 +32,12 @@ namespace PUP_AUTO.CadRegister
 
         /// <summary>Boundary points only: true when the span is an overlap of the two землища, false for a gap.</summary>
         public bool IsOverlap { get; set; }
+
+        /// <summary>The землище this point's own position resolves to (null when it is in none); set by the edge walker.</summary>
+        public string? OwnEkatte { get; set; }
+
+        /// <summary>How far (m) the crossing that made this vertex a shared point was from it; 0 for an inserted boundary point.</summary>
+        public double SnapDistanceM { get; set; }
     }
 
     /// <summary>A numbered point of one edge, ready for the table and for the drawing.</summary>
@@ -96,6 +102,14 @@ namespace PUP_AUTO.CadRegister
         public const string TitlePrefix = "КООРДИНАТЕН РЕГИСТЪР НА СЕРВИТУТА НА ";
         public const int DefaultLeftStart = 5001;
         public const int DefaultRightStart = 1;
+
+        /// <summary>
+        /// The points that get a block in the drawing: exactly those listed in the xlsx (in at least one section), left edge then
+        /// right edge. A shared boundary point is one block, not two; a numbered point left out of every section gets none.
+        /// </summary>
+        public static List<NumberedServitudePoint> PointsToDraw(
+            IEnumerable<NumberedServitudePoint> left, IEnumerable<NumberedServitudePoint> right) =>
+            left.Concat(right).Where(p => p.Ekattes.Count > 0).ToList();
 
         /// <summary>Consecutive points closer than this are one point (m).</summary>
         public const double MinPointSpacingM = 0.01;

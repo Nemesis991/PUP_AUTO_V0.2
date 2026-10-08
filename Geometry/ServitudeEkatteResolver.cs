@@ -42,6 +42,18 @@ namespace PUP_AUTO.Geometry
             return found;
         }
 
+        /// <summary>The distance (m) from the point to the nearest picked parcel of the EKATTE; 0 inside one, infinity when it has none.</summary>
+        public double DistanceToEkatte(string ekatte, double x, double y)
+        {
+            double best = double.PositiveInfinity;
+            foreach ((string code, PlanarPolygon outline) in _parcels)
+            {
+                if (!string.Equals(code, ekatte, StringComparison.Ordinal)) continue;
+                best = Math.Min(best, outline.Contains(x, y) ? 0 : outline.DistanceToBoundary(x, y));
+            }
+            return best;
+        }
+
         /// <summary>
         /// The EKATTE the point is listed under: the parcel it is in, else <paramref name="previous"/> when the point is
         /// within the gap tolerance of a picked parcel of that EKATTE, else null (left out of the register).

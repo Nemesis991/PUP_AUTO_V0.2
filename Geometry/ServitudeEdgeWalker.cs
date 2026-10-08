@@ -18,6 +18,12 @@ namespace PUP_AUTO.Geometry
         /// <summary>Boundary points with a gap between the two землища, and with an overlap.</summary>
         public int Gaps { get; set; }
         public int Overlaps { get; set; }
+
+        /// <summary>Neighbouring shared vertices of one crossing reduced to a single shared point.</summary>
+        public int SharedMerged { get; set; }
+
+        /// <summary>A change of землище between two neighbouring points that no crossing had bridged: one of them was made shared.</summary>
+        public int Bridged { get; set; }
     }
 
     /// <summary>
@@ -45,6 +51,7 @@ namespace PUP_AUTO.Geometry
 
             // A crossing that falls on the next vertex makes that vertex the boundary point, listed in both землища
             var pending = new List<string>();
+            double pendingSnap = 0;
 
             for (int i = 0; i < vertices.Count; i++)
             {
@@ -60,9 +67,11 @@ namespace PUP_AUTO.Geometry
                 {
                     X = vertex.X,
                     Y = vertex.Y,
-                    Direction = Average(incoming, outgoing)
+                    Direction = Average(incoming, outgoing),
+                    OwnEkatte = ekatte
                 };
                 foreach (string code in pending) AddEkatte(vertexPoint, code);
+                if (pending.Count > 0) vertexPoint.SnapDistanceM = pendingSnap;
                 if (ekatte != null) AddEkatte(vertexPoint, ekatte);
                 points.Add(vertexPoint);
                 previousEkatte = ekatte ?? pending.FirstOrDefault();
@@ -81,16 +90,22 @@ namespace PUP_AUTO.Geometry
                     double toStart = Distance(vertex.X, vertex.Y, x, y);
                     double toEnd = Distance(next.X, next.Y, x, y);
 
-                    if (toStart <= SnapTolM)
+                    // The nearer of the two vertices takes the crossing, so the choice does not depend on the direction the edge is
+                    // walked; an exact tie goes to the vertex with the lower coordinate
+                    bool startIsNearer = toStart < toEnd ||
+                        (Math.Abs(toStart - toEnd) < 1e-9 && (vertex.X < next.X || (vertex.X == next.X && vertex.Y <= next.Y)));
+                    if (toStart <= SnapTolM && startIsNearer)
                     {
                         AddEkatte(vertexPoint, crossing.From);
                         AddEkatte(vertexPoint, crossing.To);
+                        vertexPoint.SnapDistanceM = toStart;
                         previousEkatte = crossing.To;
                         stats.SnappedCrossings++;
                         continue;
                     }
-                    if (toEnd <= SnapTolM)
+                    if (toEnd <= SnapTolM && (!startIsNearer || toStart > SnapTolM))
                     {
+                        pendingSnap = toEnd;
                         pending.Clear();
                         pending.Add(crossing.From);
                         pending.Add(crossing.To);
@@ -120,8 +135,70 @@ namespace PUP_AUTO.Geometry
                     if (crossing.SpanM > 0) { if (crossing.IsOverlap) stats.Overlaps++; else stats.Gaps++; }
                 }
             }
+            return Consolidate(points, resolver, stats);
+        }
+
+        /// <summary>
+        /// Two checks that make the shared points independent of the direction the edge is walked. (1) Neighbouring points that are
+        /// shared by the same pair of землища and lie within <see cref="BoundaryCrossingFinder.ClusterTolM"/> of each other are one
+        /// crossing: only the one nearest the crossing stays shared, the others go back to their own землище. (2) Where two
+        /// neighbouring points are in different землища and nothing is shared between them (a vertex ON the boundary, or hits that
+        /// all fell on the segment ends), one of them is made shared: the one nearer the other землище's parcels.
+        /// </summary>
+        private static List<ServitudeEdgePointInput> Consolidate(
+            List<ServitudeEdgePointInput> points, ServitudeEkatteResolver resolver, EdgeWalkStats stats)
+        {
+            // (1) clusters of shared points with the same pair
+            int i = 0;
+            while (i < points.Count)
+            {
+                if (points[i].Ekattes.Count < 2) { i++; continue; }
+                int j = i;
+                while (j + 1 < points.Count && SamePair(points[j], points[j + 1]) &&
+                       Distance(points[j].X, points[j].Y, points[j + 1].X, points[j + 1].Y) <= BoundaryCrossingFinder.ClusterTolM)
+                {
+                    j++;
+                }
+
+                if (j > i)
+                {
+                    var group = points.Skip(i).Take(j - i + 1).ToList();
+                    if (group.All(p => p.OwnEkatte != null && p.Ekattes.Contains(p.OwnEkatte, StringComparer.Ordinal)))
+                    {
+                        // the inserted boundary point (distance 0) wins, then the vertex nearest its crossing; a tie goes to the lower coordinate
+                        ServitudeEdgePointInput winner = group
+                            .OrderBy(p => p.IsBoundary ? 0 : 1).ThenBy(p => p.SnapDistanceM).ThenBy(p => p.X).ThenBy(p => p.Y).First();
+                        foreach (ServitudeEdgePointInput loser in group.Where(p => !ReferenceEquals(p, winner)))
+                        {
+                            loser.Ekattes.Clear();
+                            loser.Ekattes.Add(loser.OwnEkatte!);
+                            stats.SharedMerged++;
+                        }
+                    }
+                }
+                i = j + 1;
+            }
+
+            // (2) a change of землище with nothing shared across it
+            for (int k = 0; k + 1 < points.Count; k++)
+            {
+                ServitudeEdgePointInput a = points[k], b = points[k + 1];
+                if (a.Ekattes.Count == 0 || b.Ekattes.Count == 0) continue;
+                if (a.Ekattes.Intersect(b.Ekattes, StringComparer.Ordinal).Any()) continue;
+
+                string from = a.Ekattes[a.Ekattes.Count - 1], to = b.Ekattes[0];
+                double aToOther = resolver.DistanceToEkatte(to, a.X, a.Y);
+                double bToOther = resolver.DistanceToEkatte(from, b.X, b.Y);
+                bool shareA = aToOther < bToOther || (aToOther == bToOther && (a.X < b.X || (a.X == b.X && a.Y <= b.Y)));
+                if (shareA) AddEkatte(a, to); else AddEkatte(b, from);
+                (shareA ? a : b).SnapDistanceM = Math.Min(aToOther, bToOther);
+                stats.Bridged++;
+            }
             return points;
         }
+
+        private static bool SamePair(ServitudeEdgePointInput a, ServitudeEdgePointInput b) =>
+            a.Ekattes.Count == b.Ekattes.Count && a.Ekattes.All(e => b.Ekattes.Contains(e, StringComparer.Ordinal));
 
         private static void AddEkatte(ServitudeEdgePointInput point, string ekatte)
         {
