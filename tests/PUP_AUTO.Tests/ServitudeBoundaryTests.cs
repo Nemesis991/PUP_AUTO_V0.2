@@ -343,6 +343,160 @@ namespace PUP_AUTO.Tests
         }
     }
 
+    /// <summary>
+    /// "Обратна посока" changes only the numbers: a point at a given location must get the same rotation, justification and
+    /// alignment point whichever way the route is counted.
+    /// </summary>
+    public class ServitudeLabelDirectionIndependenceTests
+    {
+        private const double Step = Math.PI / 12;       // 15 degrees
+
+        /// <summary>
+        /// A corridor 20 m wide: 100 m east, a quarter arc turning left (axis radius 100, edges 90 and 110), 100 m north, then a
+        /// sharp left corner and 100 m west.
+        /// </summary>
+        private static (List<EdgeVertex> Outline, List<(double X, double Y)> Axis) Corridor()
+        {
+            double bulge = Math.Tan(Step / 4);
+            (double X, double Y) arc(double r, int k) => (100 + r * Math.Cos(-Math.PI / 2 + k * Step), 100 + r * Math.Sin(-Math.PI / 2 + k * Step));
+
+            var right = new List<EdgeVertex> { new EdgeVertex(0, -10, 0) };
+            for (int k = 0; k <= 6; k++) right.Add(new EdgeVertex(arc(110, k).X, arc(110, k).Y, k < 6 ? bulge : 0));
+            right.Add(new EdgeVertex(210, 210, 0));         // the outer corner
+            right.Add(new EdgeVertex(100, 210, 0));
+
+            var left = new List<EdgeVertex> { new EdgeVertex(0, 10, 0) };
+            for (int k = 0; k <= 6; k++) left.Add(new EdgeVertex(arc(90, k).X, arc(90, k).Y, k < 6 ? bulge : 0));
+            left.Add(new EdgeVertex(190, 190, 0));          // the inner corner
+            left.Add(new EdgeVertex(100, 190, 0));
+
+            // the right edge forward, then the left edge back: a closed loop; bulges of the reversed left run are negated
+            var back = new List<EdgeVertex>();
+            for (int i = left.Count - 1; i >= 0; i--) back.Add(new EdgeVertex(left[i].X, left[i].Y, i > 0 ? -left[i - 1].Bulge : 0));
+            var outline = right.Concat(back).ToList();
+
+            var axis = new List<(double X, double Y)> { (0, 0) };
+            for (int k = 0; k <= 6; k++) axis.Add(arc(100, k));
+            axis.Add((200, 200));
+            axis.Add((100, 200));
+            return (outline, axis);
+        }
+
+        private static List<(NumberedServitudePoint Point, ServitudeLabelPlacement Label)> Labels(bool reverse)
+        {
+            (List<EdgeVertex> outline, List<(double X, double Y)> axis) = Corridor();
+            ServitudeEdgeResult split = ServitudeEdges.Split(outline, true, axis,
+                new List<(string, double, double)> { ("1", 0, 0), ("2", 100, 200) }, reverse);
+            Assert.True(split.Ok, split.Error);
+            PlanarPolygon servitude = PlanarPolygon.FromBulgeVertices(outline.Select(v => (v.X, v.Y, v.Bulge)).ToList());
+
+            var resolver = new ServitudeEkatteResolver(new List<(string, PlanarPolygon)>());
+            var labels = new List<(NumberedServitudePoint, ServitudeLabelPlacement)>();
+            foreach ((ServitudeEdge edge, int start, bool isLeft) in new[] { (split.Left!, 5001, true), (split.Right!, 1, false) })
+            {
+                List<ServitudeEdgePointInput> walked = ServitudeEdgeWalker.Walk(
+                    edge, resolver, (s, a, b) => new List<double>(), new EdgeWalkStats());
+                foreach (ServitudeEdgePointInput input in walked) input.Ekattes.Add("A");
+                foreach (NumberedServitudePoint point in ServitudeRegisterBuilder.Number(walked, start, isLeft))
+                {
+                    labels.Add((point, ServitudePointPlacement.PlaceInForwardOrientation(
+                        point.Number, point.X, point.Y, point.Direction, point.IsLeft, reverse, servitude, out _)));
+                }
+            }
+            return labels;
+        }
+
+        private static double AngleDifference(double a, double b)
+        {
+            double d = Math.Abs(ServitudePointPlacement.Normalize(a) - ServitudePointPlacement.Normalize(b));
+            return Math.Min(d, 2 * Math.PI - d);
+        }
+
+        [Fact]
+        public void EveryLocation_GetsTheSameLabel_ForwardAndReversed()
+        {
+            var forward = Labels(false);
+            var reversed = Labels(true);
+            Assert.Equal(forward.Count, reversed.Count);
+
+            var byLocation = forward.ToDictionary(l => (Math.Round(l.Point.X, 6), Math.Round(l.Point.Y, 6)));
+            foreach (var (point, label) in reversed)
+            {
+                var match = byLocation[(Math.Round(point.X, 6), Math.Round(point.Y, 6))];
+
+                Assert.True(AngleDifference(match.Label.Rotation, label.Rotation) < 1e-9, $"rotation differs at ({point.X:0.###}, {point.Y:0.###})");
+                Assert.Equal(match.Label.MiddleLeft, label.MiddleLeft);
+                Assert.Equal(match.Label.AlignX, label.AlignX, 9);
+                Assert.Equal(match.Label.AlignY, label.AlignY, 9);
+            }
+        }
+
+        [Fact]
+        public void OnlyTheNumberDiffers_AndTheNumbersRunTheOtherWay()
+        {
+            var forward = Labels(false);
+            var reversed = Labels(true);
+
+            // the first left point forward is at the start of the route, in the reversed run it is at the end
+            Assert.Equal(5001, forward.First(l => l.Point.IsLeft).Point.Number);
+            Assert.Equal(5001, reversed.First(l => l.Point.IsLeft).Point.Number);
+            Assert.NotEqual(forward.First(l => l.Point.IsLeft).Point.X, reversed.First(l => l.Point.IsLeft).Point.X);
+
+            var byLocation = forward.ToDictionary(l => (Math.Round(l.Point.X, 6), Math.Round(l.Point.Y, 6)));
+            Assert.Contains(reversed, l => byLocation[(Math.Round(l.Point.X, 6), Math.Round(l.Point.Y, 6))].Point.Number != l.Point.Number);
+        }
+
+        [Fact]
+        public void TheLabels_StayOutsideTheServitude_InBothDirections()
+        {
+            (List<EdgeVertex> outline, _) = Corridor();
+            PlanarPolygon servitude = PlanarPolygon.FromBulgeVertices(outline.Select(v => (v.X, v.Y, v.Bulge)).ToList());
+
+            foreach (bool reverse in new[] { false, true })
+            {
+                foreach (var (point, label) in Labels(reverse))
+                {
+                    Assert.False(servitude.Contains(label.AlignX, label.AlignY), $"label of {point.Number} inside (reverse {reverse})");
+                }
+            }
+        }
+
+        [Fact]
+        public void TheSample_StillGivesTheForwardLabel()
+        {
+            // a left-edge point whose label sits at theta = 339.36 degrees: MiddleRight, the text ending 3.40 m before the point
+            double edge = 339.36 * Math.PI / 180 + Math.PI / 2;
+
+            ServitudeLabelPlacement forward = ServitudePointPlacement.PlaceInForwardOrientation(5349, 100, 200, edge, true, false, null, out _);
+            // the same location in a reversed run: the walk turned 180 degrees and the edge is on the other side
+            ServitudeLabelPlacement reversed = ServitudePointPlacement.PlaceInForwardOrientation(
+                1, 100, 200, edge + Math.PI, false, true, null, out _);
+
+            foreach (ServitudeLabelPlacement label in new[] { forward, reversed })
+            {
+                Assert.Equal(339.36 * Math.PI / 180, label.Rotation, 6);
+                Assert.False(label.MiddleLeft);
+                double dx = label.AlignX - 100, dy = label.AlignY - 200;
+                Assert.Equal(3.40, Math.Sqrt(dx * dx + dy * dy), 6);
+                Assert.Equal(ServitudePointPlacement.Normalize(339.36 * Math.PI / 180 + Math.PI),
+                    ServitudePointPlacement.Normalize(Math.Atan2(dy, dx)), 6);
+            }
+        }
+
+        [Fact]
+        public void WithoutTheFix_AReversedWalkWouldReadTheOtherWay()
+        {
+            // the old behaviour, kept as documentation of what the helper corrects: the same point placed straight from the reversed
+            // walk's direction and side has the opposite rotation
+            double edge = 0;
+            ServitudeLabelPlacement forward = ServitudePointPlacement.Place(1, 50, 50, edge, true);
+            ServitudeLabelPlacement naive = ServitudePointPlacement.Place(1, 50, 50, edge + Math.PI, false);
+
+            Assert.True(AngleDifference(forward.Rotation, naive.Rotation) > 3);
+            Assert.NotEqual(forward.MiddleLeft, naive.MiddleLeft);
+        }
+    }
+
     public class ServitudeLabelOutsideTests
     {
         private static List<(string Number, double X, double Y)> Poles(double x1, double y1, double x2, double y2) =>

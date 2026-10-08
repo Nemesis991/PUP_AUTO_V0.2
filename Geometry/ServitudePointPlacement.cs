@@ -103,6 +103,27 @@ namespace PUP_AUTO.Geometry
             return other;
         }
 
+        /// <summary>
+        /// <see cref="PlaceOutside"/> for a point of a walk that may have been reversed ("Обратна посока"). The label of a point must
+        /// look the same whichever way the numbers run, so it is always worked out in the FORWARD orientation of the route: a
+        /// reversed walk turns every edge direction by 180° and swaps left and right, which is undone here before the placement.
+        /// Only the number differs between the two runs.
+        /// </summary>
+        /// <param name="walkDirection">The direction of travel along the edge in the walk that numbered the point (radians).</param>
+        /// <param name="isLeftOfWalk">The side of that walk's direction of travel the point's edge is on.</param>
+        /// <param name="routeReversed">True when that walk ran against the forward orientation of the route.</param>
+        public static ServitudeLabelPlacement PlaceInForwardOrientation(
+            int number, double x, double y, double walkDirection, bool isLeftOfWalk, bool routeReversed,
+            PlanarPolygon? servitude, out bool movedToOtherSide)
+        {
+            if (routeReversed)
+            {
+                walkDirection = Normalize(walkDirection + Math.PI);
+                isLeftOfWalk = !isLeftOfWalk;
+            }
+            return PlaceOutside(number, x, y, walkDirection, isLeftOfWalk, servitude, out movedToOtherSide);
+        }
+
         /// <summary>An angle brought into [0, 2π).</summary>
         public static double Normalize(double radians)
         {

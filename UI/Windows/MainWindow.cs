@@ -2334,7 +2334,7 @@ namespace PUP_AUTO.UI.Windows
 
                 if (_chkDrawServitudePoints.IsChecked == true)
                 {
-                    DrawServitudePoints(doc, left, right, edges.Outline);
+                    DrawServitudePoints(doc, left, right, edges.Outline, edges.RouteReversedByRequest);
                 }
                 else
                 {
@@ -2449,7 +2449,8 @@ namespace PUP_AUTO.UI.Windows
 
         /// <summary>A SERV_TOCHKA block at every numbered point; a failure here never loses the xlsx already written.</summary>
         private void DrawServitudePoints(
-            Document doc, List<NumberedServitudePoint> left, List<NumberedServitudePoint> right, PlanarPolygon? outline)
+            Document doc, List<NumberedServitudePoint> left, List<NumberedServitudePoint> right, PlanarPolygon? outline,
+            bool routeReversed)
         {
             try
             {
@@ -2460,8 +2461,9 @@ namespace PUP_AUTO.UI.Windows
                 foreach (NumberedServitudePoint point in ServitudeRegisterBuilder.PointsToDraw(left, right))
                 {
                     // The label must sit OUTSIDE the servitude; one whose anchor would fall inside goes to the other side
-                    placements.Add(ServitudePointPlacement.PlaceOutside(
-                        point.Number, point.X, point.Y, point.Direction, point.IsLeft, outline, out bool moved));
+                    // Worked out in the forward orientation of the route, so a point looks the same with "Обратна посока"
+                    placements.Add(ServitudePointPlacement.PlaceInForwardOrientation(
+                        point.Number, point.X, point.Y, point.Direction, point.IsLeft, routeReversed, outline, out bool moved));
                     if (moved) movedToOtherSide++;
                     sides.Add(point.IsLeft);
                 }
