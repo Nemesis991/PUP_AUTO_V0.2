@@ -70,6 +70,7 @@ namespace PUP_AUTO.UI.Windows
         private TextBox _txtServitudeLeftStart = null!;
         private TextBox _txtServitudeRightStart = null!;
         private CheckBox _chkDrawServitudePoints = null!;
+        private CheckBox _chkReverseRoute = null!;
         private TextBox _txtLog = null!;
         private Button _btnGenerate = null!;
         private Button _btnOpenFolder = null!;
@@ -512,7 +513,7 @@ namespace PUP_AUTO.UI.Windows
         /// </summary>
         private UIElement BuildServitudeOptions()
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(28, 0, 0, 0) };
+            var row = new WrapPanel { Margin = new Thickness(28, 0, 0, 0) };
 
             _txtServitudeLeftStart = NumberBox(ServitudeRegisterBuilder.DefaultLeftStart);
             _txtServitudeRightStart = NumberBox(ServitudeRegisterBuilder.DefaultRightStart);
@@ -540,6 +541,17 @@ namespace PUP_AUTO.UI.Windows
                           $"в слой {ServitudePointBlockNames.Layer}"
             };
             row.Children.Add(_chkDrawServitudePoints);
+
+            _chkReverseRoute = new CheckBox
+            {
+                Content = new TextBlock { Text = "Обратна посока", FontSize = 12 },
+                IsChecked = false,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(18, 0, 0, 0),
+                ToolTip = "Броенето започва от другия край на трасето. \"Ляво\" и \"дясно\" са спрямо посоката на движение, " +
+                          "затова страните се разменят: това, което иначе е дясно, става ляво и получава номерата от \"Ляво от\"."
+            };
+            row.Children.Add(_chkReverseRoute);
 
             return row;
         }
@@ -2228,9 +2240,19 @@ namespace PUP_AUTO.UI.Windows
                 {
                     AppendLog("  Осът на трасето е обърнат, за да върви от най-малкия към най-големия номер стълб.");
                 }
+                if (edges.RouteReversedByRequest)
+                {
+                    AppendLog("  Обратна посока: броенето започва от другия край на трасето; ляво и дясно са разменени.");
+                }
                 if (edges.DuplicatesDropped > 0)
                 {
                     AppendLog($"  Пропуснати {edges.DuplicatesDropped} повтарящи се възела на сервитута.");
+                }
+                if (edges.LeftMerged + edges.RightMerged > 0)
+                {
+                    LogWarning($"{edges.LeftMerged + edges.RightMerged} съседни точки на по-малко от " +
+                               $"{ServitudeRegisterBuilder.MinPointSpacingM * 100:0} см бяха слети с предходната " +
+                               $"(ляво {edges.LeftMerged}, дясно {edges.RightMerged}).");
                 }
                 if (edges.GapsBetweenSettlements > 0)
                 {
@@ -2242,6 +2264,8 @@ namespace PUP_AUTO.UI.Windows
                 List<NumberedServitudePoint> right = ServitudeRegisterBuilder.Number(edges.Right, rightStart, false);
                 LogPointsLeftOut("ляво", left);
                 LogPointsLeftOut("дясно", right);
+                LogBoundaryDiagnostics("ляво", left, edges.LeftStats, edges.LeftMerged);
+                LogBoundaryDiagnostics("дясно", right, edges.RightStats, edges.RightMerged);
 
                 LoadReportReferenceData(out _, out EkatteRegister ekatte);
                 MunicipalityGroupingResult grouping = GroupParcelsForReport(
@@ -2293,13 +2317,32 @@ namespace PUP_AUTO.UI.Windows
                 using (PerfTimer.Measure(_logger, "ServitudeRegisterExporter.Export")) path = ServitudeRegisterExporter.Export(sheets, _projectDir);
                 AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
 
-                if (_chkDrawServitudePoints.IsChecked == true) DrawServitudePoints(doc, left, right, edges.Box);
+                if (_chkDrawServitudePoints.IsChecked == true) DrawServitudePoints(doc, left, right, edges.Box, edges.Outline);
             }
             catch (Exception ex)
             {
                 AppendLog($"ГРЕШКА при регистъра на сервитута: {ex.Message}");
                 LogFailure("Servitude register", ex);
             }
+        }
+
+        /// <summary>
+        /// Numbers only, no names: one line per boundary point (side, number, the two EKATTE codes, the distance to the nearest
+        /// vertex, how many raw hits were merged into it, the gap or overlap between the two землища there) and one summary
+        /// line per side. These go to the log file as well, since they are what tells a wrong boundary point from a right one.
+        /// </summary>
+        private void LogBoundaryDiagnostics(string side, List<NumberedServitudePoint> points, EdgeWalkStats stats, int mergedNeighbours)
+        {
+            foreach (NumberedServitudePoint point in points.Where(p => p.IsBoundary))
+            {
+                string between = point.SpanM <= 0
+                    ? "без разстояние между землищата"
+                    : $"{(point.IsOverlap ? "припокриване" : "празнина")} {point.SpanM:0.000} м";
+                LogInfo($"  Гранична точка {side} {point.Number}: {string.Join("→", point.Ekattes)}, " +
+                        $"до най-близкия възел {point.NearestVertexM:0.000} м, обединени попадения {point.MergedHits}, {between}.");
+            }
+            LogInfo($"  {side}: възли {stats.Vertices}, гранични точки {stats.BoundaryPoints}, обединени попадения {stats.MergedHits}, " +
+                    $"закачени към възел пресичания {stats.SnappedCrossings}, слети съседни точки {mergedNeighbours}.");
         }
 
         /// <summary>
@@ -2366,7 +2409,8 @@ namespace PUP_AUTO.UI.Windows
                     poles.Add((PoleLabels.StripPrefix(string.IsNullOrEmpty(number) ? pick.Key : number), x, y));
                 }
 
-                ServitudeEdgePoints result = ServitudeGeometryReader.Read(servitude, axis, poles, OpenParcels(tr));
+                ServitudeEdgePoints result = ServitudeGeometryReader.Read(
+                    servitude, axis, poles, OpenParcels(tr), _chkReverseRoute.IsChecked == true);
                 tr.Commit();
                 return result;
             }
@@ -2374,15 +2418,20 @@ namespace PUP_AUTO.UI.Windows
 
         /// <summary>A SERV_TOCHKA block at every numbered point; a failure here never loses the xlsx already written.</summary>
         private void DrawServitudePoints(
-            Document doc, List<NumberedServitudePoint> left, List<NumberedServitudePoint> right, BoundingBox box)
+            Document doc, List<NumberedServitudePoint> left, List<NumberedServitudePoint> right, BoundingBox box,
+            PlanarPolygon? outline)
         {
             try
             {
                 var placements = new List<ServitudeLabelPlacement>();
                 var sides = new List<bool>();
+                int movedToOtherSide = 0;
                 foreach (NumberedServitudePoint point in left.Concat(right))
                 {
-                    placements.Add(ServitudePointPlacement.Place(point.Number, point.X, point.Y, point.Direction, point.IsLeft));
+                    // The label must sit OUTSIDE the servitude; one whose anchor would fall inside goes to the other side
+                    placements.Add(ServitudePointPlacement.PlaceOutside(
+                        point.Number, point.X, point.Y, point.Direction, point.IsLeft, outline, out bool moved));
+                    if (moved) movedToOtherSide++;
                     sides.Add(point.IsLeft);
                 }
 
@@ -2395,6 +2444,16 @@ namespace PUP_AUTO.UI.Windows
                 foreach (string failure in result.Failures) LogWarning($"Точка на сервитута не е начертана — {failure}");
                 AppendLog($"  Точки на сервитута: {result.Drawn} блока {ServitudePointBlockNames.BlockName} начертани " +
                           $"(ляво {result.Left}, дясно {result.Right}).");
+                if (movedToOtherSide > 0)
+                {
+                    AppendLog($"  {movedToOtherSide} етикета щяха да попаднат вътре в сервитута и са преместени от другата страна.");
+                    _logger?.LogInfo($"Servitude point labels moved to the other side of the point: {movedToOtherSide}.");
+                }
+                if (result.DefinitionsUnlocked > 0)
+                {
+                    LogInfo($"  Определението на {ServitudePointBlockNames.BlockName} от по-ранна версия е отключено — " +
+                            "текстът вече се движи и върти без точката.");
+                }
                 if (result.Replaced > 0)
                 {
                     _logger?.LogSuccess($"Servitude points: {result.Replaced} plugin inserts of a previous run replaced.");

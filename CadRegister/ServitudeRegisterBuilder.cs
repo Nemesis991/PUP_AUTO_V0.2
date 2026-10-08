@@ -20,6 +20,18 @@ namespace PUP_AUTO.CadRegister
 
         /// <summary>True for a point inserted where the edge crosses a землище boundary (not an outline vertex).</summary>
         public bool IsBoundary { get; set; }
+
+        /// <summary>Boundary points only: the distance (m) to the nearest outline vertex of the edge.</summary>
+        public double NearestVertexM { get; set; }
+
+        /// <summary>Boundary points only: how many raw parcel-boundary hits were merged into this point.</summary>
+        public int MergedHits { get; set; }
+
+        /// <summary>Boundary points only: the gap (or overlap) between the two землища here, in metres.</summary>
+        public double SpanM { get; set; }
+
+        /// <summary>Boundary points only: true when the span is an overlap of the two землища, false for a gap.</summary>
+        public bool IsOverlap { get; set; }
     }
 
     /// <summary>A numbered point of one edge, ready for the table and for the drawing.</summary>
@@ -38,6 +50,12 @@ namespace PUP_AUTO.CadRegister
         public bool IsLeft { get; set; }
 
         public bool IsBoundary { get; set; }
+
+        /// <summary>Diagnostics of a boundary point, carried over from <see cref="ServitudeEdgePointInput"/>.</summary>
+        public double NearestVertexM { get; set; }
+        public int MergedHits { get; set; }
+        public double SpanM { get; set; }
+        public bool IsOverlap { get; set; }
 
         public List<string> Ekattes { get; } = new List<string>();
     }
@@ -79,6 +97,40 @@ namespace PUP_AUTO.CadRegister
         public const int DefaultLeftStart = 5001;
         public const int DefaultRightStart = 1;
 
+        /// <summary>Consecutive points closer than this are one point (m).</summary>
+        public const double MinPointSpacingM = 0.01;
+
+        /// <summary>
+        /// Safety net before numbering: of two consecutive points closer than <see cref="MinPointSpacingM"/> the first is kept
+        /// and the second dropped, its землища added to the kept one so no section loses it. Done before the numbers are
+        /// handed out, so the numbering stays continuous.
+        /// </summary>
+        public static List<ServitudeEdgePointInput> MergeCloseNeighbours(
+            IEnumerable<ServitudeEdgePointInput> points, out int dropped)
+        {
+            var kept = new List<ServitudeEdgePointInput>();
+            dropped = 0;
+            foreach (ServitudeEdgePointInput point in points)
+            {
+                if (kept.Count > 0)
+                {
+                    ServitudeEdgePointInput last = kept[kept.Count - 1];
+                    double dx = point.X - last.X, dy = point.Y - last.Y;
+                    if (Math.Sqrt(dx * dx + dy * dy) < MinPointSpacingM)
+                    {
+                        foreach (string ekatte in point.Ekattes)
+                        {
+                            if (!last.Ekattes.Contains(ekatte, StringComparer.Ordinal)) last.Ekattes.Add(ekatte);
+                        }
+                        dropped++;
+                        continue;
+                    }
+                }
+                kept.Add(point);
+            }
+            return kept;
+        }
+
         /// <summary>Numbers one edge's points in order, from <paramref name="start"/>.</summary>
         public static List<NumberedServitudePoint> Number(
             IEnumerable<ServitudeEdgePointInput> points, int start, bool isLeft)
@@ -94,7 +146,11 @@ namespace PUP_AUTO.CadRegister
                     Y = point.Y,
                     Direction = point.Direction,
                     IsLeft = isLeft,
-                    IsBoundary = point.IsBoundary
+                    IsBoundary = point.IsBoundary,
+                    NearestVertexM = point.NearestVertexM,
+                    MergedHits = point.MergedHits,
+                    SpanM = point.SpanM,
+                    IsOverlap = point.IsOverlap
                 };
                 item.Ekattes.AddRange(point.Ekattes);
                 numbered.Add(item);

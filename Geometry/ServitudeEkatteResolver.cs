@@ -31,6 +31,17 @@ namespace PUP_AUTO.Geometry
             return null;
         }
 
+        /// <summary>Every picked EKATTE whose parcels hold the point (two where neighbouring землища overlap), without repeats.</summary>
+        public List<string> EkattesAt(double x, double y)
+        {
+            var found = new List<string>();
+            foreach ((string ekatte, PlanarPolygon outline) in _parcels)
+            {
+                if (outline.Contains(x, y) && !found.Contains(ekatte, StringComparer.Ordinal)) found.Add(ekatte);
+            }
+            return found;
+        }
+
         /// <summary>
         /// The EKATTE the point is listed under: the parcel it is in, else <paramref name="previous"/> when the point is
         /// within the gap tolerance of a picked parcel of that EKATTE, else null (left out of the register).

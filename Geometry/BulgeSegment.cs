@@ -146,6 +146,35 @@ namespace PUP_AUTO.Geometry
 
         public int Count => _x.Length;
 
+        /// <summary>
+        /// The fractions (0..1, sorted) along the segment where it meets this polygon's boundary. Exact for a straight segment;
+        /// an arc is met through its sampled chords. The pure counterpart of the AutoCAD intersection, for tests.
+        /// </summary>
+        public List<double> CutFractions(BulgeSegment segment)
+        {
+            var fractions = new List<double>();
+            var chain = segment.Sample(ArcSagittaM).ToList();
+            chain.Add((segment.X2, segment.Y2));
+            for (int c = 0; c + 1 < chain.Count; c++)
+            {
+                (double ax, double ay) = chain[c];
+                (double bx, double by) = chain[c + 1];
+                double rx = bx - ax, ry = by - ay;
+                for (int i = 0, j = _x.Length - 1; i < _x.Length; j = i++)
+                {
+                    double sx = _x[i] - _x[j], sy = _y[i] - _y[j];
+                    double denominator = rx * sy - ry * sx;
+                    if (Math.Abs(denominator) < 1e-15) continue;
+                    double t = ((_x[j] - ax) * sy - (_y[j] - ay) * sx) / denominator;
+                    double u = ((_x[j] - ax) * ry - (_y[j] - ay) * rx) / denominator;
+                    if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+                    fractions.Add(segment.FractionOf(ax + rx * t, ay + ry * t));
+                }
+            }
+            fractions.Sort();
+            return fractions.Where(f => f > 1e-6 && f < 1 - 1e-6).ToList();
+        }
+
         /// <summary>The distance from the point to the polygon's boundary (0 on it); inside or outside alike.</summary>
         public double DistanceToBoundary(double x, double y)
         {

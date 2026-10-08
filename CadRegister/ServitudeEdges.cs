@@ -44,6 +44,9 @@ namespace PUP_AUTO.CadRegister
         /// <summary>True when the axis was reversed to run from the lowest-numbered pole towards the highest.</summary>
         public bool AxisReversed { get; set; }
 
+        /// <summary>True when the route was reversed on request, after the normal orientation ("Обратна посока").</summary>
+        public bool RouteReversedByRequest { get; set; }
+
         /// <summary>Consecutive duplicate vertices dropped from the outline.</summary>
         public int DuplicatesDropped { get; set; }
 
@@ -71,11 +74,16 @@ namespace PUP_AUTO.CadRegister
         /// <param name="closed">True when the polyline is closed; an open one is closed from the last vertex to the first.</param>
         /// <param name="axis">The route axis as a point list, in its own drawing direction.</param>
         /// <param name="poles">Pole number (any text; numeric ones compare numerically) and position; empty keeps the axis direction.</param>
+        /// <param name="reverseRoute">
+        /// Counts from the other end: the oriented axis is reversed once more. "Left" and "right" stay relative to the direction
+        /// of travel, so the two edges swap sides and the former right edge is numbered from the left start.
+        /// </param>
         public static ServitudeEdgeResult Split(
             IReadOnlyList<EdgeVertex> outline,
             bool closed,
             IReadOnlyList<(double X, double Y)> axis,
-            IReadOnlyList<(string Number, double X, double Y)> poles)
+            IReadOnlyList<(string Number, double X, double Y)> poles,
+            bool reverseRoute = false)
         {
             var result = new ServitudeEdgeResult();
             if (axis.Count < 2)
@@ -94,6 +102,11 @@ namespace PUP_AUTO.CadRegister
 
             List<(double X, double Y)> line = Orient(axis, poles, out bool reversed);
             result.AxisReversed = reversed;
+            if (reverseRoute)
+            {
+                line.Reverse();
+                result.RouteReversedByRequest = true;
+            }
 
             var stations = new double[loop.Count];
             var sides = new double[loop.Count];

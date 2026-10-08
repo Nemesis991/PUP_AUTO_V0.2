@@ -82,6 +82,27 @@ namespace PUP_AUTO.Geometry
                 x + offset * Math.Cos(theta), y + offset * Math.Sin(theta));
         }
 
+        /// <summary>
+        /// <see cref="Place"/>, then a check that the label anchor is OUTSIDE the servitude. If it falls inside (a sharp corner, a
+        /// hairpin, a narrow strip), the label goes to the other side of the point instead: θ+180° with the justification and
+        /// the offset swapped, which is the placement of the opposite edge. When that side is inside as well, the original stays.
+        /// </summary>
+        /// <param name="servitude">The servitude outline; null skips the check.</param>
+        /// <param name="movedToOtherSide">True when the anchor was inside and the label was moved to the other side.</param>
+        public static ServitudeLabelPlacement PlaceOutside(
+            int number, double x, double y, double edgeDirection, bool isLeft, PlanarPolygon? servitude, out bool movedToOtherSide)
+        {
+            movedToOtherSide = false;
+            ServitudeLabelPlacement placement = Place(number, x, y, edgeDirection, isLeft);
+            if (servitude == null || !servitude.Contains(placement.AlignX, placement.AlignY)) return placement;
+
+            ServitudeLabelPlacement other = Place(number, x, y, edgeDirection, !isLeft);
+            if (servitude.Contains(other.AlignX, other.AlignY)) return placement;
+
+            movedToOtherSide = true;
+            return other;
+        }
+
         /// <summary>An angle brought into [0, 2π).</summary>
         public static double Normalize(double radians)
         {

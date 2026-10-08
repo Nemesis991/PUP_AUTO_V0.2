@@ -14,16 +14,31 @@ namespace PUP_AUTO.Geometry
         public string? Error { get; set; }
 
         public bool AxisReversed { get; set; }
+
+        /// <summary>The route was reversed on request ("Обратна посока") after the normal orientation.</summary>
+        public bool RouteReversedByRequest { get; set; }
+
         public int DuplicatesDropped { get; set; }
 
+        /// <summary>What the walk along each edge found, for the one summary line per side.</summary>
+        public EdgeWalkStats LeftStats { get; } = new EdgeWalkStats();
+        public EdgeWalkStats RightStats { get; } = new EdgeWalkStats();
+
+        /// <summary>Consecutive points closer than 1 cm that were merged into one, per side.</summary>
+        public int LeftMerged { get; set; }
+        public int RightMerged { get; set; }
+
+        /// <summary>The servitude outline as a polygon, to check that a label anchor stays outside it.</summary>
+        public PlanarPolygon? Outline { get; set; }
+
         /// <summary>Vertices in no picked parcel and not just off one of the previous point's землище: numbered, but left out.</summary>
-        public int VerticesOutsideParcels { get; set; }
+        public int VerticesOutsideParcels => LeftStats.VerticesOutside + RightStats.VerticesOutside;
 
         /// <summary>Boundary points inserted where an edge crosses from one землище into another.</summary>
-        public int BoundaryPointsInserted { get; set; }
+        public int BoundaryPointsInserted => LeftStats.BoundaryPoints + RightStats.BoundaryPoints;
 
         /// <summary>Crossings where the two землища do not touch: the point sits where the old EKATTE ends.</summary>
-        public int GapsBetweenSettlements { get; set; }
+        public int GapsBetweenSettlements => LeftStats.Gaps + RightStats.Gaps;
 
         /// <summary>The bounding box of the servitude outline, for replacing the blocks of a previous run.</summary>
         public BoundingBox Box { get; set; }
@@ -44,9 +59,6 @@ namespace PUP_AUTO.Geometry
         /// <summary>Arcs of the axis are sampled with at most this sagitta (m); the axis only sets stations and sides.</summary>
         public const double AxisSagittaM = 0.05;
 
-        /// <summary>A vertex this close to a землище boundary is already on it: no second point is inserted.</summary>
-        public const double OnBoundaryToleranceM = 0.001;
-
         /// <summary>Two intersections closer than this along a segment are one crossing.</summary>
         public const double SameCrossingToleranceM = 1e-6;
 
@@ -66,7 +78,8 @@ namespace PUP_AUTO.Geometry
             Polyline servitude,
             IReadOnlyList<Curve> axis,
             IReadOnlyList<(string Number, double X, double Y)> poles,
-            IReadOnlyList<KeyValuePair<string, Polyline>> parcels)
+            IReadOnlyList<KeyValuePair<string, Polyline>> parcels,
+            bool reverseRoute = false)
         {
             var result = new ServitudeEdgePoints();
 
@@ -77,10 +90,12 @@ namespace PUP_AUTO.Geometry
                 outline.Add(new EdgeVertex(point.X, point.Y, servitude.GetBulgeAt(i)));
             }
             result.Box = Box(outline);
+            result.Outline = PlanarPolygon.FromBulgeVertices(outline.Select(v => (v.X, v.Y, v.Bulge)).ToList());
 
             List<(double X, double Y)> axisPoints = AxisPoints(axis);
-            ServitudeEdgeResult split = ServitudeEdges.Split(outline, servitude.Closed, axisPoints, poles);
+            ServitudeEdgeResult split = ServitudeEdges.Split(outline, servitude.Closed, axisPoints, poles, reverseRoute);
             result.AxisReversed = split.AxisReversed;
+            result.RouteReversedByRequest = split.RouteReversedByRequest;
             result.DuplicatesDropped = split.DuplicatesDropped;
             if (!split.Ok)
             {
@@ -99,8 +114,16 @@ namespace PUP_AUTO.Geometry
                 .ToList();
 
             var resolver = new ServitudeEkatteResolver(picked.Select(p => (p.Ekatte, p.Outline)).ToList());
-            result.Left.AddRange(Walk(split.Left!, picked, resolver, result));
-            result.Right.AddRange(Walk(split.Right!, picked, resolver, result));
+            ServitudeEdgeWalker.CutProvider cuts = (segment, start, end) => Cuts(segment, picked, start, end);
+
+            List<ServitudeEdgePointInput> left = ServitudeEdgeWalker.Walk(split.Left!, resolver, cuts, result.LeftStats);
+            List<ServitudeEdgePointInput> right = ServitudeEdgeWalker.Walk(split.Right!, resolver, cuts, result.RightStats);
+
+            // Safety net: two consecutive points closer than 1 cm are one point (the землища of the dropped one are kept)
+            result.Left.AddRange(ServitudeRegisterBuilder.MergeCloseNeighbours(left, out int leftMerged));
+            result.Right.AddRange(ServitudeRegisterBuilder.MergeCloseNeighbours(right, out int rightMerged));
+            result.LeftMerged = leftMerged;
+            result.RightMerged = rightMerged;
             return result;
         }
 
@@ -209,171 +232,22 @@ namespace PUP_AUTO.Geometry
         }
 
         // -----------------------------------------------------------------
-        //  Walking one edge
+        //  Raw hits with the parcel boundaries (the walk itself is ServitudeEdgeWalker, pure maths)
         // -----------------------------------------------------------------
 
         /// <summary>
-        /// The edge's points in order: every vertex, plus a point wherever the edge crosses into another землище. Each
-        /// point carries the землища it is listed under (two on a boundary) and the direction of the edge there.
+        /// The fractions along the segment where it meets the boundaries of the picked parcels near it. Empty when nothing
+        /// can change along it: both ends in the same землище and no other one near.
         /// </summary>
-        private static List<ServitudeEdgePointInput> Walk(
-            ServitudeEdge edge, List<Parcel> parcels, ServitudeEkatteResolver resolver, ServitudeEdgePoints result)
+        private static IReadOnlyList<double> Cuts(BulgeSegment segment, List<Parcel> parcels, string? startEkatte, string? endEkatte)
         {
-            var points = new List<ServitudeEdgePointInput>();
-            IReadOnlyList<EdgeVertex> vertices = edge.Vertices;
-            string? previousEkatte = null;
-
-            // A crossing that falls on the next vertex makes that vertex the boundary point, listed in both землища
-            string? pendingEkatte = null;
-
-            for (int i = 0; i < vertices.Count; i++)
-            {
-                EdgeVertex vertex = vertices[i];
-                double incoming = i > 0 ? Direction(vertices[i - 1], vertices[i], 1) : double.NaN;
-                double outgoing = i + 1 < vertices.Count ? Direction(vertices[i], vertices[i + 1], 0) : double.NaN;
-
-                // In a picked parcel, or just off one of the previous point's землище; anything else is left out of the register
-                string? ekatte = resolver.Resolve(vertex.X, vertex.Y, previousEkatte ?? pendingEkatte, out _);
-                if (ekatte == null) result.VerticesOutsideParcels++;
-
-                var point = new ServitudeEdgePointInput
-                {
-                    X = vertex.X,
-                    Y = vertex.Y,
-                    Direction = Average(incoming, outgoing)
-                };
-                if (pendingEkatte != null) point.Ekattes.Add(pendingEkatte);
-                if (ekatte != null) AddEkatte(point, ekatte);
-                points.Add(point);
-                previousEkatte = ekatte ?? pendingEkatte;
-                pendingEkatte = null;
-
-                if (i + 1 >= vertices.Count) break;
-
-                // The segment to the next vertex: a change of EKATTE along it gets its own point
-                var segment = new BulgeSegment(vertex.X, vertex.Y, vertices[i + 1].X, vertices[i + 1].Y, vertex.Bulge);
-                string? nextEkatte = EkatteAt(parcels, vertices[i + 1].X, vertices[i + 1].Y);
-                foreach ((double x, double y, string left, string right) in Crossings(segment, parcels, ekatte, nextEkatte, result))
-                {
-                    // A vertex already on the boundary is listed in both землища instead of getting a twin
-                    if (Near(points[points.Count - 1], x, y))
-                    {
-                        AddEkatte(points[points.Count - 1], right);
-                        previousEkatte = right;
-                        continue;
-                    }
-                    if (Near(vertices[i + 1], x, y))
-                    {
-                        pendingEkatte = left;       // the next vertex is on the boundary: it is listed in both землища
-                        continue;
-                    }
-
-                    var crossing = new ServitudeEdgePointInput
-                    {
-                        X = x,
-                        Y = y,
-                        Direction = segment.DirectionAt(segment.FractionOf(x, y)),
-                        IsBoundary = true
-                    };
-                    crossing.Ekattes.Add(left);
-                    AddEkatte(crossing, right);
-                    points.Add(crossing);
-                    previousEkatte = right;
-                    result.BoundaryPointsInserted++;
-                }
-            }
-            return points;
-        }
-
-        private static void AddEkatte(ServitudeEdgePointInput point, string ekatte)
-        {
-            if (!point.Ekattes.Contains(ekatte, StringComparer.Ordinal)) point.Ekattes.Add(ekatte);
-        }
-
-        private static bool Near(ServitudeEdgePointInput point, double x, double y) =>
-            Math.Abs(point.X - x) <= OnBoundaryToleranceM && Math.Abs(point.Y - y) <= OnBoundaryToleranceM;
-
-        private static bool Near(EdgeVertex vertex, double x, double y) =>
-            Math.Abs(vertex.X - x) <= OnBoundaryToleranceM && Math.Abs(vertex.Y - y) <= OnBoundaryToleranceM;
-
-        /// <summary>The direction of travel along the segment between two vertices, at fraction <paramref name="t"/>.</summary>
-        private static double Direction(EdgeVertex from, EdgeVertex to, double t) =>
-            new BulgeSegment(from.X, from.Y, to.X, to.Y, from.Bulge).DirectionAt(t);
-
-        /// <summary>The mean of the two adjacent directions; at the ends of an edge the only one there is.</summary>
-        private static double Average(double incoming, double outgoing)
-        {
-            if (double.IsNaN(incoming)) return double.IsNaN(outgoing) ? 0 : outgoing;
-            if (double.IsNaN(outgoing)) return incoming;
-            // averaged as unit vectors, so 350° and 10° give 0° and not 180°
-            double x = Math.Cos(incoming) + Math.Cos(outgoing);
-            double y = Math.Sin(incoming) + Math.Sin(outgoing);
-            return x == 0 && y == 0 ? incoming : Math.Atan2(y, x);
-        }
-
-        /// <summary>The EKATTE of the picked parcel holding the point, or null when it is in none.</summary>
-        private static string? EkatteAt(List<Parcel> parcels, double x, double y)
-        {
-            foreach (Parcel parcel in parcels)
-            {
-                if (parcel.Outline.Contains(x, y)) return parcel.Ekatte;
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// The землище changes along one segment: the parcel boundaries it crosses, sorted along it, with the EKATTE before
-        /// and after each one. Only the changes are returned; a crossing inside one землище is not a boundary.
-        /// </summary>
-        private static List<(double X, double Y, string Left, string Right)> Crossings(
-            BulgeSegment segment, List<Parcel> parcels, string? startEkatte, string? endEkatte, ServitudeEdgePoints result)
-        {
-            var crossings = new List<(double X, double Y, string Left, string Right)>();
-
-            // Nothing to look for when both ends are in the same землище and no other one is near the segment
             BoundingBox box = SegmentBox(segment);
             List<Parcel> near = parcels.Where(p => BoundingBox.MayOverlap(box, p.Outline.Box, 0)).ToList();
-            if (near.Count == 0) return crossings;
+            if (near.Count == 0) return new List<double>();
+
             bool severalEkatte = near.Select(p => p.Ekatte).Distinct(StringComparer.Ordinal).Count() > 1;
-            if (!severalEkatte && string.Equals(startEkatte, endEkatte, StringComparison.Ordinal)) return crossings;
-
-            List<double> cuts = Intersections(segment, near);
-            if (cuts.Count == 0) return crossings;
-
-            // The EKATTE of each piece between two consecutive cuts, taken at its midpoint
-            var bounds = new List<double> { 0 };
-            bounds.AddRange(cuts);
-            bounds.Add(1);
-            var pieces = new List<(double From, double To, string? Ekatte)>();
-            for (int i = 0; i + 1 < bounds.Count; i++)
-            {
-                double from = bounds[i], to = bounds[i + 1];
-                if (to - from <= SameCrossingToleranceM) continue;
-                (double mx, double my) = segment.PointAt((from + to) / 2);
-                pieces.Add((from, to, EkatteAt(near, mx, my)));
-            }
-
-            string? current = startEkatte;
-            double? gapStart = null;
-            foreach ((double from, double to, string? ekatte) in pieces)
-            {
-                if (ekatte == null)
-                {
-                    // A hole between the two землища: remember where the known one ended
-                    gapStart ??= from;
-                    continue;
-                }
-                if (current == null) { current = ekatte; gapStart = null; continue; }
-                if (string.Equals(ekatte, current, StringComparison.Ordinal)) { gapStart = null; continue; }
-
-                double cut = gapStart ?? from;
-                if (gapStart != null) result.GapsBetweenSettlements++;
-                (double x, double y) = segment.PointAt(cut);
-                crossings.Add((x, y, current, ekatte));
-                current = ekatte;
-                gapStart = null;
-            }
-            return crossings;
+            if (!severalEkatte && string.Equals(startEkatte, endEkatte, StringComparison.Ordinal)) return new List<double>();
+            return Intersections(segment, near);
         }
 
         private static BoundingBox SegmentBox(BulgeSegment segment)

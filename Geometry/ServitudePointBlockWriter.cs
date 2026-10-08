@@ -16,6 +16,9 @@ namespace PUP_AUTO.Geometry
         /// <summary>Plugin-tagged inserts erased before drawing (a re-run; the numbering can change).</summary>
         public int Replaced { get; set; }
 
+        /// <summary>NOMER definitions of an earlier build that still had their position locked in the block, now unlocked.</summary>
+        public int DefinitionsUnlocked { get; set; }
+
         /// <summary>One entry per point that failed: its number and the call that threw. The other points are still drawn.</summary>
         public List<string> Failures { get; } = new List<string>();
 
@@ -73,7 +76,17 @@ namespace PUP_AUTO.Geometry
                     var definitions = new List<AttributeDefinition>();
                     foreach (ObjectId id in block)
                     {
-                        if (tr.GetObject(id, OpenMode.ForRead) is AttributeDefinition ad && !ad.Constant) definitions.Add(ad);
+                        if (!(tr.GetObject(id, OpenMode.ForRead) is AttributeDefinition ad) || ad.Constant) continue;
+
+                        // A definition made by the earlier build locks the text to the block: the grip would then move the whole
+                        // point. Unlock it, so a label can be rotated or moved on its own
+                        if (ad.LockPositionInBlock)
+                        {
+                            ad.UpgradeOpen();
+                            ad.LockPositionInBlock = false;
+                            result.DefinitionsUnlocked++;
+                        }
+                        definitions.Add(ad);
                     }
 
                     // Our own inserts of a previous run, inside the servitude's box: the numbering may have changed
@@ -129,11 +142,13 @@ namespace PUP_AUTO.Geometry
             var br = new BlockReference(new Point3d(point.PointX, point.PointY, 0), blockId);
             try
             {
+                // The block itself is not rotated: the number text carries its own rotation and alignment point (world
+                // coordinates), so rotating or moving the text by grip leaves the point where it is
                 step = "BlockReference.SetDatabaseDefaults/Layer/ScaleFactors/Rotation";
                 br.SetDatabaseDefaults(db);
                 br.Layer = ServitudePointBlockNames.Layer;
                 br.ScaleFactors = new Scale3d(1.0);
-                br.Rotation = point.Rotation;
+                br.Rotation = 0;
                 step = "BlockTableRecord.AppendEntity(BlockReference)";
                 space.AppendEntity(br);
                 tr.AddNewlyCreatedDBObject(br, true);
@@ -147,6 +162,7 @@ namespace PUP_AUTO.Geometry
                     step = $"AttributeReference.SetAttributeFromBlock({ad.Tag})";
                     var ar = new AttributeReference();
                     ar.SetAttributeFromBlock(ad, br.BlockTransform);
+                    ar.LockPositionInBlock = false;
 
                     if (string.Equals(ad.Tag, ServitudePointBlockNames.NumberTag, StringComparison.OrdinalIgnoreCase))
                     {
@@ -230,7 +246,8 @@ namespace PUP_AUTO.Geometry
                 Layer = "0",
                 HorizontalMode = TextHorizontalMode.TextRight,
                 VerticalMode = TextVerticalMode.TextVerticalMid,
-                Rotation = 0
+                Rotation = 0,
+                LockPositionInBlock = false     // the text can be moved and rotated by grip without moving the point
             };
             number.AlignmentPoint = new Point3d(-ServitudePointPlacement.LabelOffsetM, 0, 0);
             record.AppendEntity(number);
