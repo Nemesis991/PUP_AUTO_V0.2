@@ -1440,11 +1440,21 @@ namespace PUP_AUTO.UI.Windows
                             shared.PolesWithoutFootprint.Add(entry.PoleId);
                             continue;
                         }
+                        var corners = entry.Result.CornerPoints.Select(p => (p.X, p.Y)).ToList();
+                        Polyline footprint = entry.Result.FootprintPolyline!;
+                        var vertices = Enumerable.Range(0, footprint.NumberOfVertices)
+                            .Select(i => footprint.GetPoint2dAt(i)).Select(p => (p.X, p.Y)).ToList();
+                        bool matches = FootprintCorners.AllMatch(corners, vertices, CornerMatchToleranceM);
+                        if (!matches)
+                        {
+                            LogWarning($"Стълб {PoleLabels.StripPrefix(entry.PoleId)}: чупките не съвпадат със стъпката (повече от {CornerMatchToleranceM} м) — блоковете {PoleCornerBlockNames.BlockName} не се чертаят.");
+                        }
                         shared.PoleCorners.Add(new PoleCorners
                         {
                             PoleNumber = entry.PoleId,
-                            Corners = entry.Result.CornerPoints.Select(p => (p.X, p.Y)).ToList(),
-                            LabelRotation = string.IsNullOrEmpty(entry.Result.PoleNumber) ? null : entry.Result.LabelRotation
+                            Corners = corners,
+                            LabelRotation = string.IsNullOrEmpty(entry.Result.PoleNumber) ? null : entry.Result.LabelRotation,
+                            DrawBlocks = matches
                         });
                     }
 
@@ -2125,8 +2135,11 @@ namespace PUP_AUTO.UI.Windows
                 foreach (PoleCorners pole in poleCorners) rotations[PoleLabels.StripPrefix(pole.PoleNumber)] = pole.LabelRotation;
 
                 var sets = new List<PoleCornerSet>();
+                var skipBlocks = new HashSet<string>(
+                    poleCorners.Where(p => !p.DrawBlocks).Select(p => PoleLabels.StripPrefix(p.PoleNumber)), StringComparer.Ordinal);
                 foreach (CoordinateRegisterBlock block in listed)
                 {
+                    if (skipBlocks.Contains(block.PoleNumber)) continue;
                     var corners = block.Corners.Select(c => (c.East, c.North)).ToList();
                     rotations.TryGetValue(block.PoleNumber, out double? rotation);
                     List<CornerLabelPlacement> placements = PoleCornerPlacement.Place(block.PoleNumber, corners, rotation, out double theta);
@@ -2141,6 +2154,10 @@ namespace PUP_AUTO.UI.Windows
                 {
                     LogWarning(result.Warning);
                     return;
+                }
+                foreach (string note in result.DefinitionNotes.Distinct())
+                {
+                    LogWarning($"Блок {PoleCornerBlockNames.BlockName}: {note} — вмъкването ще е изместено спрямо чупката.");
                 }
                 foreach (string failure in result.Failures) LogWarning($"Ъглова точка не е начертана — {failure}");
                 AppendLog($"  Ъглови точки: {result.Drawn} блока {PoleCornerBlockNames.BlockName} начертани ({result.SkippedExisting} вече съществуващи пропуснати).");
@@ -2159,6 +2176,9 @@ namespace PUP_AUTO.UI.Windows
         }
 
         private const string DefaultRegisterProject = "НОВА ВЛ 110kV";
+
+        /// <summary>The P-tag corners must be the footprint polyline's vertices to within this (m).</summary>
+        private const double CornerMatchToleranceM = 0.001;
 
         /// <summary>Writes a warning to the window log and to the log file.</summary>
         private void LogWarning(string message)

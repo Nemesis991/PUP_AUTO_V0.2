@@ -13,6 +13,9 @@ namespace PUP_AUTO.CadRegister
 
         /// <summary>Rotation of the pole's number label in radians; null when the block has no number label.</summary>
         public double? LabelRotation { get; set; }
+
+        /// <summary>False when the corners do not match the footprint polyline: the xlsx still lists the pole, no blocks are drawn.</summary>
+        public bool DrawBlocks { get; set; } = true;
     }
 
     /// <summary>One printed point: label and the Bulgarian geodetic X (north) / Y (east).</summary>

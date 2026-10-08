@@ -26,6 +26,9 @@ namespace PUP_AUTO.Geometry
         /// <summary>One entry per corner that failed: pole, corner label and the call that threw. The other corners are still drawn.</summary>
         public List<string> Failures { get; } = new List<string>();
 
+        /// <summary>Problems in the GBP032 definition that shift every insert from its corner (ring not on the base point).</summary>
+        public List<string> DefinitionNotes { get; } = new List<string>();
+
         /// <summary>Set when the blocks were drawn but the screen refresh failed (low-level, not a drawing failure).</summary>
         public string? RefreshWarning { get; set; }
 
@@ -41,6 +44,7 @@ namespace PUP_AUTO.Geometry
     public static class PoleCornerBlockWriter
     {
         private const double SameCornerToleranceM = 0.01;
+        private const double BaseTolerance = 1e-6;
 
         public static PoleCornerDrawResult Draw(Document doc, IReadOnlyList<PoleCornerSet> poles, string pluginDir)
         {
@@ -83,7 +87,19 @@ namespace PUP_AUTO.Geometry
                     var definitions = new List<AttributeDefinition>();
                     foreach (ObjectId id in block)
                     {
-                        if (tr.GetObject(id, OpenMode.ForRead) is AttributeDefinition ad && !ad.Constant) definitions.Add(ad);
+                        var entity = tr.GetObject(id, OpenMode.ForRead);
+                        if (entity is AttributeDefinition ad && !ad.Constant) definitions.Add(ad);
+
+                        // The ring must be centred on the block's base point, or every insert looks shifted from its corner
+                        if (entity is Circle circle && (Math.Abs(circle.Center.X) > BaseTolerance || Math.Abs(circle.Center.Y) > BaseTolerance))
+                        {
+                            result.DefinitionNotes.Add(
+                                $"кръг с радиус {circle.Radius:0.###} е на ({circle.Center.X:0.###}; {circle.Center.Y:0.###}) от базовата точка на блока");
+                        }
+                    }
+                    if (Math.Abs(block.Origin.X) > BaseTolerance || Math.Abs(block.Origin.Y) > BaseTolerance)
+                    {
+                        result.DefinitionNotes.Add($"базовата точка на блока е ({block.Origin.X:0.###}; {block.Origin.Y:0.###}), а не (0; 0)");
                     }
 
                     // Erase our own inserts of these poles; remember the untagged ones so they are not drawn twice

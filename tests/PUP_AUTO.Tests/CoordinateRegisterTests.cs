@@ -249,6 +249,52 @@ namespace PUP_AUTO.Tests
         }
     }
 
+    public class FootprintCornersTests
+    {
+        // Pole 20's P-tag values as the block gives them: not in ring order, with the spacing the attributes have
+        private static readonly string[] Tags = { "363604.082, 4784635.716", "363609.720,4784635.397", " 363609.401 , 4784629.759", "363603.763, 4784630.078" };
+
+        [Fact]
+        public void ParsedCorners_AreTheAttributeValuesExactly_InP1ToP4Order()
+        {
+            List<(double X, double Y)> corners = FootprintCorners.Parse(Tags);
+
+            Assert.Equal(
+                new[] { (363604.082, 4784635.716), (363609.720, 4784635.397), (363609.401, 4784629.759), (363603.763, 4784630.078) },
+                corners);
+        }
+
+        [Fact]
+        public void TheSortedFootprint_IsTheSameSetOfPoints_AndCounterClockwise()
+        {
+            List<(double X, double Y)> corners = FootprintCorners.Parse(Tags);
+
+            List<(double X, double Y)> sorted = FootprintCorners.SortCounterClockwise(corners);
+
+            Assert.Equal(corners.OrderBy(p => p.X).ThenBy(p => p.Y), sorted.OrderBy(p => p.X).ThenBy(p => p.Y));
+            Assert.True(CoordinateRegisterBuilder.SignedArea(sorted) > 0);
+            Assert.True(FootprintCorners.AllMatch(corners, sorted, 0.001));
+        }
+
+        [Fact]
+        public void ACornerMoreThanAMillimetreFromEveryVertex_DoesNotMatch()
+        {
+            List<(double X, double Y)> corners = FootprintCorners.Parse(Tags);
+            List<(double X, double Y)> sorted = FootprintCorners.SortCounterClockwise(corners);
+            var moved = new List<(double X, double Y)>(corners) { [2] = (corners[2].X + 0.002, corners[2].Y) };
+            var near = new List<(double X, double Y)>(corners) { [2] = (corners[2].X + 0.0005, corners[2].Y) };
+
+            Assert.False(FootprintCorners.AllMatch(moved, sorted, 0.001));
+            Assert.True(FootprintCorners.AllMatch(near, sorted, 0.001));
+        }
+
+        [Fact]
+        public void UnparsableValues_AreSkipped()
+        {
+            Assert.Equal(new[] { (1.5, 2.5) }, FootprintCorners.Parse(new[] { "abc", "1.5, 2.5", "7" }));
+        }
+    }
+
     public class PoleCornerPlacementTests
     {
         // Pole 20 of the official drawing: corners 20-1 .. 20-4 and the label rotation

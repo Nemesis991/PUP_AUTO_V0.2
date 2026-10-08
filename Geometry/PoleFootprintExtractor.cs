@@ -1,4 +1,3 @@
-using System.Globalization;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using PUP_AUTO.Core;
@@ -160,32 +159,19 @@ namespace PUP_AUTO.Geometry
                 }
 
                 // 5. Parse string values "X, Y"
-                var points = new List<Point2d>();
-                foreach (string ptStr in pointStrings)
-                {
-                    string[] parts = ptStr.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length >= 2 &&
-                        double.TryParse(parts[0].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out double x) &&
-                        double.TryParse(parts[1].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out double y))
-                    {
-                        points.Add(new Point2d(x, y));
-                    }
-                }
+                var parsed = FootprintCorners.Parse(pointStrings);
 
-                if (points.Count < 4)
+                if (parsed.Count < 4)
                 {
                     result.ErrorMessage = $"Failed to parse 4 valid coordinate points for block {blockName} (Pole: {poleNumber}).";
                     return result;
                 }
 
-                result.CornerPoints = new List<Point2d>(points);
+                // The attribute VALUES as parsed, in P1..P4 order: no transform, no rounding
+                result.CornerPoints = parsed.Select(p => new Point2d(p.X, p.Y)).ToList();
 
                 // 6. Sort vertices counter-clockwise around centroid
-                double cx = points.Average(p => p.X);
-                double cy = points.Average(p => p.Y);
-                Point2d centroid = new Point2d(cx, cy);
-
-                var sortedPoints = points.OrderBy(p => Math.Atan2(p.Y - centroid.Y, p.X - centroid.X)).ToList();
+                var sortedPoints = FootprintCorners.SortCounterClockwise(parsed).Select(p => new Point2d(p.X, p.Y)).ToList();
 
                 // 7. Construct closed Polyline
                 var pline = new Polyline();
