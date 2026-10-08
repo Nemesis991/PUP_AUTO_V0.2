@@ -863,7 +863,7 @@ namespace PUP_AUTO.UI.Windows
 
             if (_pickDoc != null && !ReferenceEquals(_pickDoc, doc) && HasAnyPick())
             {
-                AppendLog("Изборът е направен в друг чертеж — изберете отново.");
+                LogWarning("Изборът е направен в друг чертеж — изберете отново. Справките не са пуснати.");
                 return false;
             }
             return true;
@@ -1236,7 +1236,7 @@ namespace PUP_AUTO.UI.Windows
                 List<ReportOption> ticked = _reports.Where(r => r.IsChecked).ToList();
                 if (ticked.Count == 0)
                 {
-                    AppendLog("Отметнете поне една справка.");
+                    LogWarning("Отметнете поне една справка.");
                     return;
                 }
 
@@ -1253,7 +1253,7 @@ namespace PUP_AUTO.UI.Windows
                     List<Requirement> missing = Missing(option);
                     if (missing.Count > 0)
                     {
-                        AppendLog($"ГРЕШКА: {option.Title} — липсва: {string.Join(", ", missing.Select(RequirementName))}. Справката е пропусната.");
+                        LogWarning($"{option.Title} — липсва: {string.Join(", ", missing.Select(RequirementName))}. Справката е пропусната.");
                         continue;
                     }
 
@@ -2260,10 +2260,13 @@ namespace PUP_AUTO.UI.Windows
                                "точката е сложена там, където свършва предишното землище.");
                 }
 
-                List<NumberedServitudePoint> left = ServitudeRegisterBuilder.Number(edges.Left, leftStart, true);
-                List<NumberedServitudePoint> right = ServitudeRegisterBuilder.Number(edges.Right, rightStart, false);
-                LogPointsLeftOut("ляво", left);
-                LogPointsLeftOut("дясно", right);
+                // The count starts at the first point inside the picked parcels, whichever end of the route that is
+                List<NumberedServitudePoint> left = ServitudeRegisterBuilder.NumberInsidePickedParcels(
+                    edges.Left, leftStart, true, out int leftBefore, out int leftAfter);
+                List<NumberedServitudePoint> right = ServitudeRegisterBuilder.NumberInsidePickedParcels(
+                    edges.Right, rightStart, false, out int rightBefore, out int rightAfter);
+                LogPointsLeftOut("ляво", left, leftBefore + leftAfter);
+                LogPointsLeftOut("дясно", right, rightBefore + rightAfter);
                 LogBoundaryDiagnostics("ляво", left, edges.LeftStats, edges.LeftMerged);
                 LogBoundaryDiagnostics("дясно", right, edges.RightStats, edges.RightMerged);
 
@@ -2305,7 +2308,7 @@ namespace PUP_AUTO.UI.Windows
 
                 if (sheets.Count == 0)
                 {
-                    AppendLog("Няма точки на сервитута в избраните имоти — регистърът на сервитута не е създаден.");
+                    LogWarning("Няма точки на сервитута в избраните имоти — регистърът на сервитута не е създаден, блокове не са начертани.");
                     return;
                 }
 
@@ -2313,15 +2316,35 @@ namespace PUP_AUTO.UI.Windows
                           $"дясно {right.Count} ({rightStart}–{rightStart + right.Count - 1}), " +
                           $"от които {edges.BoundaryPointsInserted} на граница между землища.");
 
-                string path;
-                using (PerfTimer.Measure(_logger, "ServitudeRegisterExporter.Export")) path = ServitudeRegisterExporter.Export(sheets, _projectDir);
-                AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
+                // The numbering is final here, so the blocks are drawn whether or not the xlsx could be written (it fails while
+                // Excel has the previous one open): the drawing must show the same numbers the next xlsx will
+                Exception? exportFailure = null;
+                try
+                {
+                    string path;
+                    using (PerfTimer.Measure(_logger, "ServitudeRegisterExporter.Export")) path = ServitudeRegisterExporter.Export(sheets, _projectDir);
+                    AppendLog($"  Записан {Path.GetFileName(path)} в {_projectDir}.");
+                }
+                catch (Exception ex)
+                {
+                    exportFailure = ex;
+                    LogWarning($"Регистърът на сервитута не е записан: {ex.Message}");
+                    LogFailure("Servitude register export", ex);
+                }
 
-                if (_chkDrawServitudePoints.IsChecked == true) DrawServitudePoints(doc, left, right, edges.Box, edges.Outline);
+                if (_chkDrawServitudePoints.IsChecked == true)
+                {
+                    DrawServitudePoints(doc, left, right, edges.Outline);
+                }
+                else
+                {
+                    AppendLog("  Начертай точките в чертежа: не е отметнато — блокове не са начертани.");
+                }
+                if (exportFailure != null) AppendLog("  Справката е частично изпълнена: файлът не е записан.");
             }
             catch (Exception ex)
             {
-                AppendLog($"ГРЕШКА при регистъра на сервитута: {ex.Message}");
+                LogWarning($"Грешка при регистъра на сервитута: {ex.Message}");
                 LogFailure("Servitude register", ex);
             }
         }
@@ -2346,15 +2369,22 @@ namespace PUP_AUTO.UI.Windows
         }
 
         /// <summary>
-        /// One line per edge for the points that are in no picked parcel: they keep their numbers (the numbering stays
-        /// continuous over the whole servitude) but are not in the register.
+        /// Points in no picked parcel. Those before the first and after the last included point do not use up numbers: counts
+        /// only. A gap in the middle (the route leaves the picked parcels and comes back) does use up numbers, so those are named.
         /// </summary>
-        private void LogPointsLeftOut(string side, List<NumberedServitudePoint> points)
+        private void LogPointsLeftOut(string side, List<NumberedServitudePoint> points, int atTheEnds)
         {
-            List<NumberedServitudePoint> outside = points.Where(p => p.Ekattes.Count == 0).ToList();
-            if (outside.Count == 0) return;
-            LogWarning($"{side}: {outside.Count} точки извън избраните имоти " +
-                       $"(номера {string.Join(", ", ServitudeRegisterBuilder.NumberRanges(outside))}) не са включени.");
+            if (atTheEnds > 0)
+            {
+                LogWarning($"{side}: {atTheEnds} точки извън избраните имоти не са включени.");
+            }
+
+            List<NumberedServitudePoint> gaps = points.Where(p => p.Ekattes.Count == 0).ToList();
+            if (gaps.Count > 0)
+            {
+                LogWarning($"{side}: {gaps.Count} точки извън избраните имоти по трасето (номера " +
+                           $"{string.Join(", ", ServitudeRegisterBuilder.NumberRanges(gaps))}) използват номера и не са включени.");
+            }
         }
 
         /// <summary>The first number of one edge, from its box on the card; a value that is not a positive number falls back.</summary>
@@ -2382,7 +2412,7 @@ namespace PUP_AUTO.UI.Windows
                 Polyline? servitude = OpenPolyline(tr, _servitudeId);
                 if (servitude == null)
                 {
-                    AppendLog("Избраният сервитут вече не е в чертежа — изберете го отново.");
+                    LogWarning("Избраният сервитут вече не е в чертежа — изберете го отново. Регистърът на сервитута не е създаден.");
                     tr.Commit();
                     return null;
                 }
@@ -2395,7 +2425,7 @@ namespace PUP_AUTO.UI.Windows
                 }
                 if (axis.Count == 0)
                 {
-                    AppendLog("Избраната ос на трасето вече не е в чертежа — изберете я отново.");
+                    LogWarning("Избраната ос на трасето вече не е в чертежа — изберете я отново. Регистърът на сервитута не е създаден.");
                     tr.Commit();
                     return null;
                 }
@@ -2418,15 +2448,15 @@ namespace PUP_AUTO.UI.Windows
 
         /// <summary>A SERV_TOCHKA block at every numbered point; a failure here never loses the xlsx already written.</summary>
         private void DrawServitudePoints(
-            Document doc, List<NumberedServitudePoint> left, List<NumberedServitudePoint> right, BoundingBox box,
-            PlanarPolygon? outline)
+            Document doc, List<NumberedServitudePoint> left, List<NumberedServitudePoint> right, PlanarPolygon? outline)
         {
             try
             {
                 var placements = new List<ServitudeLabelPlacement>();
                 var sides = new List<bool>();
                 int movedToOtherSide = 0;
-                foreach (NumberedServitudePoint point in left.Concat(right))
+                // Only the points listed in the xlsx get a block: inside the picked parcels, with their final numbers
+                foreach (NumberedServitudePoint point in left.Concat(right).Where(p => p.Ekattes.Count > 0))
                 {
                     // The label must sit OUTSIDE the servitude; one whose anchor would fall inside goes to the other side
                     placements.Add(ServitudePointPlacement.PlaceOutside(
@@ -2438,12 +2468,13 @@ namespace PUP_AUTO.UI.Windows
                 ServitudePointDrawResult result;
                 using (PerfTimer.Measure(_logger, "ServitudePointBlockWriter.Draw"))
                 {
-                    result = ServitudePointBlockWriter.Draw(doc, placements, sides, box);
+                    result = ServitudePointBlockWriter.Draw(doc, placements, sides);
                 }
 
                 foreach (string failure in result.Failures) LogWarning($"Точка на сервитута не е начертана — {failure}");
                 AppendLog($"  Точки на сервитута: {result.Drawn} блока {ServitudePointBlockNames.BlockName} начертани " +
-                          $"(ляво {result.Left}, дясно {result.Right}).");
+                          $"(ляво {result.Left}, дясно {result.Right}); заменени {result.Replaced} от предишен пуск.");
+                _logger?.LogInfo($"Servitude points: {result.Drawn} blocks drawn (left {result.Left}, right {result.Right}), {result.Replaced} replaced.");
                 if (movedToOtherSide > 0)
                 {
                     AppendLog($"  {movedToOtherSide} етикета щяха да попаднат вътре в сервитута и са преместени от другата страна.");

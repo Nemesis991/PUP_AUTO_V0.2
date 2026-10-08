@@ -375,6 +375,124 @@ namespace PUP_AUTO.Tests
         }
     }
 
+    /// <summary>
+    /// The count starts at the first point inside the picked parcels, from either end of the route. The servitude is much longer
+    /// than the picked parcels: points before and after them do not use up numbers.
+    /// </summary>
+    public class ServitudeNumberingFromPickedParcelsTests
+    {
+        private static ServitudeEdgePointInput Point(double x, bool inside)
+        {
+            var point = new ServitudeEdgePointInput { X = x, Y = 10 };
+            if (inside) point.Ekattes.Add("78135");
+            return point;
+        }
+
+        /// <summary>3 outside, 5 inside, 4 outside, as the route runs.</summary>
+        private static List<ServitudeEdgePointInput> ThreeFiveFour() =>
+            Enumerable.Range(0, 12).Select(i => Point(i, i >= 3 && i < 8)).ToList();
+
+        [Fact]
+        public void Forward_TheFirstIncludedPointGetsTheStartNumber()
+        {
+            List<NumberedServitudePoint> left = ServitudeRegisterBuilder.NumberInsidePickedParcels(
+                ThreeFiveFour(), 5001, true, out int before, out int after);
+            List<NumberedServitudePoint> right = ServitudeRegisterBuilder.NumberInsidePickedParcels(
+                ThreeFiveFour(), 1, false, out _, out _);
+
+            Assert.Equal(new[] { 5001, 5002, 5003, 5004, 5005 }, left.Select(p => p.Number));
+            Assert.Equal(new[] { 1, 2, 3, 4, 5 }, right.Select(p => p.Number));
+            Assert.Equal(3, before);
+            Assert.Equal(4, after);
+            Assert.Equal(new[] { 3D, 4, 5, 6, 7 }, left.Select(p => p.X));
+        }
+
+        [Fact]
+        public void Reversed_TheNumbersStillStartAtTheFirstIncludedPoint()
+        {
+            // the same servitude walked from the other end: 4 outside, 5 inside, 3 outside
+            List<ServitudeEdgePointInput> reversed = ThreeFiveFour().AsEnumerable().Reverse().ToList();
+
+            List<NumberedServitudePoint> left = ServitudeRegisterBuilder.NumberInsidePickedParcels(
+                reversed, 5001, true, out int before, out int after);
+            List<NumberedServitudePoint> right = ServitudeRegisterBuilder.NumberInsidePickedParcels(
+                reversed, 1, false, out _, out _);
+
+            Assert.Equal(new[] { 5001, 5002, 5003, 5004, 5005 }, left.Select(p => p.Number));
+            Assert.Equal(new[] { 1, 2, 3, 4, 5 }, right.Select(p => p.Number));
+            Assert.Equal(4, before);
+            Assert.Equal(3, after);
+            Assert.Equal(new[] { 7D, 6, 5, 4, 3 }, left.Select(p => p.X));
+        }
+
+        [Fact]
+        public void AGapInTheMiddle_StillUsesUpItsNumbers()
+        {
+            // 2 inside, 2 outside (the route leaves the picked parcels and comes back), 2 inside; plus an outside point at each end
+            var points = new List<ServitudeEdgePointInput>
+            {
+                Point(0, false), Point(1, true), Point(2, true), Point(3, false), Point(4, false),
+                Point(5, true), Point(6, true), Point(7, false)
+            };
+
+            List<NumberedServitudePoint> numbered = ServitudeRegisterBuilder.NumberInsidePickedParcels(
+                points, 5001, true, out int before, out int after);
+
+            Assert.Equal(new[] { 5001, 5002, 5003, 5004, 5005, 5006 }, numbered.Select(p => p.Number));
+            Assert.Equal(1, before);
+            Assert.Equal(1, after);
+            // the two gap points carry numbers 5003 and 5004 and no землище, so they stay out of every section
+            Assert.Equal(new[] { 5003, 5004 }, numbered.Where(p => p.Ekattes.Count == 0).Select(p => p.Number));
+            Assert.Equal(new[] { "5001–5002", "5005–5006" },
+                ServitudeRegisterBuilder.NumberRanges(numbered.Where(p => p.Ekattes.Count > 0)));
+        }
+
+        [Fact]
+        public void AnEdgeWithNoPointInsideThePickedParcels_HasNothingToNumber()
+        {
+            List<NumberedServitudePoint> numbered = ServitudeRegisterBuilder.NumberInsidePickedParcels(
+                Enumerable.Range(0, 5).Select(i => Point(i, false)).ToList(), 5001, true, out int before, out int after);
+
+            Assert.Empty(numbered);
+            Assert.Equal(5, before);
+            Assert.Equal(0, after);
+        }
+
+        [Fact]
+        public void ABoundaryPointAtTheEnd_CountsAsInside()
+        {
+            // the route's last included point is a boundary point listed in two землища
+            var boundary = new ServitudeEdgePointInput { X = 5, Y = 10, IsBoundary = true };
+            boundary.Ekattes.Add("78135");
+            boundary.Ekattes.Add("69050");
+            var points = new List<ServitudeEdgePointInput> { Point(0, false), Point(1, true), boundary, Point(6, false) };
+
+            List<NumberedServitudePoint> numbered = ServitudeRegisterBuilder.NumberInsidePickedParcels(
+                points, 5001, true, out _, out _);
+
+            Assert.Equal(new[] { 5001, 5002 }, numbered.Select(p => p.Number));
+            Assert.True(numbered[1].IsBoundary);
+        }
+
+        [Fact]
+        public void TheWholeServitudeIsLongerThanThePickedParcels_ButBothDirectionsListTheSamePoints()
+        {
+            // 1463 outside, 556 inside, 2 outside (about Мездра): the point counts, not the order, decide what is numbered
+            var forward = Enumerable.Range(0, 2021).Select(i => Point(i, i >= 1463 && i < 2019)).ToList();
+            List<ServitudeEdgePointInput> backward = forward.AsEnumerable().Reverse().ToList();
+
+            List<NumberedServitudePoint> a = ServitudeRegisterBuilder.NumberInsidePickedParcels(forward, 5001, true, out _, out _);
+            List<NumberedServitudePoint> b = ServitudeRegisterBuilder.NumberInsidePickedParcels(backward, 5001, true, out _, out _);
+
+            Assert.Equal(556, a.Count);
+            Assert.Equal(556, b.Count);
+            Assert.Equal(5001, a[0].Number);
+            Assert.Equal(5001, b[0].Number);
+            Assert.Equal(5556, a[a.Count - 1].Number);
+            Assert.Equal(5556, b[b.Count - 1].Number);
+        }
+    }
+
     public class ServitudeReverseRouteTests
     {
         private static readonly List<EdgeVertex> Outline = new List<EdgeVertex>

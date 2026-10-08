@@ -131,6 +131,37 @@ namespace PUP_AUTO.CadRegister
             return kept;
         }
 
+        /// <summary>
+        /// Numbers one edge's points like <see cref="Number"/>, but only from the first point inside the picked parcels to the
+        /// last one (in route order). Points before the first and after the last do not use up numbers and are not returned, so the
+        /// first included point gets <paramref name="start"/> whichever end of the route is counted from. A gap in the middle
+        /// (the route leaves the picked parcels and comes back) still uses up its numbers: those points are returned with a number
+        /// and no землище, and stay out of every section.
+        /// </summary>
+        /// <param name="outsideBefore">Points before the first included one, not numbered.</param>
+        /// <param name="outsideAfter">Points after the last included one, not numbered.</param>
+        public static List<NumberedServitudePoint> NumberInsidePickedParcels(
+            IReadOnlyList<ServitudeEdgePointInput> points, int start, bool isLeft, out int outsideBefore, out int outsideAfter)
+        {
+            int first = -1, last = -1;
+            for (int i = 0; i < points.Count; i++)
+            {
+                if (points[i].Ekattes.Count == 0) continue;
+                if (first < 0) first = i;
+                last = i;
+            }
+
+            if (first < 0)
+            {
+                outsideBefore = points.Count;
+                outsideAfter = 0;
+                return new List<NumberedServitudePoint>();
+            }
+            outsideBefore = first;
+            outsideAfter = points.Count - 1 - last;
+            return Number(points.Skip(first).Take(last - first + 1), start, isLeft);
+        }
+
         /// <summary>Numbers one edge's points in order, from <paramref name="start"/>.</summary>
         public static List<NumberedServitudePoint> Number(
             IEnumerable<ServitudeEdgePointInput> points, int start, bool isLeft)

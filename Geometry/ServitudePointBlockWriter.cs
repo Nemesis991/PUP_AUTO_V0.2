@@ -27,21 +27,18 @@ namespace PUP_AUTO.Geometry
     }
 
     /// <summary>
-    /// Draws a SERV_TOCHKA block (scale 1, rotation θ, layer S-Trass-сервитут) at every numbered servitude point, with
+    /// Draws a SERV_TOCHKA block (scale 1, rotation 0, layer S-Trass-сервитут) at every servitude point it is given, with
     /// NOMER placed by <see cref="ServitudePointPlacement"/>. The block definition and its NUM_Align text style are created
     /// in code when the drawing has neither; the look follows Simeon's sample (a DBPoint on layer 0 plus the number text).
     ///
-    /// Every insert is tagged with XData, and the plugin's own tagged inserts inside the servitude's box are erased first,
-    /// because the numbering can change between runs. Untagged blocks and Simeon's own TEXT/POINT labels are never touched.
+    /// Every insert is tagged with XData, and ALL of the plugin's own tagged inserts in the drawing are erased first,
+    /// because the numbering can change between runs (an earlier build also drew blocks on points outside the picked parcels). Untagged blocks and Simeon's own TEXT/POINT labels are never touched.
     /// One transaction under the document lock, so the whole lot is one undo step.
     /// </summary>
     public static class ServitudePointBlockWriter
     {
-        /// <summary>Tagged inserts this far outside the servitude's bounding box are still erased.</summary>
-        public const double EraseMarginM = 10.0;
-
         public static ServitudePointDrawResult Draw(
-            Document doc, IReadOnlyList<ServitudeLabelPlacement> points, IReadOnlyList<bool> isLeft, BoundingBox servitudeBox)
+            Document doc, IReadOnlyList<ServitudeLabelPlacement> points, IReadOnlyList<bool> isLeft)
         {
             var result = new ServitudePointDrawResult();
             Database db = doc.Database;
@@ -51,7 +48,7 @@ namespace PUP_AUTO.Geometry
             HostApplicationServices.WorkingDatabase = db;
             try
             {
-                Draw(doc, db, points, isLeft, servitudeBox, result);
+                Draw(doc, db, points, isLeft, result);
             }
             finally
             {
@@ -61,7 +58,7 @@ namespace PUP_AUTO.Geometry
         }
 
         private static void Draw(Document doc, Database db, IReadOnlyList<ServitudeLabelPlacement> points,
-            IReadOnlyList<bool> isLeft, BoundingBox servitudeBox, ServitudePointDrawResult result)
+            IReadOnlyList<bool> isLeft, ServitudePointDrawResult result)
         {
             using (doc.LockDocument())
             {
@@ -89,12 +86,12 @@ namespace PUP_AUTO.Geometry
                         definitions.Add(ad);
                     }
 
-                    // Our own inserts of a previous run, inside the servitude's box: the numbering may have changed
+                    // Every insert of ours from a previous run, wherever it is in the drawing: the numbering may have changed,
+                    // and an earlier build also drew blocks on points outside the picked parcels
                     foreach (ObjectId id in block.GetBlockReferenceIds(true, false))
                     {
                         if (!(tr.GetObject(id, OpenMode.ForRead) is BlockReference br) || br.IsErased) continue;
                         if (!IsTagged(br)) continue;
-                        if (!InBox(servitudeBox, br.Position.X, br.Position.Y)) continue;
                         br.UpgradeOpen();
                         br.Erase();
                         result.Replaced++;
@@ -130,10 +127,6 @@ namespace PUP_AUTO.Geometry
                 }
             }
         }
-
-        private static bool InBox(BoundingBox box, double x, double y) =>
-            x >= box.MinX - EraseMarginM && x <= box.MaxX + EraseMarginM &&
-            y >= box.MinY - EraseMarginM && y <= box.MaxY + EraseMarginM;
 
         private static void Insert(Database db, Transaction tr, BlockTableRecord space, ObjectId blockId,
             List<AttributeDefinition> definitions, ServitudeLabelPlacement point)
