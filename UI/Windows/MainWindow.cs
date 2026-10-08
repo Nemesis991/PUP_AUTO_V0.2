@@ -30,24 +30,31 @@ namespace PUP_AUTO.UI.Windows
         private static readonly Requirement[] AllRequirements =
             { Requirement.Cad, Requirement.Servitude, Requirement.Poles, Requirement.Parcels };
 
-        /// <summary>One report row: its checkbox, its card and one chip per required input.</summary>
+        /// <summary>One report row: its checkbox, its card and the readiness label on its title row.</summary>
         private sealed class ReportOption
         {
             public string Title = string.Empty;
             public Requirement[] Needs = Array.Empty<Requirement>();
             public CheckBox Check = null!;
             public Border Card = null!;
-            public readonly Dictionary<Requirement, (Border Chip, TextBlock Label)> Chips =
-                new Dictionary<Requirement, (Border, TextBlock)>();
+
+            /// <summary>"Готово ✓" (green) or "Липсва: ..." (amber), right-aligned on the title row.</summary>
+            public TextBlock Status = null!;
             public bool IsChecked => Check.IsChecked == true;
         }
 
-        /// <summary>A pick tile: the button, its icon and its status line.</summary>
+        /// <summary>A pick tile: the button, its icon, its status and action lines and the picked check mark.</summary>
         private sealed class PickTile
         {
             public Button Button = null!;
             public TextBlock Icon = null!;
             public TextBlock Status = null!;
+            public TextBlock Action = null!;
+            public TextBlock Check = null!;
+
+            // the route-axis row only
+            public System.Windows.Shapes.Rectangle? Frame;
+            public Border? Badge;
         }
 
         // ---- UI Controls ----
@@ -74,6 +81,8 @@ namespace PUP_AUTO.UI.Windows
         private TextBox _txtLog = null!;
         private Button _btnGenerate = null!;
         private Button _btnOpenFolder = null!;
+        private TextBlock _lblFooterBlocked = null!;
+        private TextBlock _lblFooterFirst = null!;
 
         // ---- State ----
         private string _projectDir = string.Empty;
@@ -171,22 +180,41 @@ namespace PUP_AUTO.UI.Windows
                 Padding = new Thickness(24, 14, 24, 14)
             };
             var footerGrid = new Grid();
-            footerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            footerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            footerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                       // Отвори папката
+            footerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });  // status
+            footerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                       // Generate
 
             _btnOpenFolder = new Button
             {
                 Content = IconText(GlyphFolder, "Отвори папката"),
-                Margin = new Thickness(0, 0, 12, 0), Visibility = System.Windows.Visibility.Collapsed,
+                Margin = new Thickness(0, 0, 14, 0), Visibility = System.Windows.Visibility.Collapsed,
+                VerticalAlignment = VerticalAlignment.Center,
                 ToolTip = "Отваря папката на чертежа, където се записват справките"
             };
             _btnOpenFolder.Click += BtnOpenFolder_Click;
             Grid.SetColumn(_btnOpenFolder, 0);
             footerGrid.Children.Add(_btnOpenFolder);
 
-            _btnGenerate = new Button { Style = KeyedStyle(PrimaryButton) };
+            // Why a ticked report cannot run: how many, and the first one with what it lacks
+            _lblFooterBlocked = new TextBlock
+            {
+                FontSize = 12.5, Foreground = SubtextBrush, TextTrimming = TextTrimming.CharacterEllipsis,
+                Visibility = System.Windows.Visibility.Collapsed
+            };
+            _lblFooterFirst = new TextBlock
+            {
+                FontSize = 12.5, Foreground = WarningBrush, TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 2, 0, 0), Visibility = System.Windows.Visibility.Collapsed
+            };
+            var footerStatus = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 14, 0) };
+            footerStatus.Children.Add(_lblFooterBlocked);
+            footerStatus.Children.Add(_lblFooterFirst);
+            Grid.SetColumn(footerStatus, 1);
+            footerGrid.Children.Add(footerStatus);
+
+            _btnGenerate = new Button { Style = KeyedStyle(PrimaryButton), VerticalAlignment = VerticalAlignment.Center };
             _btnGenerate.Click += BtnGenerate_Click;
-            Grid.SetColumn(_btnGenerate, 1);
+            Grid.SetColumn(_btnGenerate, 2);
             footerGrid.Children.Add(_btnGenerate);
 
             footer.Child = footerGrid;
@@ -212,7 +240,7 @@ namespace PUP_AUTO.UI.Windows
             _lblCadDetails = new TextBlock
             {
                 Text = "Файловете на землищата от АГКК. Нужни са за контролната справка и регистрите.",
-                FontSize = 12, Foreground = SubtextBrush, Margin = new Thickness(0, 3, 0, 0),
+                FontSize = 12.5, Foreground = SubtextBrush, Margin = new Thickness(0, 3, 0, 0),
                 TextWrapping = TextWrapping.Wrap
             };
             status.Children.Add(_lblCadRegister);
@@ -235,29 +263,38 @@ namespace PUP_AUTO.UI.Windows
             return MakeCard(1, "Кадастрален регистър", null, grid);
         }
 
-        /// <summary>Step 2: the servitude, pole and parcel picks.</summary>
+        /// <summary>Step 2: the servitude, pole and parcel picks, and the optional route axis under them.</summary>
         private UIElement BuildPickCard()
         {
             var tiles = new UniformGrid { Columns = 3, Margin = new Thickness(-5, 0, -5, 0) };
 
-            _tileServitude = MakePickTile(GlyphLayers, "Сервитут", "Не е избран");
+            _tileServitude = MakePickTile(GlyphLayers, "Сервитут");
             _tileServitude.Button.Click += BtnPickServitude_Click;
             tiles.Children.Add(_tileServitude.Button);
 
-            _tilePoles = MakePickTile(GlyphPin, "Стълбове", "Не са избрани");
+            _tilePoles = MakePickTile(GlyphPin, "Стълбове");
             _tilePoles.Button.Click += BtnPickPoles_Click;
             tiles.Children.Add(_tilePoles.Button);
 
-            _tileParcels = MakePickTile(GlyphParcels, "Имоти", "Не са избрани");
+            _tileParcels = MakePickTile(GlyphParcels, "Имоти");
             _tileParcels.Button.Click += BtnPickParcels_Click;
             tiles.Children.Add(_tileParcels.Button);
 
-            _tileAxis = MakePickTile(GlyphLayers, "Ос на трасето", "Не е избрана (по избор)");
+            SetTile(_tileServitude, false);
+            SetTile(_tilePoles, false);
+            SetTile(_tileParcels, false);
+
+            // The axis is optional for every report but the servitude register: a row of its own, less prominent
+            UIElement axisRow = MakeAxisRow();
             _tileAxis.Button.Click += BtnPickAxis_Click;
-            tiles.Children.Add(_tileAxis.Button);
+
+            var content = new StackPanel();
+            content.Children.Add(tiles);
+            content.Children.Add(axisRow);
+            RefreshAxisRow();
 
             return MakeCard(2, "Геометрии от чертежа",
-                "Натиснете и изберете обектите в чертежа. Изборът важи за текущия чертеж.", tiles);
+                "Натиснете и изберете обектите в чертежа. Изборът важи за текущия чертеж.", content);
         }
 
         /// <summary>Step 3: the reports, each with the inputs it needs.</summary>
@@ -265,17 +302,21 @@ namespace PUP_AUTO.UI.Windows
         {
             var list = new StackPanel();
 
+            AddGroupHeader(list, "ПРОВЕРКИ", first: true);
+
             _optMvpMathTest = AddReport(list, "MVP математически тест",
                 "Площи в сервитута и под стълбовете по имоти, с проверка на баланса.",
                 Requirement.Servitude, Requirement.Poles, Requirement.Parcels);
+
+            _optCadControl = AddReport(list, "Контролна справка от .cad",
+                "Избраните имоти срещу данните в .cad, по един ред на право.",
+                Requirement.Cad, Requirement.Parcels);
 
             _optPoleSteps = AddReport(list, "Таблица стъпки на стълбове",
                 "Площта на всяка стъпка, разделена по имоти.",
                 Requirement.Poles, Requirement.Parcels);
 
-            _optCadControl = AddReport(list, "Контролна справка от .cad",
-                "Избраните имоти срещу данните в .cad, по един ред на право.",
-                Requirement.Cad, Requirement.Parcels);
+            AddGroupHeader(list, "РЕГИСТРИ");
 
             _optAffectedRegister = AddReport(list, "Регистър на засегнатите имоти",
                 "Собственици и засегнати площи по имоти.",
@@ -293,6 +334,8 @@ namespace PUP_AUTO.UI.Windows
                 "Координатите на точките на сервитута — ляво и дясно, по землища.",
                 Requirement.Cad, Requirement.Servitude, Requirement.Axis, Requirement.Parcels);
             AddCardExtra(_optServitudeRegister, BuildServitudeOptions());
+
+            AddGroupHeader(list, "БАЛАНСИ");
 
             _optTerritoryBalance = AddReport(list, "Баланси на територията и общата рекапитулация",
                 "Балансите по землища и общият баланс за общината (категория, собственост, територия, НТП).",
@@ -387,7 +430,7 @@ namespace PUP_AUTO.UI.Windows
             {
                 body.Children.Add(new TextBlock
                 {
-                    Text = hint, FontSize = 12, Foreground = SubtextBrush, TextWrapping = TextWrapping.Wrap,
+                    Text = hint, FontSize = 12.5, Foreground = SubtextBrush, TextWrapping = TextWrapping.Wrap,
                     Margin = new Thickness(step != null ? 34 : 0, 0, 0, 12)
                 });
             }
@@ -415,7 +458,7 @@ namespace PUP_AUTO.UI.Windows
             return panel;
         }
 
-        private PickTile MakePickTile(string glyph, string title, string status)
+        private PickTile MakePickTile(string glyph, string title)
         {
             var tile = new PickTile
             {
@@ -426,18 +469,31 @@ namespace PUP_AUTO.UI.Windows
                 },
                 Status = new TextBlock
                 {
-                    Text = status, FontSize = 12, Foreground = SubtextBrush, Margin = new Thickness(0, 2, 0, 0),
+                    FontSize = 12.5, Foreground = SubtextBrush, Margin = new Thickness(0, 2, 0, 0),
                     TextTrimming = TextTrimming.CharacterEllipsis
+                },
+                Action = new TextBlock
+                {
+                    FontSize = 12.5, Foreground = AccentBrush, TextTrimming = TextTrimming.CharacterEllipsis
+                },
+                Check = new TextBlock
+                {
+                    Text = GlyphCheck, FontFamily = IconFont, FontSize = 16, Foreground = SuccessBrush,
+                    VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
+                    Visibility = System.Windows.Visibility.Collapsed
                 }
             };
 
             var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             text.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold });
             text.Children.Add(tile.Status);
+            text.Children.Add(tile.Action);
 
             var content = new DockPanel();
             DockPanel.SetDock(tile.Icon, Dock.Left);
             content.Children.Add(tile.Icon);
+            DockPanel.SetDock(tile.Check, Dock.Right);
+            content.Children.Add(tile.Check);
             content.Children.Add(text);
 
             tile.Button = new Button
@@ -449,39 +505,173 @@ namespace PUP_AUTO.UI.Windows
             return tile;
         }
 
-        private static void SetTile(PickTile tile, string status, SolidColorBrush statusBrush, bool done)
+        /// <summary>
+        /// A pick tile picked: neutral border, a green check on the right and "&lt;what&gt; · промени". Not picked: accent border and
+        /// background, the amber "Задължително" and the action "Избери в чертежа". A failed pick shows the not-picked look (the log
+        /// says why).
+        /// </summary>
+        private static void SetTile(PickTile tile, bool picked, string pickedText = "")
         {
-            tile.Status.Text = status;
-            tile.Status.Foreground = statusBrush;
-            tile.Icon.Foreground = done ? SuccessBrush : AccentBrush;
-            tile.Button.BorderBrush = done ? SuccessBrush : SurfaceBorderBrush;
+            tile.Check.Visibility = picked ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+            if (picked)
+            {
+                tile.Status.Text = pickedText;
+                tile.Status.Foreground = SubtextBrush;
+                tile.Action.Visibility = System.Windows.Visibility.Collapsed;
+                tile.Button.BorderBrush = SurfaceBorderBrush;
+                tile.Button.ClearValue(Control.BackgroundProperty);
+            }
+            else
+            {
+                tile.Status.Text = "Задължително";
+                tile.Status.Foreground = WarningBrush;
+                tile.Action.Text = "Избери в чертежа";
+                tile.Action.Visibility = System.Windows.Visibility.Visible;
+                tile.Button.BorderBrush = AccentBrush;
+                tile.Button.Background = AccentSoftBrush;
+            }
+        }
+
+        /// <summary>
+        /// The route axis: a full-width row under the three tiles, dashed and muted ("по избор"), because only the servitude register
+        /// needs it. <see cref="RefreshAxisRow"/> switches it to the required look when that report is ticked and the axis is missing.
+        /// </summary>
+        private UIElement MakeAxisRow()
+        {
+            var tile = new PickTile
+            {
+                Icon = new TextBlock
+                {
+                    Text = GlyphLayers, FontFamily = IconFont, FontSize = 18, Foreground = SubtextBrush,
+                    VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0)
+                },
+                Status = new TextBlock
+                {
+                    FontSize = 12.5, Foreground = SubtextBrush, Margin = new Thickness(0, 2, 0, 0),
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                },
+                Action = new TextBlock
+                {
+                    FontSize = 12.5, Foreground = AccentBrush, VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(12, 0, 0, 0)
+                },
+                Check = new TextBlock()
+            };
+
+            var badgeText = new TextBlock { Text = "по избор", FontSize = 12, Foreground = SubtextBrush };
+            tile.Badge = new Border
+            {
+                BorderBrush = SurfaceBorderBrush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(8, 0, 8, 1), Margin = new Thickness(10, 0, 0, 0), Child = badgeText,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var titleRow = new StackPanel { Orientation = Orientation.Horizontal };
+            titleRow.Children.Add(new TextBlock { Text = "Ос на трасето", FontSize = 14, FontWeight = FontWeights.SemiBold });
+            titleRow.Children.Add(tile.Badge);
+
+            var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            text.Children.Add(titleRow);
+            text.Children.Add(tile.Status);
+
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(text, 1);
+            Grid.SetColumn(tile.Action, 2);
+            grid.Children.Add(tile.Icon);
+            grid.Children.Add(text);
+            grid.Children.Add(tile.Action);
+
+            tile.Button = new Button
+            {
+                Content = grid, Style = KeyedStyle(GhostButton), HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(14, 10, 14, 10), Margin = new Thickness(0, 10, 0, 0),
+                ToolTip = "Изберете оста на трасето в чертежа"
+            };
+            tile.Frame = new System.Windows.Shapes.Rectangle
+            {
+                RadiusX = 8, RadiusY = 8, StrokeThickness = 1, StrokeDashArray = new DoubleCollection { 4, 3 },
+                Stroke = SurfaceBorderBrush, IsHitTestVisible = false, Margin = new Thickness(0, 10, 0, 0)
+            };
+
+            _tileAxis = tile;
+            var root = new Grid();
+            root.Children.Add(tile.Button);
+            root.Children.Add(tile.Frame);
+            return root;
+        }
+
+        /// <summary>
+        /// Axis row look: optional and muted by default; required (accent, amber text) while the servitude register is ticked and
+        /// no axis is picked, because that report is skipped without it.
+        /// </summary>
+        private void RefreshAxisRow()
+        {
+            if (_tileAxis == null || _tileAxis.Frame == null || _tileAxis.Badge == null) return;
+
+            bool picked = _axisIds.Count > 0;
+            bool required = !picked && _optServitudeRegister != null && _optServitudeRegister.IsChecked;
+
+            _tileAxis.Frame.Stroke = required ? AccentBrush : SurfaceBorderBrush;
+            if (required) _tileAxis.Button.Background = AccentSoftBrush; else _tileAxis.Button.ClearValue(Control.BackgroundProperty);
+            _tileAxis.Badge.Visibility = required ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
+            _tileAxis.Icon.Foreground = required ? AccentBrush : SubtextBrush;
+
+            if (picked)
+            {
+                _tileAxis.Status.Text = _axisIds.Count == 1 ? "1 обект" : $"{_axisIds.Count} обекта";
+                _tileAxis.Status.Foreground = SubtextBrush;
+                _tileAxis.Action.Text = "Промени";
+            }
+            else if (required)
+            {
+                _tileAxis.Status.Text = "Задължително за координатния регистър на сервитута";
+                _tileAxis.Status.Foreground = WarningBrush;
+                _tileAxis.Action.Text = "Избери в чертежа";
+            }
+            else
+            {
+                _tileAxis.Status.Text = "Не е избрана";
+                _tileAxis.Status.Foreground = SubtextBrush;
+                _tileAxis.Action.Text = "Избери в чертежа";
+            }
+        }
+
+        /// <summary>A small uppercase subheader over a group of reports.</summary>
+        private static void AddGroupHeader(Panel list, string text, bool first = false)
+        {
+            list.Children.Add(new TextBlock
+            {
+                Text = text, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = SubtextBrush,
+                Margin = new Thickness(2, first ? 0 : 10, 0, 8)
+            });
         }
 
         private ReportOption AddReport(Panel list, string title, string description, params Requirement[] needs)
         {
             var option = new ReportOption { Title = title, Needs = needs };
 
+            option.Status = new TextBlock
+            {
+                FontSize = 12.5, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(12, 0, 0, 0), TextAlignment = System.Windows.TextAlignment.Right, TextWrapping = TextWrapping.Wrap
+            };
+            var titleRow = new Grid();
+            titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, MaxWidth = 300 });
+            titleRow.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            Grid.SetColumn(option.Status, 1);
+            titleRow.Children.Add(option.Status);
+
             var text = new StackPanel();
-            text.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold });
+            text.Children.Add(titleRow);
             text.Children.Add(new TextBlock
             {
-                Text = description, FontSize = 12, Foreground = SubtextBrush, TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 2, 0, 8)
+                Text = description, FontSize = 12.5, Foreground = SubtextBrush, TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 3, 0, 0)
             });
-
-            var chips = new WrapPanel();
-            foreach (Requirement need in needs)
-            {
-                var label = new TextBlock { FontSize = 11, Text = RequirementName(need) };
-                var chip = new Border
-                {
-                    CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 2, 8, 3),
-                    Margin = new Thickness(0, 0, 6, 0), Child = label
-                };
-                option.Chips[need] = (chip, label);
-                chips.Children.Add(chip);
-            }
-            text.Children.Add(chips);
 
             option.Check = new CheckBox { Content = text, HorizontalAlignment = HorizontalAlignment.Stretch };
             option.Check.Checked += (s, e) => UpdateReadiness();
@@ -577,8 +767,8 @@ namespace PUP_AUTO.UI.Windows
 
         // ================================================================
         //  READINESS
-        //  Each report's chips turn green when their input is loaded or picked;
-        //  the generate button counts the ticked reports.
+        //  Each report says on its title row whether it is ready or what it lacks; the footer
+        //  says how many ticked reports are blocked and counts the ones that can run.
         // ================================================================
 
         private bool Has(Requirement need)
@@ -601,20 +791,44 @@ namespace PUP_AUTO.UI.Windows
 
             foreach (ReportOption option in _reports)
             {
-                foreach (var pair in option.Chips)
+                List<Requirement> missing = Missing(option);
+                if (missing.Count == 0)
                 {
-                    bool ready = Has(pair.Key);
-                    pair.Value.Chip.Background = ready ? SuccessSoftBrush : CardBrush;
-                    pair.Value.Label.Foreground = ready ? SuccessBrush : SubtextBrush;
-                    pair.Value.Label.Text = (ready ? "✓ " : "") + RequirementName(pair.Key);
+                    option.Status.Text = "Готово ✓";
+                    option.Status.Foreground = SuccessBrush;
+                }
+                else
+                {
+                    option.Status.Text = "Липсва: " + string.Join(", ", missing.Select(RequirementName));
+                    option.Status.Foreground = WarningBrush;
                 }
                 option.Card.BorderBrush = option.IsChecked ? AccentBrush : SurfaceBorderBrush;
             }
+            RefreshAxisRow();
 
-            int count = _reports.Count(r => r.IsChecked);
-            _btnGenerate.IsEnabled = count > 0;
+            List<ReportOption> ticked = _reports.Where(r => r.IsChecked).ToList();
+            List<ReportOption> blocked = ticked.Where(r => Missing(r).Count > 0).ToList();
+            int total = ticked.Count, ready = total - blocked.Count;
+
+            // The button stays enabled while something is ticked, even if nothing can run: the skip warnings then explain why
+            _btnGenerate.IsEnabled = total > 0;
             _btnGenerate.Content = IconText(GlyphPlay,
-                count == 0 ? "Отметнете справка" : count == 1 ? "Генерирай 1 справка" : $"Генерирай {count} справки");
+                total == 0 ? "Отметнете справка"
+                : blocked.Count == 0 ? (total == 1 ? "Генерирай 1 справка" : $"Генерирай {total} справки")
+                : $"Генерирай {ready} от {total} справки");
+
+            if (blocked.Count == 0)
+            {
+                _lblFooterBlocked.Visibility = System.Windows.Visibility.Collapsed;
+                _lblFooterFirst.Visibility = System.Windows.Visibility.Collapsed;
+            }
+            else
+            {
+                _lblFooterBlocked.Text = $"{blocked.Count} от {total} справки не може да се генерира";
+                _lblFooterBlocked.Visibility = System.Windows.Visibility.Visible;
+                _lblFooterFirst.Text = $"{blocked[0].Title} — липсва: {string.Join(", ", Missing(blocked[0]).Select(RequirementName))}";
+                _lblFooterFirst.Visibility = System.Windows.Visibility.Visible;
+            }
         }
 
         // ================================================================
@@ -822,10 +1036,10 @@ namespace PUP_AUTO.UI.Windows
             _polePicks = new List<PolePick>();
             _axisIds = new List<ObjectId>();
 
-            SetTile(_tileAxis, "Не е избрана (по избор)", SubtextBrush, false);
-            SetTile(_tileServitude, "Не е избран", SubtextBrush, false);
-            SetTile(_tilePoles, "Не са избрани", SubtextBrush, false);
-            SetTile(_tileParcels, "Не са избрани", SubtextBrush, false);
+            RefreshAxisRow();
+            SetTile(_tileServitude, false);
+            SetTile(_tilePoles, false);
+            SetTile(_tileParcels, false);
             UpdateReadiness();
         }
 
@@ -985,12 +1199,12 @@ namespace PUP_AUTO.UI.Windows
 
                     if (!_servitudeId.IsNull)
                     {
-                        SetTile(_tileServitude, "✓ Избран", SuccessBrush, true);
+                        SetTile(_tileServitude, true, "Избран · промени");
                         AppendLog("Сервитут избран успешно.");
                     }
                     else
                     {
-                        SetTile(_tileServitude, "Не е избран", ErrorBrush, false);
+                        SetTile(_tileServitude, false);
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Сервитутът не беше избран.");
                     }
                 }
@@ -1083,12 +1297,12 @@ namespace PUP_AUTO.UI.Windows
 
                     if (_polePicks.Count > 0)
                     {
-                        SetTile(_tilePoles, $"✓ {_polePicks.Count} стълба", SuccessBrush, true);
+                        SetTile(_tilePoles, true, $"{_polePicks.Count} стълба · промени");
                         AppendLog($"Избрани и екстрактнати {_polePicks.Count} стълба.");
                     }
                     else
                     {
-                        SetTile(_tilePoles, "Не са избрани", ErrorBrush, false);
+                        SetTile(_tilePoles, false);
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Не бяха извлечени валидни стълбове.");
                     }
                     _logger?.LogPerf($"BtnPickPoles_Click: {pickWatch.ElapsedMilliseconds} ms (includes the time spent selecting)");
@@ -1169,12 +1383,12 @@ namespace PUP_AUTO.UI.Windows
 
                     if (_parcelPicks.Count > 0)
                     {
-                        SetTile(_tileParcels, $"✓ {_parcelPicks.Count} имота", SuccessBrush, true);
+                        SetTile(_tileParcels, true, $"{_parcelPicks.Count} имота · промени");
                         AppendLog($"Избрани {_parcelPicks.Count} имота.");
                     }
                     else
                     {
-                        SetTile(_tileParcels, "Не са избрани", ErrorBrush, false);
+                        SetTile(_tileParcels, false);
                         AppendLog("ПРЕДУПРЕЖДЕНИЕ: Имотите не бяха избрани.");
                     }
                     _logger?.LogPerf($"BtnPickParcels_Click: {pickWatch.ElapsedMilliseconds} ms (includes the time spent selecting)");
@@ -1202,12 +1416,12 @@ namespace PUP_AUTO.UI.Windows
 
                     if (_axisIds.Count > 0)
                     {
-                        SetTile(_tileAxis, $"✓ {_axisIds.Count} обекта", SuccessBrush, true);
+                        RefreshAxisRow();
                         AppendLog($"Избрана ос на трасето: {_axisIds.Count} обекта.");
                     }
                     else
                     {
-                        SetTile(_tileAxis, "Не е избрана (по избор)", SubtextBrush, false);
+                        RefreshAxisRow();
                         AppendLog("Осът на трасето не беше избрана — дължината на трасето няма да се изчисли.");
                     }
                 }

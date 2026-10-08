@@ -17,7 +17,7 @@ namespace PUP_AUTO.UI.Windows
         public const string Surface       = "#262A33";
         public const string SurfaceBorder = "#3A3F4B";
         public const string Text          = "#E6E9EF";
-        public const string Subtext       = "#9AA3B2";
+        public const string Subtext       = "#A9B2C0";
         public const string Accent        = "#4C8DFF";
         public const string AccentSoft    = "#1D2B45";
         public const string Success       = "#3FB950";
@@ -55,6 +55,7 @@ namespace PUP_AUTO.UI.Windows
         public const string GlyphPin      = "";
         public const string GlyphParcels  = "";
         public const string GlyphPlay     = "";
+        public const string GlyphCheck    = "\uE73E";   // CheckMark
 
         private static SolidColorBrush B(string hex)
         {
