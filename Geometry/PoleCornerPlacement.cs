@@ -72,6 +72,22 @@ namespace PUP_AUTO.Geometry
             return placements;
         }
 
+        /// <summary>
+        /// The index of the corner that is forward-left of θ (u &gt; 0, v &gt; 0 in the frame of <see cref="Place"/>), or -1 when
+        /// no corner is strictly there (e.g. a footprint turned exactly along θ).
+        /// </summary>
+        public static int ForwardLeftIndex(IReadOnlyList<(double X, double Y)> corners, double theta)
+        {
+            double ux = Math.Cos(theta), uy = Math.Sin(theta);
+            double cx = corners.Average(c => c.X), cy = corners.Average(c => c.Y);
+            for (int i = 0; i < corners.Count; i++)
+            {
+                double dx = corners[i].X - cx, dy = corners[i].Y - cy;
+                if (dx * ux + dy * uy > 0 && -dx * uy + dy * ux > 0) return i;
+            }
+            return -1;
+        }
+
         /// <summary>The direction (radians) of the edge from the last corner to the first.</summary>
         public static double EdgeDirection(IReadOnlyList<(double X, double Y)> corners)
         {

@@ -64,6 +64,19 @@ namespace PUP_AUTO.CadRegister
         public List<string> Reversed { get; } = new List<string>();
     }
 
+    /// <summary>Which corner is "N-1".</summary>
+    public enum CornerStartRule
+    {
+        /// <summary>The block's own P1..P4 order (clockwise-fixed, vertex 1 kept).</summary>
+        PTagOrder,
+
+        /// <summary>
+        /// Fallback: corner 1 = the corner forward-left of the pole's label rotation θ, then clockwise. Only for poles that have
+        /// a label rotation; the others keep the P-tag order.
+        /// </summary>
+        ForwardLeftOfLabel
+    }
+
     /// <summary>
     /// Builds the coordinate register of the pole steps (official 07) from plain data, no AutoCAD types. A pole is listed
     /// once, in the землище of the parcel that holds its largest piece (<see cref="TerritoryBalanceBuilder.WinningParcels"/>).
@@ -71,6 +84,12 @@ namespace PUP_AUTO.CadRegister
     /// </summary>
     public static class CoordinateRegisterBuilder
     {
+        /// <summary>
+        /// The start-corner switch. Stays <see cref="CornerStartRule.PTagOrder"/>; set to <see cref="CornerStartRule.ForwardLeftOfLabel"/>
+        /// only if the check against the official N-1..N-4 shows that the P-tag order does not match.
+        /// </summary>
+        public static CornerStartRule StartRule { get; set; } = CornerStartRule.PTagOrder;
+
         public const string TitlePrefix = "КООРДИНАТЕН РЕГИСТЪР НА СТЪПКИТЕ НА СТЪЛБОВЕТЕ ЗА ";
         public const string BlockTitleFormat = "Стълб №{0}, попадащ в имот {1}";
         public const string CentreHeading = "Координати на центъра";
@@ -103,6 +122,8 @@ namespace PUP_AUTO.CadRegister
 
                 List<(double X, double Y)> corners = Clockwise(pole.Corners, out bool reversed);
                 if (reversed) result.Reversed.Add(number);
+                if (StartRule == CornerStartRule.ForwardLeftOfLabel && pole.LabelRotation.HasValue)
+                    corners = StartAtForwardLeft(corners, pole.LabelRotation.Value);
                 if (corners.Count != 4) result.NotFourCorners.Add(number);
 
                 (double cx, double cy) = Centre(corners);
@@ -159,6 +180,14 @@ namespace PUP_AUTO.CadRegister
             reversed = SignedArea(list) > 0;
             if (reversed) list.Reverse(1, list.Count - 1);
             return list;
+        }
+
+        /// <summary>The clockwise corners rotated so the forward-left corner of θ comes first (unchanged when there is none).</summary>
+        public static List<(double X, double Y)> StartAtForwardLeft(List<(double X, double Y)> clockwise, double theta)
+        {
+            int start = Geometry.PoleCornerPlacement.ForwardLeftIndex(clockwise, theta);
+            if (start <= 0) return clockwise;
+            return clockwise.Skip(start).Concat(clockwise.Take(start)).ToList();
         }
 
         /// <summary>The average of the corners.</summary>

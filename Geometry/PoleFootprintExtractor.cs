@@ -206,6 +206,10 @@ namespace PUP_AUTO.Geometry
             }
         }
 
+        /// <summary>True for a GBP032 corner block (the plugin's own marker, never a pole), whatever its attributes say.</summary>
+        public static bool IsCornerBlock(BlockReference blockRef, Transaction tr) =>
+            PoleCornerBlockNames.IsCornerBlock(GetEffectiveName(blockRef, tr));
+
         private static string GetEffectiveName(BlockReference blockRef, Transaction tr)
         {
             if (blockRef.IsDynamicBlock)

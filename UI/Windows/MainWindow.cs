@@ -952,6 +952,9 @@ namespace PUP_AUTO.UI.Windows
                         var poleBlocks = _selection!.SelectMultipleBlockReferences(
                             tr, "\nSelect Pole blocks: ");
 
+                        // The GBP032 corner blocks the coordinate register draws carry a NOMER tag too: not poles, skipped silently
+                        poleBlocks = poleBlocks.Where(b => !PoleFootprintExtractor.IsCornerBlock(b.Value, tr)).ToList();
+
                         // Extract now to validate the blocks; the footprints are in-memory only
                         // and are disposed here (each handler re-extracts what it needs).
                         var entries = new List<PoleFootprintEntry>();

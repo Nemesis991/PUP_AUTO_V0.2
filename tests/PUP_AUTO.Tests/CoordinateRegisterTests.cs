@@ -288,6 +288,34 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
+        public void ForwardLeftCorner_OfPole20_IsCornerOne_AndTheFallbackRotatesTheListToStartThere()
+        {
+            Assert.Equal(0, PoleCornerPlacement.ForwardLeftIndex(Pole20, Theta));
+
+            // Same clockwise ring started at 20-3: the fallback brings 20-1 back to the front, order kept
+            var shifted = new List<(double X, double Y)> { Pole20[2], Pole20[3], Pole20[0], Pole20[1] };
+            Assert.Equal(Pole20, CoordinateRegisterBuilder.StartAtForwardLeft(shifted, Theta));
+            Assert.Equal(Pole20, CoordinateRegisterBuilder.StartAtForwardLeft(Pole20, Theta));
+        }
+
+        [Fact]
+        public void TheDefaultStartRuleIsThePTagOrder()
+        {
+            Assert.Equal(CornerStartRule.PTagOrder, CoordinateRegisterBuilder.StartRule);
+        }
+
+        [Theory]
+        [InlineData("GBP032", true)]
+        [InlineData("gbp032", true)]
+        [InlineData(" GBP032 ", true)]
+        [InlineData("GBP0320", false)]
+        [InlineData("Stalb", false)]
+        public void CornerBlocksAreRecognisedByName(string name, bool expected)
+        {
+            Assert.Equal(expected, PUP_AUTO.Core.PoleCornerBlockNames.IsCornerBlock(name));
+        }
+
+        [Fact]
         public void WithoutALabelRotation_TheEdgeFromTheLastCornerToTheFirstIsUsed()
         {
             PoleCornerPlacement.Place("20", Pole20, null, out double theta);

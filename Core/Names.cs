@@ -31,6 +31,10 @@ namespace PUP_AUTO.Core
         /// <summary>Attribute with the corner label ("20-1").</summary>
         public const string NumberTag = "NOMER";
 
+        /// <summary>True when the block name is the corner block's (case-insensitive); such inserts are never poles.</summary>
+        public static bool IsCornerBlock(string blockName) =>
+            string.Equals(blockName?.Trim(), BlockName, StringComparison.OrdinalIgnoreCase);
+
         /// <summary>Block file next to the plugin DLL, imported when the drawing has no GBP032.</summary>
         public const string BlockFile = @"Resources\Blocks\GBP032.dwg";
 
