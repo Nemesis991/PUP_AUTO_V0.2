@@ -26,6 +26,9 @@ namespace PUP_AUTO.Geometry
         /// <summary>One entry per corner that failed: pole, corner label and the call that threw. The other corners are still drawn.</summary>
         public List<string> Failures { get; } = new List<string>();
 
+        /// <summary>Set when the blocks were drawn but the screen refresh failed (low-level, not a drawing failure).</summary>
+        public string? RefreshWarning { get; set; }
+
         /// <summary>Set when nothing was drawn because the block is not available.</summary>
         public string? Warning { get; set; }
     }
@@ -129,6 +132,17 @@ namespace PUP_AUTO.Geometry
                         }
                     }
                     tr.Commit();
+                }
+
+                // The refresh needs the document lock too (eLockViolation outside it); never let it turn a drawn result into a failure
+                try
+                {
+                    doc.TransactionManager.QueueForGraphicsFlush();
+                    doc.Editor.UpdateScreen();
+                }
+                catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                {
+                    result.RefreshWarning = $"екранът не е опреснен ({ex.ErrorStatus}) — блоковете са начертани, опреснете с REGEN.";
                 }
             }
         }

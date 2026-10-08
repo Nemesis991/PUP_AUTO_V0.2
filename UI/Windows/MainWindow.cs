@@ -885,12 +885,6 @@ namespace PUP_AUTO.UI.Windows
             }
         }
 
-        private static void FlushGraphics(Document doc)
-        {
-            doc.TransactionManager.QueueForGraphicsFlush();
-            doc.Editor.UpdateScreen();
-        }
-
         // ================================================================
         //  GEOMETRY PICKING
         // ================================================================
@@ -1180,6 +1174,8 @@ namespace PUP_AUTO.UI.Windows
                 EnsureServices();
                 ResetClickCache();
                 _clickWarnUncovered = ticked.Any(o => o == _optAffectedRegister || o == _optTerritoryBalance || o == _optPoleStepsRegister);
+                // Only the affected-parcels register and the balances read the servitude areas (BuildAffectedRegisters)
+                _clickNeedsServitude = ticked.Any(o => o == _optAffectedRegister || o == _optTerritoryBalance);
                 PerfTimer.LogMemory(_logger, "at start of Generate");
                 bool ranAny = false;
                 using (PerfTimer.Measure(_logger, "BtnGenerate_Click"))
@@ -1365,6 +1361,7 @@ namespace PUP_AUTO.UI.Windows
         private int _clickReferenceWarningsLogged;
         private ClickGeometry? _clickGeometry;
         private bool _clickWarnUncovered;
+        private bool _clickNeedsServitude = true;
         private AffectedRegisterRun? _clickRun;
         private string? _clickRunProject;
 
@@ -1375,6 +1372,7 @@ namespace PUP_AUTO.UI.Windows
             _clickReferenceWarningsLogged = 0;
             _clickGeometry = null;
             _clickWarnUncovered = false;
+            _clickNeedsServitude = true;
             _clickRun = null;
             _clickRunProject = null;
         }
@@ -1428,7 +1426,9 @@ namespace PUP_AUTO.UI.Windows
             using (doc.LockDocument())
             using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
             {
-                Polyline? servitude = OpenPolyline(tr, _servitudeId);
+                // The servitude region (~7 s) is only needed by the reports that work on the servitude areas; without it the
+                // poles are intersected with the parcels alone
+                Polyline? servitude = _clickNeedsServitude ? OpenPolyline(tr, _servitudeId) : null;
                 var parcels = OpenParcels(tr);
                 var entries = ExtractPoles(tr);
                 try
@@ -2143,12 +2143,13 @@ namespace PUP_AUTO.UI.Windows
                     return;
                 }
                 foreach (string failure in result.Failures) LogWarning($"Ъглова точка не е начертана — {failure}");
-                FlushGraphics(doc);
                 AppendLog($"  Ъглови точки: {result.Drawn} блока {PoleCornerBlockNames.BlockName} начертани ({result.SkippedExisting} вече съществуващи пропуснати).");
                 if (result.Replaced > 0)
                 {
                     _logger?.LogSuccess($"Pole corner blocks: {result.Replaced} plugin inserts of a previous run replaced.");
                 }
+                // The screen refresh runs inside the writer's document lock; if it fails the blocks are still drawn
+                if (result.RefreshWarning != null) LogWarning(result.RefreshWarning);
             }
             catch (Exception ex)
             {
