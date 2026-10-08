@@ -51,6 +51,14 @@ namespace PUP_AUTO.Core
         /// <summary>Tolerance for "the length is an exact multiple of the segment length".</summary>
         public const double ExactIntervalEpsilonM = 1e-6;
 
+        // --- PUP_SERV segmentation ---
+
+        /// <summary>PUP_SERV: an arc whose sagitta (|bulge| * chord / 2) is under this is treated as straight and gets no vertices.</summary>
+        public const double ServStraightSagittaM = 0.001;
+
+        /// <summary>PUP_SERV: a vertex this close to its mirror vertex counts as retraced (the line runs back over itself).</summary>
+        public const double RetraceToleranceM = 0.001;
+
         // --- Servitude markers ---
 
         public const double MarkerStepM = 20.0;

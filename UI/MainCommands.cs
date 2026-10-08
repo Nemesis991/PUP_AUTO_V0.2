@@ -1,3 +1,4 @@
+using System.Globalization;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -94,21 +95,56 @@ namespace PUP_AUTO.UI
                     Polyline? sourcePline = tr.GetObject(per.ObjectId, OpenMode.ForRead) as Polyline;
                     if (sourcePline == null) return;
                     
-                    using (Polyline? cleanServitude = GeometrySanitizer.Sanitize(sourcePline, dist, GeometryTolerances.SanitizeMinVertexDistanceM))
+                    // Read and write OCS coordinates only (GetPoint2dAt / AddVertexAt): mixing in the WCS points of
+                    // GetPointAtDist shifts vertices when the polyline's plane is not exactly the WCS plane.
+                    var source = new List<PlineVertex>(sourcePline.NumberOfVertices);
+                    for (int i = 0; i < sourcePline.NumberOfVertices; i++)
                     {
-                        if (cleanServitude != null)
+                        Point2d pt = sourcePline.GetPoint2dAt(i);
+                        source.Add(new PlineVertex(pt.X, pt.Y, sourcePline.GetBulgeAt(i)));
+                    }
+
+                    // A line that runs back over itself at its start or end would get two different sets of vertices on
+                    // the same arcs; keep one pass only.
+                    var (cleaned, removedAtStart, removedAtEnd) = ServitudeSegmenter.RemoveRetracedEnds(source, sourcePline.Closed);
+                    if (removedAtStart + removedAtEnd > 0)
+                    {
+                        ed.WriteMessage($"\nПремахнат е дублиран участък: {removedAtStart + removedAtEnd} възела (линията минава два пъти по едно и също място).");
+                    }
+
+                    if (!sourcePline.Closed && cleaned.Count > 1)
+                    {
+                        PlineVertex first = cleaned[0], last = cleaned[cleaned.Count - 1];
+                        double gap = Math.Sqrt((last.X - first.X) * (last.X - first.X) + (last.Y - first.Y) * (last.Y - first.Y));
+                        if (gap > GeometryTolerances.ClosureDistanceM && gap < OpenServitudeGapNoteM)
                         {
-                            DrawingWriter.EnsureLayer(db, tr, PluginLayers.SegmentedServitude, 3);
-
-                            Polyline newPline = (Polyline)cleanServitude.Clone();
-                            newPline.ConstantWidth = GeometryTolerances.SegmentedServitudeWidth;
-
-                            BlockTableRecord btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
-                            DrawingWriter.Append(btr, tr, newPline, PluginLayers.SegmentedServitude, 3);
-                            
-                            ed.WriteMessage($"\nУспешно сегментиран сервитут! Дължина на сегментите: {dist}м. Слой: 'segmented SERV'.");
+                            ed.WriteMessage($"\n[ВНИМАНИЕ] Сервитутът не е затворен: разстояние {gap.ToString("F2", CultureInfo.InvariantCulture)} м между началото и края.");
                         }
                     }
+
+                    List<PlineVertex> segmented = ServitudeSegmenter.Segment(cleaned, sourcePline.Closed, dist);
+
+                    Polyline newPline = BuildPolyline(sourcePline, segmented);
+                    newPline.Layer = sourcePline.Layer;
+                    newPline.Color = sourcePline.Color;
+                    newPline.Linetype = sourcePline.Linetype;
+                    newPline.ConstantWidth = GeometryTolerances.SegmentedServitudeWidth;
+
+                    using (Polyline cleanedPline = BuildPolyline(sourcePline, cleaned))
+                    {
+                        foreach (string warning in CheckSegmentedServitude(cleanedPline, newPline, segmented, cleaned.Count))
+                        {
+                            ed.WriteMessage($"\n[ПРЕДУПРЕЖДЕНИЕ] PUP_SERV: {warning}");
+                        }
+                    }
+
+                    DrawingWriter.EnsureLayer(db, tr, PluginLayers.SegmentedServitude, 3);
+                    BlockTableRecord btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+                    DrawingWriter.Append(btr, tr, newPline, PluginLayers.SegmentedServitude, 3);
+
+                    int added = segmented.Count(v => v.IsInserted);
+                    ed.WriteMessage($"\nУспешно сегментиран сервитут! Дължина на сегментите: {dist}м. Слой: 'segmented SERV'. " +
+                                    $"Запазени възли: {segmented.Count - added}, добавени в дъги: {added}.");
                     tr.Commit();
                 }
             }
@@ -116,6 +152,75 @@ namespace PUP_AUTO.UI
             {
                 ed.WriteMessage($"\n[ГРЕШКА] PUP_SERV: {ex.Message}\n");
             }
+        }
+
+        /// <summary>PUP_SERV notes an open servitude whose start and end are closer than this but not touching.</summary>
+        private const double OpenServitudeGapNoteM = 2.0;
+
+        /// <summary>A new, not database-resident polyline in the OCS of <paramref name="template"/> (Normal, Elevation, Closed).</summary>
+        private static Polyline BuildPolyline(Polyline template, IReadOnlyList<PlineVertex> vertices)
+        {
+            var pline = new Polyline();
+            pline.Normal = template.Normal;
+            pline.Elevation = template.Elevation;
+            for (int i = 0; i < vertices.Count; i++)
+            {
+                pline.AddVertexAt(i, new Point2d(vertices[i].X, vertices[i].Y), vertices[i].Bulge, 0, 0);
+            }
+            pline.Closed = template.Closed;
+            return pline;
+        }
+
+        /// <summary>
+        /// PUP_SERV self-check against the cleaned source (retraced ends removed): same length, every cleaned vertex kept in
+        /// order, and no vertex placed before the previous one along it. Returns the problems found (at most <c>MaxWarnings</c>).
+        /// </summary>
+        private static List<string> CheckSegmentedServitude(Polyline source, Polyline result, IReadOnlyList<PlineVertex> segmented, int sourceCount)
+        {
+            const double tolerance = 1e-6;
+            const int MaxWarnings = 10;
+            var warnings = new List<string>();
+
+            if (Math.Abs(result.Length - source.Length) > tolerance)
+                warnings.Add($"дължината се различава: {result.Length:F6} м вместо {source.Length:F6} м.");
+
+            int k = 0;              // next source vertex expected in the result
+            double previous = 0;    // distance along the source of the previous result vertex
+            for (int j = 0; j < segmented.Count && warnings.Count < MaxWarnings; j++)
+            {
+                double along;
+                if (!segmented[j].IsInserted)
+                {
+                    if (k >= sourceCount || result.GetPoint2dAt(j).GetDistanceTo(source.GetPoint2dAt(k)) > 1e-9)
+                    {
+                        warnings.Add($"възел {j} не съвпада с изходния възел {k}.");
+                        k++;
+                        continue;
+                    }
+                    along = source.GetDistanceAtParameter(k);
+                    k++;
+                }
+                else
+                {
+                    try
+                    {
+                        along = source.GetDistAtPoint(result.GetPoint3dAt(j));
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        warnings.Add($"възел {j} не лежи върху изходния сервитут.");
+                        continue;
+                    }
+                }
+
+                if (along < previous - tolerance)
+                    warnings.Add($"възел {j} е преди предходния ({along:F3} м < {previous:F3} м).");
+                previous = along;
+            }
+
+            if (k != sourceCount && warnings.Count < MaxWarnings)
+                warnings.Add($"запазени са {k} от {sourceCount} изходни възела.");
+            return warnings;
         }
 
         // ------------------------------------------------------------------
