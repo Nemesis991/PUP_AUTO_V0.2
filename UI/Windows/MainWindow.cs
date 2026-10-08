@@ -2142,6 +2142,7 @@ namespace PUP_AUTO.UI.Windows
                     LogWarning(result.Warning);
                     return;
                 }
+                foreach (string failure in result.Failures) LogWarning($"Ъглова точка не е начертана — {failure}");
                 FlushGraphics(doc);
                 AppendLog($"  Ъглови точки: {result.Drawn} блока {PoleCornerBlockNames.BlockName} начертани ({result.SkippedExisting} вече съществуващи пропуснати).");
                 if (result.Replaced > 0)

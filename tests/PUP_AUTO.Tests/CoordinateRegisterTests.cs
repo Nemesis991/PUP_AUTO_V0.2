@@ -299,6 +299,15 @@ namespace PUP_AUTO.Tests
         }
 
         [Fact]
+        public void OnlyLeftBaseline_GoesInPosition_TheOtherThreeUseTheAlignmentPoint()
+        {
+            List<CornerLabelPlacement> placed = PoleCornerPlacement.Place("20", Pole20, Theta, out _);
+
+            // 20-1 Left/Baseline, 20-2 Left/Top, 20-3 Right/Top, 20-4 Right/Baseline
+            Assert.Equal(new[] { true, false, false, false }, placed.Select(p => p.UsesPosition));
+        }
+
+        [Fact]
         public void TheDefaultStartRuleIsThePTagOrder()
         {
             Assert.Equal(CornerStartRule.PTagOrder, CoordinateRegisterBuilder.StartRule);

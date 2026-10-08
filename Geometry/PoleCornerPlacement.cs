@@ -20,6 +20,13 @@ namespace PUP_AUTO.Geometry
         }
 
         public string Label { get; }
+
+        /// <summary>
+        /// True for Left + Baseline: AutoCAD rejects <c>AlignmentPoint</c> there (eNotApplicable), the point goes in
+        /// <c>Position</c>. For the other three justifications it goes in <c>AlignmentPoint</c>.
+        /// </summary>
+        public bool UsesPosition => Horizontal == CornerLabelHorizontal.Left && Vertical == CornerLabelVertical.Baseline;
+
         public double CornerX { get; }
         public double CornerY { get; }
         public CornerLabelHorizontal Horizontal { get; }

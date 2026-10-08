@@ -23,6 +23,9 @@ namespace PUP_AUTO.Geometry
         /// <summary>Plugin-tagged inserts of the same poles erased before drawing (a re-run).</summary>
         public int Replaced { get; set; }
 
+        /// <summary>One entry per corner that failed: pole, corner label and the call that threw. The other corners are still drawn.</summary>
+        public List<string> Failures { get; } = new List<string>();
+
         /// <summary>Set when nothing was drawn because the block is not available.</summary>
         public string? Warning { get; set; }
     }
@@ -41,12 +44,28 @@ namespace PUP_AUTO.Geometry
             var result = new PoleCornerDrawResult();
             Database db = doc.Database;
 
+            // AdjustAlignment and the text style lookups work against the working database
+            Database previousWorking = HostApplicationServices.WorkingDatabase;
+            HostApplicationServices.WorkingDatabase = db;
+            try
+            {
+                Draw(doc, db, poles, pluginDir, result);
+            }
+            finally
+            {
+                HostApplicationServices.WorkingDatabase = previousWorking;
+            }
+            return result;
+        }
+
+        private static void Draw(Document doc, Database db, IReadOnlyList<PoleCornerSet> poles, string pluginDir, PoleCornerDrawResult result)
+        {
             using (doc.LockDocument())
             {
                 if (!EnsureBlock(db, pluginDir, out string? warning))
                 {
                     result.Warning = warning;
-                    return result;
+                    return;
                 }
 
                 using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -98,43 +117,88 @@ namespace PUP_AUTO.Geometry
                                 continue;
                             }
 
-                            Insert(db, tr, modelSpace, blockId, definitions, position, pole.Theta, corner);
-                            result.Drawn++;
+                            try
+                            {
+                                Insert(db, tr, modelSpace, blockId, definitions, position, pole.Theta, corner);
+                                result.Drawn++;
+                            }
+                            catch (InvalidOperationException ex)
+                            {
+                                result.Failures.Add($"Стълб {pole.PoleNumber}, ъгъл {corner.Label}: {ex.Message}");
+                            }
                         }
                     }
                     tr.Commit();
                 }
             }
-            return result;
         }
 
         private static void Insert(Database db, Transaction tr, BlockTableRecord space, ObjectId blockId,
             List<AttributeDefinition> definitions, Point3d position, double theta, CornerLabelPlacement corner)
         {
+            string step = "new BlockReference";
             var br = new BlockReference(position, blockId);
-            br.SetDatabaseDefaults(db);
-            br.Layer = PoleCornerBlockNames.Layer;
-            br.ScaleFactors = new Scale3d(PoleCornerPlacement.BlockScale);
-            br.Rotation = theta;
-            space.AppendEntity(br);
-            tr.AddNewlyCreatedDBObject(br, true);
-            br.XData = new ResultBuffer(
-                new TypedValue((int)DxfCode.ExtendedDataRegAppName, PoleCornerBlockNames.XDataApp),
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, PoleCornerBlockNames.XDataValue));
-
-            foreach (AttributeDefinition ad in definitions)
+            try
             {
-                var ar = new AttributeReference();
-                ar.SetAttributeFromBlock(ad, br.BlockTransform);   // KOTA keeps its default and its invisibility
-                br.AttributeCollection.AppendAttribute(ar);
-                tr.AddNewlyCreatedDBObject(ar, true);
+                step = "BlockReference.SetDatabaseDefaults/Layer/ScaleFactors/Rotation";
+                br.SetDatabaseDefaults(db);
+                br.Layer = PoleCornerBlockNames.Layer;
+                br.ScaleFactors = new Scale3d(PoleCornerPlacement.BlockScale);
+                br.Rotation = theta;
+                step = "BlockTableRecord.AppendEntity(BlockReference)";
+                space.AppendEntity(br);
+                tr.AddNewlyCreatedDBObject(br, true);
+                step = "BlockReference.XData";
+                br.XData = new ResultBuffer(
+                    new TypedValue((int)DxfCode.ExtendedDataRegAppName, PoleCornerBlockNames.XDataApp),
+                    new TypedValue((int)DxfCode.ExtendedDataAsciiString, PoleCornerBlockNames.XDataValue));
 
-                if (!string.Equals(ad.Tag, PoleCornerBlockNames.NumberTag, StringComparison.OrdinalIgnoreCase)) continue;
-                ar.TextString = corner.Label;
-                ar.Justify = Justification(corner);
-                ar.AlignmentPoint = new Point3d(corner.AlignX, corner.AlignY, 0);
-                ar.Rotation = theta;
-                ar.AdjustAlignment(db);
+                foreach (AttributeDefinition ad in definitions)
+                {
+                    bool isNumber = string.Equals(ad.Tag, PoleCornerBlockNames.NumberTag, StringComparison.OrdinalIgnoreCase);
+
+                    step = $"AttributeReference.SetAttributeFromBlock({ad.Tag})";
+                    var ar = new AttributeReference();
+                    ar.SetAttributeFromBlock(ad, br.BlockTransform);   // KOTA keeps its default justification and invisibility
+
+                    if (isNumber)
+                    {
+                        step = "AttributeReference.TextString";
+                        ar.TextString = corner.Label;
+                        step = "AttributeReference.HorizontalMode/VerticalMode";
+                        ar.HorizontalMode = corner.Horizontal == CornerLabelHorizontal.Left ? TextHorizontalMode.TextLeft : TextHorizontalMode.TextRight;
+                        ar.VerticalMode = corner.Vertical == CornerLabelVertical.Baseline ? TextVerticalMode.TextBase : TextVerticalMode.TextTop;
+                        var point = new Point3d(corner.AlignX, corner.AlignY, 0);
+                        if (corner.UsesPosition)
+                        {
+                            step = "AttributeReference.Position (Left/Baseline)";
+                            ar.Position = point;
+                        }
+                        else
+                        {
+                            step = "AttributeReference.AlignmentPoint";
+                            ar.AlignmentPoint = point;
+                        }
+                        step = "AttributeReference.Rotation";
+                        ar.Rotation = theta;
+                    }
+
+                    step = $"BlockReference.AttributeCollection.AppendAttribute({ad.Tag})";
+                    br.AttributeCollection.AppendAttribute(ar);
+                    tr.AddNewlyCreatedDBObject(ar, true);
+
+                    if (isNumber)
+                    {
+                        step = "AttributeReference.AdjustAlignment";
+                        ar.AdjustAlignment(db);
+                    }
+                }
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception ex)
+            {
+                // Don't leave a half-built block behind; the caller reports the failed corner and goes on
+                if (!br.IsErased && br.ObjectId.IsValid) br.Erase();
+                throw new InvalidOperationException($"{step} -> {ex.ErrorStatus}", ex);
             }
         }
 
